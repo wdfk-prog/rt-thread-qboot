@@ -52,7 +52,7 @@
 
 #include <rtdbg.h>
 
-#define QBOOT_VER_MSG                   "V1.0.7 2024.06.03"
+#define QBOOT_VER_MSG                   "V1.0.8 2025.01.07"
 #define QBOOT_SHELL_PROMPT              "Qboot>"
 
 #define QBOOT_BUF_SIZE                  4096//must is 4096
@@ -81,21 +81,6 @@
 #define QBOOT_ALGO2_VERIFY_CRC          1
 #define QBOOT_ALGO2_VERIFY_MASK         0x0F
 
-typedef struct {
-    u8  type[4];
-    u16 algo;
-    u16 algo2;
-    u32 time_stamp;
-    u8  part_name[16];
-    u8  fw_ver[24];
-    u8  prod_code[24];
-    u32 pkg_crc;
-    u32 raw_crc;
-    u32 raw_size;
-    u32 pkg_size;
-    u32 hdr_crc;
-}fw_info_t;
-
 static fw_info_t fw_info;
 static u8 cmprs_buf[QBOOT_CMPRS_BUF_SIZE];
 #if (defined(QBOOT_USING_AES) || defined(QBOOT_USING_GZIP) || defined(QBOOT_USING_QUICKLZ) || defined(QBOOT_USING_FASTLZ))
@@ -109,6 +94,81 @@ static u8 *crypt_buf = NULL;
 static int gzip_remain_len = 0;
 static u8 gzip_remain_buf[GZIP_REMAIN_BUF_SIZE];
 #endif
+
+static const qboot_header_parser_ops_t *g_qboot_header_parser_ops = RT_NULL;
+static const qboot_release_target_ops_t *g_qboot_release_target_ops = RT_NULL;
+static const qboot_io_ops_t *g_qboot_header_io_ops = RT_NULL;
+static const qboot_update_ops_t *g_qboot_update_ops = RT_NULL;
+
+/**
+ * @brief Default jump decision; always allow.
+ *
+ * @return true jump to application is allowed.
+ */
+static bool qboot_default_allow_jump(void)
+{
+    return true;
+}
+
+static const qboot_update_ops_t g_qboot_update_default = {
+    RT_NULL,
+    qboot_default_allow_jump,
+    RT_NULL,
+    RT_NULL,
+};
+
+/**
+ * @brief Weak hook to register storage ops; override in backend implementations.
+ */
+__WEAK int qboot_register_storage_ops(void)
+{
+    return RT_EOK;
+}
+
+/**
+ * @brief Register header parser/package source operations.
+ *
+ * @param ops       Operation table; required fields must be non-NULL.
+ *
+ * @return RT_EOK on success, negative error code otherwise.
+ */
+int qboot_register_header_parser_ops(const qboot_header_parser_ops_t *ops)
+{
+    if ((ops == RT_NULL) || (ops->probe == RT_NULL))
+    {
+        return -RT_ERROR;
+    }
+    g_qboot_header_parser_ops = ops;
+    return RT_EOK;
+}
+
+int qboot_register_header_io_ops(const qboot_io_ops_t *ops)
+{
+    if ((ops == RT_NULL) || (ops->open == RT_NULL) || (ops->close == RT_NULL) || (ops->read == RT_NULL))
+    {
+        return -RT_ERROR;
+    }
+    g_qboot_header_io_ops = ops;
+    return RT_EOK;
+}
+
+/**
+ * @brief Register update callbacks.
+ *
+ * @param ops Operation table; required fields must be non-NULL.
+ *
+ * @return RT_EOK on success.
+ */
+int qboot_register_update(const qboot_update_ops_t *ops)
+{
+    if (ops == RT_NULL || ops->allow_jump == RT_NULL)
+    {
+        return -RT_ERROR;
+    }
+
+    g_qboot_update_ops = ops;
+    return RT_EOK;
+}
 
 static bool qbt_part_is_exist(const char *part_name)
 {
@@ -137,7 +197,7 @@ static bool qbt_fw_info_write(const char *part_name, fw_info_t *fw_info, bool to
     return(true);
 }
 
-static bool qbt_fw_info_check(fw_info_t *fw_info)
+bool qbt_fw_info_check(fw_info_t *fw_info)
 {
     if (strcmp((const char *)(fw_info->type), "RBL") != 0)
     {
@@ -993,7 +1053,7 @@ static void qbt_close_sys_shell(void)
         rt_thread_delete(thread);
     }
 
-    rt_sem_t sem = (rt_sem_t)rt_object_find(FINSH_SEM_NAME, RT_Object_Class_Semaphore);
+    rt_sem_t sem = (rt_sem_t)rt_object_find("shrx", RT_Object_Class_Semaphore);
     if (sem == NULL)
     {
         return;
@@ -1222,17 +1282,15 @@ static void qbt_thread_entry(void *params)
     qbt_status_led_init();
     #endif
     
-    if (fal_init() <= 0)
+    if (qboot_register_storage_ops() != RT_EOK)
     {
-        LOG_E("Qboot initialize fal fail.");
-        
+        LOG_E("Qboot register storage ops fail.");
         #ifdef QBOOT_USING_SHELL
         if (qbt_startup_shell(false))
         {
             return;
         }
         #endif
-        
         LOG_I("Qboot will reboot after %d ms.", QBOOT_REBOOT_DELAY_MS);
         rt_thread_mdelay(QBOOT_REBOOT_DELAY_MS);
         rt_hw_cpu_reset();
