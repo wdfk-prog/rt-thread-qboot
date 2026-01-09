@@ -109,10 +109,9 @@ static bool qboot_default_allow_jump(void)
     return true;
 }
 
-static const qboot_update_ops_t g_qboot_update_default = {
+const qboot_update_ops_t g_qboot_update_default = {
     RT_NULL,
     qboot_default_allow_jump,
-    RT_NULL,
     RT_NULL,
 };
 
@@ -283,52 +282,24 @@ static bool qbt_fw_crc_check(void *handle, const char *name, u32 addr, u32 size,
 static bool qbt_release_sign_check(void *handle, const char *name, fw_info_t *fw_info)
 {
     bool released = false;
-    rt_err_t rst = _header_parser_ops->sign_read(handle, &released); // FS 可用作已释放标记；fal 默认 -RT_ENOSYS
-    if (rst == RT_EOK)
-    {
-        return released;
-    }
-    if (rst != -RT_ENOSYS)
+    rt_err_t rst = _header_parser_ops->sign_read(handle, &released, fw_info);
+    if (rst != RT_EOK)
     {
         LOG_E("Qboot read release sign fail from %s partition. rst=%d", name, rst);
-        return false;
-    }
-
-    u32 release_sign = 0;
-    u32 pos = (((sizeof(fw_info_t) + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
-
-    if (_header_io_ops->read(handle, pos, (u8 *)&release_sign, sizeof(u32)) != RT_EOK)
-    {
-        LOG_E("Qboot read release sign fail from %s partition.", name);
         return(false);
     }
-
-    return(release_sign == QBOOT_RELEASE_SIGN_WORD);
+    return released;
 }
 
 static bool qbt_release_sign_write(void *handle, const char *name, fw_info_t *fw_info)
 {
-    rt_err_t rst = _header_parser_ops->sign_write(handle); // FS 可用作已释放标记；fal 默认 -RT_ENOSYS
-    if (rst == RT_EOK)
-    {
-        return true;
-    }
-    if (rst != -RT_ENOSYS)
+    rt_err_t rst = _header_parser_ops->sign_write(handle, fw_info);
+    if (rst != RT_EOK)
     {
         LOG_E("Qboot write release sign fail from %s partition. rst=%d", name, rst);
-        return false;
-    }
-
-    u32 release_sign = QBOOT_RELEASE_SIGN_WORD;
-    u32 pos = (((sizeof(fw_info_t) + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
-
-    if (_header_io_ops->write(handle, pos, (u8 *)&release_sign, sizeof(u32)) != RT_EOK)
-    {
-        LOG_E("Qboot write release sign fail from %s partition.", name);
         return(false);
     }
-
-    return(true);
+    return true;
 }
 
 static bool qbt_fw_decrypt_init(int crypt_type)

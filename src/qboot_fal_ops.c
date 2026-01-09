@@ -20,7 +20,6 @@
 
 #ifdef QBOOT_PKG_SOURCE_FAL
 
-
 /**
  * @brief Open FAL partition by name.
  *
@@ -31,7 +30,7 @@
  */
 static rt_err_t qbt_fal_open(void **handle, const char *path)
 {
-    fal_partition_t part = fal_partition_find(path);
+    fal_partition_t part = (fal_partition_t)fal_partition_find(path);
     if (part == RT_NULL)
     {
         LOG_E("FAL open partition %s fail.", path);
@@ -140,17 +139,31 @@ static rt_err_t qbt_fal_size(void *handle, size_t *out_size)
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
-static rt_err_t qbt_fal_sign_read(void *handle, bool *released)
+static rt_err_t qbt_fal_sign_read(void *handle, bool *released, const fw_info_t *fw_info)
 {
-    RT_UNUSED(handle);
-    RT_UNUSED(released);
-    return -RT_ENOSYS;
+    fal_partition_t part = (fal_partition_t)handle;
+    size_t pos = (((sizeof(fw_info_t) + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
+    u32 release_sign = 0;
+    if (fal_partition_read(part, pos, (u8 *)&release_sign, sizeof(u32)) < 0)
+    {
+        LOG_E("FAL sign read fail at pos=%u.", (unsigned int)pos);
+        return -RT_ERROR;
+    }
+    *released = (release_sign == QBOOT_RELEASE_SIGN_WORD);
+    return RT_EOK;
 }
 
-static rt_err_t qbt_fal_sign_write(void *handle)
+static rt_err_t qbt_fal_sign_write(void *handle, const fw_info_t *fw_info)
 {
-    RT_UNUSED(handle);
-    return -RT_ENOSYS;
+    fal_partition_t part = (fal_partition_t)handle;
+    u32 release_sign = QBOOT_RELEASE_SIGN_WORD;
+    size_t pos = (((sizeof(fw_info_t) + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
+    if (fal_partition_write(part, pos, (u8 *)&release_sign, sizeof(u32)) < 0)
+    {
+        LOG_E("FAL sign write fail at pos=%u.", (unsigned int)pos);
+        return -RT_ERROR;
+    }
+    return RT_EOK;
 }
 
 static const qboot_io_ops_t g_qboot_io_fal = {

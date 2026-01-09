@@ -147,8 +147,8 @@ typedef struct
  */
 typedef struct
 {
-    rt_err_t (*sign_read)(void *handle, bool *released);                        /**< Check release sign (FS for released tags); return -RT_ENOSYS if unsupported (e.g. FAL). */
-    rt_err_t (*sign_write)(void *handle);                                       /**< Write release sign (FS for released tags); return -RT_ENOSYS if unsupported (e.g. FAL). */
+    rt_err_t (*sign_read)(void *handle, bool *released, const fw_info_t *fw_info); /**< Check release sign (FS for released tags); return -RT_ENOSYS if unsupported. */
+    rt_err_t (*sign_write)(void *handle, const fw_info_t *fw_info);              /**< Write release sign (FS for released tags); return -RT_ENOSYS if unsupported. */
 } qboot_header_parser_ops_t;
 
 /**
