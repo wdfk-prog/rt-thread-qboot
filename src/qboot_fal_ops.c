@@ -34,6 +34,7 @@ static rt_err_t qbt_fal_open(void **handle, const char *path)
     fal_partition_t part = fal_partition_find(path);
     if (part == RT_NULL)
     {
+        LOG_E("FAL open partition %s fail.", path);
         return -RT_ERROR;
     }
     *handle = part;
@@ -67,6 +68,7 @@ static rt_err_t qbt_fal_read(void *handle, size_t off, void *buf, size_t len)
 {
     if (fal_partition_read((fal_partition_t)handle, off, buf, len) < 0)
     {
+        LOG_E("FAL read fail, off=%u len=%u", (unsigned int)off, (unsigned int)len);
         return -RT_ERROR;
     }
     return RT_EOK;
@@ -85,6 +87,7 @@ static rt_err_t qbt_fal_erase(void *handle, size_t off, size_t len)
 {
     if (fal_partition_erase((fal_partition_t)handle, off, len) < 0)
     {
+        LOG_E("FAL erase fail, off=%u len=%u", (unsigned int)off, (unsigned int)len);
         return -RT_ERROR;
     }
     return RT_EOK;
@@ -104,6 +107,7 @@ static rt_err_t qbt_fal_write(void *handle, size_t off, const void *buf, size_t 
 {
     if (fal_partition_write((fal_partition_t)handle, off, buf, len) < 0)
     {
+        LOG_E("FAL write fail, off=%u len=%u", (unsigned int)off, (unsigned int)len);
         return -RT_ERROR;
     }
     return RT_EOK;
@@ -121,26 +125,10 @@ static rt_err_t qbt_fal_size(void *handle, size_t *out_size)
 {
     if (out_size == RT_NULL)
     {
+        LOG_E("FAL size fail, out_size null");
         return -RT_ERROR;
     }
     *out_size = ((fal_partition_t)handle)->len;
-    return RT_EOK;
-}
-
-/**
- * @brief Probe firmware header from FAL partition.
- *
- * @param handle Partition handle.
- * @param info   Output firmware header.
- *
- * @return RT_EOK if header valid, negative error code otherwise.
- */
-static int qbt_fal_probe(void *handle, fw_info_t *info)
-{
-    if (qbt_fal_read(handle, 0, info, sizeof(fw_info_t)) != RT_EOK)
-    {
-        return -RT_ERROR;
-    }
     return RT_EOK;
 }
 
@@ -152,27 +140,17 @@ static int qbt_fal_probe(void *handle, fw_info_t *info)
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
-static int qbt_fal_sign_read(void *handle, bool *released)
+static rt_err_t qbt_fal_sign_read(void *handle, bool *released)
 {
     RT_UNUSED(handle);
     RT_UNUSED(released);
-    return -ENOSYS;
+    return -RT_ENOSYS;
 }
 
-static int qbt_fal_sign_write(void *handle)
+static rt_err_t qbt_fal_sign_write(void *handle)
 {
     RT_UNUSED(handle);
-    return -ENOSYS;
-}
-
-/**
- * @brief Write firmware metadata to tail of FAL partition.
- */
-static int qbt_fal_write_meta(void *handle, const fw_info_t *info)
-{
-    RT_UNUSED(handle);
-    RT_UNUSED(info);
-    return -ENOSYS;
+    return -RT_ENOSYS;
 }
 
 static const qboot_io_ops_t g_qboot_io_fal = {
@@ -185,14 +163,8 @@ static const qboot_io_ops_t g_qboot_io_fal = {
 };
 
 static const qboot_header_parser_ops_t g_qboot_header_parser_fal = {
-    .probe      = qbt_fal_probe,
     .sign_read  = qbt_fal_sign_read,
     .sign_write = qbt_fal_sign_write,
-};
-
-static const qboot_release_target_ops_t g_qboot_release_target_fal = {
-    .verify_crc = RT_NULL,
-    .write_meta = qbt_fal_write_meta,
 };
 
 /**
@@ -220,12 +192,7 @@ int qboot_register_storage_ops(void)
         LOG_E("Register header parser ops fail: %d", rst);
         return rst;
     }
-    rst = qboot_register_release_target_ops(&g_qboot_release_target_fal);
-    if (rst != RT_EOK)
-    {
-        LOG_E("Register release target ops fail: %d", rst);
-    }
-    return rst;
+    return RT_EOK;
 }
 
 #endif /* QBOOT_PKG_SOURCE_FAL */

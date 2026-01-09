@@ -130,7 +130,7 @@ typedef struct
 } fw_info_t;
 
 /**
- * @brief Common IO operations shared by sources and targets.
+ * @brief Common IO operations shared by sources and targets. must be non-NULL
  */
 typedef struct
 {
@@ -139,27 +139,17 @@ typedef struct
     rt_err_t (*read)(void *handle, size_t off, void *buf, size_t len);          /**< Read data from offset. */
     rt_err_t (*erase)(void *handle, size_t off, size_t len);                    /**< Erase destination region before write. */
     rt_err_t (*write)(void *handle, size_t off, const void *buf, size_t len);   /**< Write data to destination. */
-    rt_err_t (*size)(void *handle, size_t *out_size);                           /**< Optional: query total size; may be NULL if unused. */
+    rt_err_t (*size)(void *handle, size_t *out_size);                           /**< Query total size. */
 } qboot_io_ops_t;
 
 /**
- * @brief Header parser and package source operations.
+ * @brief Header parser and package source operations. must be non-NULL
  */
 typedef struct
 {
-    int (*probe)(void *handle, fw_info_t *info);                                /**< Parse/validate package header into info. */
-    int (*sign_read)(void *handle, bool *released);                             /**< Optional: check release sign; return -ENOSYS if not supported. */
-    int (*sign_write)(void *handle);                                            /**< Optional: write release sign; return -ENOSYS if not supported. */
+    rt_err_t (*sign_read)(void *handle, bool *released);                        /**< Check release sign (FS for released tags); return -RT_ENOSYS if unsupported (e.g. FAL). */
+    rt_err_t (*sign_write)(void *handle);                                       /**< Write release sign (FS for released tags); return -RT_ENOSYS if unsupported (e.g. FAL). */
 } qboot_header_parser_ops_t;
-
-/**
- * @brief Release target operations (where firmware is written to).
- */
-typedef struct
-{
-    int (*verify_crc)(void *handle, size_t off, size_t len, u32 expect_crc);    /**< Optional: CRC verify helper; can be NULL to skip. */
-    int (*write_meta)(void *handle, const fw_info_t *info);                     /**< Write firmware metadata/footer to destination. */
-} qboot_release_target_ops_t;
 
 /**
  * @brief User-provided hook to control when boot jumps to application.
@@ -174,7 +164,7 @@ typedef struct
 /**
  * @brief Register header parser/package source operations.
  *
- * @param ops Operation table; required fields must be non-NULL.
+ * @param ops Operation table; all callbacks must be non-NULL.
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
@@ -183,20 +173,11 @@ int qboot_register_header_parser_ops(const qboot_header_parser_ops_t *ops);
 /**
  * @brief Register header/package source IO operations.
  *
- * @param ops IO operation table; required fields must be non-NULL.
+ * @param ops IO operation table; all callbacks must be non-NULL.
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
 int qboot_register_header_io_ops(const qboot_io_ops_t *ops);
-
-/**
- * @brief Register release target operations.
- *
- * @param ops Operation table; required fields must be non-NULL.
- *
- * @return RT_EOK on success, negative error code otherwise.
- */
-int qboot_register_release_target_ops(const qboot_release_target_ops_t *ops);
 
 /**
  * @brief Register update callbacks.
