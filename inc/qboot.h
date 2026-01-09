@@ -30,6 +30,26 @@
 #define QBOOT_RELEASE_SIGN_ALIGN_SIZE   8//can is 4, 8, 16
 #define QBOOT_RELEASE_SIGN_WORD         0x5555AAAA
 
+#define QBOOT_ALGO_CRYPT_NONE           0
+#define QBOOT_ALGO_CRYPT_XOR            1
+#define QBOOT_ALGO_CRYPT_AES            2
+#define QBOOT_ALGO_CRYPT_LAST           QBOOT_ALGO_CRYPT_AES
+#define QBOOT_ALGO_CRYPT_COUNT          (QBOOT_ALGO_CRYPT_LAST + 1)
+#define QBOOT_ALGO_CRYPT_MASK           0x0F
+
+#define QBOOT_ALGO_CMPRS_NONE           (0 << 8)
+#define QBOOT_ALGO_CMPRS_GZIP           (1 << 8)
+#define QBOOT_ALGO_CMPRS_QUICKLZ        (2 << 8)
+#define QBOOT_ALGO_CMPRS_FASTLZ         (3 << 8)
+#define QBOOT_ALGO_CMPRS_HPATCHLITE     (4 << 8)
+#define QBOOT_ALGO_CMPRS_MASK           (0x1F << 8)
+#define QBOOT_ALGO_CMPRS_LAST           QBOOT_ALGO_CMPRS_HPATCHLITE
+#define QBOOT_ALGO_CMPRS_COUNT          ((QBOOT_ALGO_CMPRS_LAST >> 8) + 1)
+
+#define QBOOT_ALGO_TABLE_SIZE           (QBOOT_ALGO_CRYPT_COUNT + QBOOT_ALGO_CMPRS_COUNT)
+#define QBOOT_ALGO_CRYPTO_INDEX(id)     ((id))
+#define QBOOT_ALGO_CMPRS_INDEX(id)      (QBOOT_ALGO_CRYPT_COUNT + ((id) >> 8))
+
 #ifdef QBOOT_USING_STATUS_LED
 #ifndef QBOOT_STATUS_LED_PIN
 #define QBOOT_STATUS_LED_PIN            0
@@ -151,6 +171,32 @@ typedef struct
     rt_err_t (*sign_write)(void *handle, const fw_info_t *fw_info);              /**< Write release sign (FS for released tags); return -RT_ENOSYS if unsupported. */
 } qboot_header_parser_ops_t;
 
+typedef struct
+{
+    rt_err_t (*init)(void);                                /**< Optional initializer. */
+    rt_err_t (*decrypt)(u8 *out, const u8 *in, size_t len); /**< Decrypt output in-place. */
+    rt_err_t (*deinit)(void);                              /**< Optional cleanup. */
+} qboot_crypto_ops_t;
+
+typedef struct
+{
+    rt_err_t (*init)(void);                                /**< Optional initializer. */
+    rt_err_t (*process)(const u8 *in, size_t in_len,       /**< Streamed decompression. */
+                        u8 *out, size_t out_cap,
+                        size_t *consumed, size_t *produced,
+                        bool *finished);
+    rt_err_t (*deinit)(void);                              /**< Optional cleanup. */
+} qboot_cmprs_ops_t;
+
+typedef struct
+{
+    u16 algo_id;                                            /**< Algorithm identifier (encryption/compression). */
+    const qboot_crypto_ops_t *crypt;                        /**< NULL when no decryption is required. */
+    const qboot_cmprs_ops_t *cmprs;                         /**< NULL when no decompression is required. */
+    rt_err_t (*apply)(void *src_handle, void *dst_handle,   /**< Special apply routine (e.g. differential update). */
+                      fw_info_t *fw_info, size_t patch_offset);
+} qboot_algo_ops_t;
+
 /**
  * @brief User-provided hook to control when boot jumps to application.
  */
@@ -203,5 +249,23 @@ bool qbt_fw_info_check(fw_info_t *fw_info);
  * @return RT_EOK on success, negative error code otherwise.
  */
 int qboot_register_storage_ops(void);
+
+/**
+ * @brief Register algorithm ops for decrypt/compress handlers.
+ *
+ * The table size is auto-sized by the supported crypto/cmprs values. Each entry
+ * is identified either by the compression algo id or the encryption algo id when
+ * compression is not present. Passing the same algo twice returns -RT_ERROR.
+ */
+rt_err_t qboot_algo_register(const qboot_algo_ops_t *ops, u16 algo_id);
+
+/**
+ * @brief Find algorithm table entry.
+ *
+ * @param crypt_id Encryption algorithm id (QBOOT_ALGO_CRYPT_*).
+ * @param cmprs_id Compression algorithm id (QBOOT_ALGO_CMPRS_*).
+ * @return ops pointer or NULL when not registered.
+ */
+const qboot_algo_ops_t *qboot_algo_find(u16 algo_id);
 
 #endif

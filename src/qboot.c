@@ -65,18 +65,6 @@
 #endif
 
 
-#define QBOOT_ALGO_CRYPT_NONE           0
-#define QBOOT_ALGO_CRYPT_XOR            1
-#define QBOOT_ALGO_CRYPT_AES            2
-#define QBOOT_ALGO_CRYPT_MASK           0x0F
-
-#define QBOOT_ALGO_CMPRS_NONE           (0 << 8)
-#define QBOOT_ALGO_CMPRS_GZIP           (1 << 8)
-#define QBOOT_ALGO_CMPRS_QUICKLZ        (2 << 8)
-#define QBOOT_ALGO_CMPRS_FASTLZ         (3 << 8)
-#define QBOOT_ALGO_CMPRS_HPATCHLITE     (4 << 8)
-#define QBOOT_ALGO_CMPRS_MASK           (0x1F << 8)
-
 #define QBOOT_ALGO2_VERIFY_NONE         0
 #define QBOOT_ALGO2_VERIFY_CRC          1
 #define QBOOT_ALGO2_VERIFY_MASK         0x0F
@@ -98,6 +86,7 @@ static u8 gzip_remain_buf[GZIP_REMAIN_BUF_SIZE];
 static const qboot_header_parser_ops_t *_header_parser_ops = RT_NULL;
 static const qboot_io_ops_t *_header_io_ops = RT_NULL;
 static const qboot_update_ops_t *_update_ops = RT_NULL;
+static const qboot_algo_ops_t *g_algo_table[QBOOT_ALGO_TABLE_SIZE];
 
 /**
  * @brief Default jump decision; always allow.
@@ -167,6 +156,54 @@ int qboot_register_update(const qboot_update_ops_t *ops)
 
     _update_ops = ops;
     return RT_EOK;
+}
+
+static size_t qboot_algo_id_to_index(u16 algo_id)
+{
+    if ((algo_id & QBOOT_ALGO_CMPRS_MASK) != QBOOT_ALGO_CMPRS_NONE)
+    {
+        u16 cmprs_idx = (algo_id >> 8);
+        if (cmprs_idx >= QBOOT_ALGO_CMPRS_COUNT)
+        {
+            return QBOOT_ALGO_TABLE_SIZE;
+        }
+        return QBOOT_ALGO_CMPRS_INDEX(algo_id);
+    }
+
+    u16 crypt_id = algo_id & QBOOT_ALGO_CRYPT_MASK;
+    if (crypt_id >= QBOOT_ALGO_CRYPT_COUNT)
+    {
+        return QBOOT_ALGO_TABLE_SIZE;
+    }
+
+    return QBOOT_ALGO_CRYPTO_INDEX(crypt_id);
+}
+
+rt_err_t qboot_algo_register(const qboot_algo_ops_t *ops, u16 algo_id)
+{
+    if ((ops == RT_NULL) || ((ops->crypt == RT_NULL) && (ops->cmprs == RT_NULL) && (ops->apply == RT_NULL)))
+    {
+        return -RT_ERROR;
+    }
+
+    size_t idx = qboot_algo_id_to_index(algo_id);
+    if (idx >= QBOOT_ALGO_TABLE_SIZE || g_algo_table[idx] != RT_NULL)
+    {
+        return -RT_ERROR;
+    }
+
+    g_algo_table[idx] = ops;
+    return RT_EOK;
+}
+
+const qboot_algo_ops_t *qboot_algo_find(u16 algo_id)
+{
+    size_t idx = qboot_algo_id_to_index(algo_id);
+    if (idx >= QBOOT_ALGO_TABLE_SIZE)
+    {
+        return RT_NULL;
+    }
+    return g_algo_table[idx];
 }
 
 /**
