@@ -206,6 +206,22 @@ const qboot_algo_ops_t *qboot_algo_find(u16 algo_id)
     return g_algo_table[idx];
 }
 
+static int qbt_cmprs_type_from_ops(const qboot_algo_ops_t *algo_ops)
+{
+    return ((algo_ops != RT_NULL) && (algo_ops->cmprs != RT_NULL)) ? algo_ops->cmprs->algo_id : QBOOT_ALGO_CMPRS_NONE;
+}
+
+static const qboot_algo_ops_t *qbt_fw_get_algo_ops(const fw_info_t *fw_info, u16 *out_algo_id)
+{
+    u16 cmprs_id = fw_info->algo & QBOOT_ALGO_CMPRS_MASK;
+    u16 algo_id = (cmprs_id != QBOOT_ALGO_CMPRS_NONE) ? cmprs_id : (fw_info->algo & QBOOT_ALGO_CRYPT_MASK);
+    if (out_algo_id != RT_NULL)
+    {
+        *out_algo_id = algo_id;
+    }
+    return qboot_algo_find(algo_id);
+}
+
 /**
  * @brief Open target by name and optionally query size.
  *
@@ -339,113 +355,78 @@ static bool qbt_release_sign_write(void *handle, const char *name, fw_info_t *fw
     return true;
 }
 
-static bool qbt_fw_decrypt_init(int crypt_type)
+static bool qbt_fw_decrypt_init(const qboot_algo_ops_t *algo_ops)
 {
-    switch (crypt_type)
+    if ((algo_ops == RT_NULL) || (algo_ops->crypt == RT_NULL) || (algo_ops->crypt->init == RT_NULL))
     {
-    case QBOOT_ALGO_CRYPT_NONE:
-        break;
-
-    #ifdef QBOOT_USING_AES
-    case QBOOT_ALGO_CRYPT_AES:
-        qbt_aes_decrypt_init();
-        break;
-    #endif
-
-    default:
-        return(false);
-    }
-    
-    return(true);
-}
-
-static bool qbt_fw_decompress_init(int cmprs_type)
-{
-    switch (cmprs_type)
-    {
-    case QBOOT_ALGO_CMPRS_NONE:
-        break;
-        
-    #ifdef QBOOT_USING_GZIP
-    case QBOOT_ALGO_CMPRS_GZIP:
-        gzip_remain_len = 0;
-        qbt_gzip_init();
-        break;
-    #endif
-    
-    #ifdef QBOOT_USING_QUICKLZ
-    case QBOOT_ALGO_CMPRS_QUICKLZ:
-        qbt_quicklz_state_init();
-        break;
-    #endif
-
-    #ifdef QBOOT_USING_FASTLZ
-    case QBOOT_ALGO_CMPRS_FASTLZ:
-        break;
-    #endif
-    #ifdef QBOOT_USING_HPATCHLITE
-    case QBOOT_ALGO_CMPRS_HPATCHLITE:
-        break;
-    #endif
-    default:
-        return(false);
+        return(true);
     }
 
-    return(true);
+    return (algo_ops->crypt->init() == RT_EOK);
 }
 
-static bool qbt_fw_decompress_deinit(int cmprs_type)
+static void qbt_fw_decrypt_deinit(const qboot_algo_ops_t *algo_ops)
 {
-    switch (cmprs_type)
+    if ((algo_ops != RT_NULL) && (algo_ops->crypt != RT_NULL) && (algo_ops->crypt->deinit != RT_NULL))
     {
-    case QBOOT_ALGO_CMPRS_NONE:
-        break;
-        
-    #ifdef QBOOT_USING_GZIP
-    case QBOOT_ALGO_CMPRS_GZIP:
-        qbt_gzip_deinit();
-        break;
-    #endif
-    
-    #ifdef QBOOT_USING_QUICKLZ
-    case QBOOT_ALGO_CMPRS_QUICKLZ:
-        break;
-    #endif
-
-    #ifdef QBOOT_USING_FASTLZ
-    case QBOOT_ALGO_CMPRS_FASTLZ:
-        break;
-    #endif
-    
-    default:
-        return(false);
+        algo_ops->crypt->deinit();
     }
-    
-    return(true);
 }
 
-static bool qbt_fw_pkg_read(void *handle, u32 pos, u8 *buf, u32 read_len, u8 *crypt_buf, int crypt_type)
+static void qbt_fw_algo_cleanup(const qboot_algo_ops_t *algo_ops)
 {
-    switch(crypt_type)
+    qbt_fw_decompress_deinit(algo_ops);
+    qbt_fw_decrypt_deinit(algo_ops);
+}
+
+static bool qbt_fw_decompress_init(const qboot_algo_ops_t *algo_ops)
+{
+    if ((algo_ops == RT_NULL) || (algo_ops->cmprs == RT_NULL))
     {
-    case QBOOT_ALGO_CRYPT_NONE:
-        if (_header_io_ops->read(handle, pos, buf, read_len) != RT_EOK)
+        return true;
+    }
+
+    if (algo_ops->cmprs->init == RT_NULL)
+    {
+        return true;
+    }
+
+    return (algo_ops->cmprs->init() == RT_EOK);
+}
+
+static void qbt_fw_decompress_deinit(const qboot_algo_ops_t *algo_ops)
+{
+    if ((algo_ops != RT_NULL) && (algo_ops->cmprs != RT_NULL) && (algo_ops->cmprs->deinit != RT_NULL))
+    {
+        algo_ops->cmprs->deinit();
+    }
+}
+
+static bool qbt_fw_pkg_read(void *handle, u32 pos, u8 *buf, u32 read_len, u8 *crypt_buf, const qboot_algo_ops_t *algo_ops)
+{
+    if ((algo_ops != RT_NULL) && (algo_ops->crypt != RT_NULL))
+    {
+        if (_header_io_ops->read(handle, pos, crypt_buf, read_len) != RT_EOK)
         {
             return(false);
         }
-        break;
-    
-    #ifdef QBOOT_USING_AES    
-    case QBOOT_ALGO_CRYPT_AES:
-        if (_header_io_ops->read(handle, pos, crypt_buf, read_len) != RT_EOK)
-        {
-           return(false);
-        }
-        qbt_aes_decrypt(buf, crypt_buf, read_len);
-        break;
-    #endif
 
-    default:
+        if (algo_ops->crypt->decrypt == RT_NULL)
+        {
+            memcpy(buf, crypt_buf, read_len);
+            return(true);
+        }
+
+        if (algo_ops->crypt->decrypt(buf, crypt_buf, read_len) != RT_EOK)
+        {
+            return(false);
+        }
+
+        return(true);
+    }
+
+    if (_header_io_ops->read(handle, pos, buf, read_len) != RT_EOK)
+    {
         return(false);
     }
 
@@ -768,16 +749,24 @@ static bool qbt_app_crc_check(void *src_handle, const char *src_name, fw_info_t 
     u32 cmprs_len = 0;
     u32 app_cal_pos = 0;
     u32 src_read_pos = sizeof(fw_info_t);
-    int crypt_type = (fw_info->algo & QBOOT_ALGO_CRYPT_MASK);
-    int cmprs_type = (fw_info->algo & QBOOT_ALGO_CMPRS_MASK);
+    u16 algo_id;
+    const qboot_algo_ops_t *algo_ops = qbt_fw_get_algo_ops(fw_info, &algo_id);
 
-    if ( ! qbt_fw_decrypt_init(crypt_type))
+    if (algo_ops == RT_NULL)
+    {
+        LOG_E("Qboot app crc check fail. algo 0x%04X not registered.", algo_id);
+        return false;
+    }
+
+    int cmprs_type = qbt_cmprs_type_from_ops(algo_ops);
+
+    if ( ! qbt_fw_decrypt_init(algo_ops))
     {
         LOG_E("Qboot app crc check fail. nonsupport encrypt type.");
         return(false);
     }
 
-    if ( ! qbt_fw_decompress_init(cmprs_type))
+    if ( ! qbt_fw_decompress_init(algo_ops))
     {
         LOG_E("Qboot app crc check fail. nonsupport compress type.");
         return(false);
@@ -792,9 +781,9 @@ static bool qbt_app_crc_check(void *src_handle, const char *src_name, fw_info_t 
         {
             read_len = remain_len;
         }
-        if ( ! qbt_fw_pkg_read(src_handle, src_read_pos, cmprs_buf + cmprs_len, read_len, crypt_buf, crypt_type))
+        if ( ! qbt_fw_pkg_read(src_handle, src_read_pos, cmprs_buf + cmprs_len, read_len, crypt_buf, algo_ops))
         {
-            qbt_fw_decompress_deinit(cmprs_type);
+            qbt_fw_algo_cleanup(algo_ops);
             LOG_E("Qboot app crc check fail. read package error, part = %s, addr = %08X, length = %d", src_name, src_read_pos, read_len);
             return(false);
         }
@@ -805,14 +794,14 @@ static bool qbt_app_crc_check(void *src_handle, const char *src_name, fw_info_t 
         cal_len = qbt_app_crc_cal(&crc32, remain_len, crypt_buf, cmprs_buf, &cmprs_len, cmprs_type);
         if (cal_len < 0)
         {
-            qbt_fw_decompress_deinit(cmprs_type);
+            qbt_fw_algo_cleanup(algo_ops);
             LOG_E("Qboot app crc check fail. decompress error.");
             return(false);
         }
         app_cal_pos += cal_len;
     }
     
-    qbt_fw_decompress_deinit(cmprs_type);
+    qbt_fw_algo_cleanup(algo_ops);
     crc32 ^= 0xFFFFFFFF;
     if (crc32 != fw_info->raw_crc)
     {
@@ -829,16 +818,24 @@ static bool qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_na
     u32 cmprs_len = 0;
     u32 dst_write_pos = 0;
     u32 src_read_pos = sizeof(fw_info_t);
-    int crypt_type = (fw_info->algo & QBOOT_ALGO_CRYPT_MASK);
-    int cmprs_type = (fw_info->algo & QBOOT_ALGO_CMPRS_MASK);
+    u16 algo_id;
+    const qboot_algo_ops_t *algo_ops = qbt_fw_get_algo_ops(fw_info, &algo_id);
 
-    if ( ! qbt_fw_decrypt_init(crypt_type))
+    if (algo_ops == RT_NULL)
+    {
+        LOG_E("Qboot release firmware fail. algo 0x%04X not registered.", algo_id);
+        return false;
+    }
+
+    int cmprs_type = qbt_cmprs_type_from_ops(algo_ops);
+
+    if ( ! qbt_fw_decrypt_init(algo_ops))
     {
         LOG_E("Qboot release firmware fail. nonsupport encrypt type.");
         return(false);
     }
 
-    if ( ! qbt_fw_decompress_init(cmprs_type))
+    if ( ! qbt_fw_decompress_init(algo_ops))
     {
         LOG_E("Qboot release firmware fail. nonsupport compress type.");
         return(false);
@@ -860,7 +857,7 @@ static bool qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_na
     if ((_header_io_ops->erase(dst_handle, 0, fw_info->raw_size) != RT_EOK) 
         || (_header_io_ops->erase(dst_handle, dst_size - sizeof(fw_info_t), sizeof(fw_info_t)) != RT_EOK))
     {
-        qbt_fw_decompress_deinit(cmprs_type);
+        qbt_fw_algo_cleanup(algo_ops);
         LOG_E("Qboot release firmware fail. erase %s error.", dst_name);
         return(false);
     }
@@ -875,9 +872,9 @@ static bool qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_na
         {
             read_len = remain_len;
         }
-        if ( ! qbt_fw_pkg_read(src_handle, src_read_pos, cmprs_buf + cmprs_len, read_len, crypt_buf, crypt_type))
+        if ( ! qbt_fw_pkg_read(src_handle, src_read_pos, cmprs_buf + cmprs_len, read_len, crypt_buf, algo_ops))
         {
-            qbt_fw_decompress_deinit(cmprs_type);
+            qbt_fw_algo_cleanup(algo_ops);
             LOG_E("Qboot release firmware fail. read package error, part = %s, addr = %08X, length = %d", src_name, src_read_pos, read_len);
             return(false);
         }
@@ -887,7 +884,7 @@ static bool qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_na
         write_len = qbt_dest_part_write(dst_handle, dst_write_pos, crypt_buf, cmprs_buf, &cmprs_len, cmprs_type);
         if (write_len < 0)
         {
-            qbt_fw_decompress_deinit(cmprs_type);
+            qbt_fw_algo_cleanup(algo_ops);
             LOG_E("Qboot release firmware fail. write destination error, part = %s, addr = %08X", dst_name, dst_write_pos);
             return(false);
         }
@@ -898,7 +895,8 @@ static bool qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_na
     rt_kprintf("\n");
 
 done:
-    qbt_fw_decompress_deinit(cmprs_type);
+#endif
+    qbt_fw_algo_cleanup(algo_ops);
     if ( ! qbt_fw_info_write(dst_handle, dst_size, fw_info, true))
     {
         LOG_E("Qboot release firmware fail. write firmware to %s fail.", dst_name);
