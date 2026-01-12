@@ -130,6 +130,9 @@
 #define QBOOT_THREAD_PRIO               5
 #endif
 
+#if (defined(QBOOT_USING_AES) || defined(QBOOT_USING_GZIP) || defined(QBOOT_USING_QUICKLZ) || defined(QBOOT_USING_FASTLZ))
+#define QBOOT_USING_COMPRESSION
+#endif
 /**
  * @brief Firmware package header shared between boot and application.
  */
@@ -173,27 +176,25 @@ typedef struct
 
 typedef struct
 {
-    rt_err_t (*init)(void);                                /**< Optional initializer. */
-    rt_err_t (*decrypt)(u8 *out, const u8 *in, size_t len); /**< Decrypt output in-place. */
-    rt_err_t (*deinit)(void);                              /**< Optional cleanup. */
+    rt_err_t (*init)(void);                                /**< Optional initializer for decryption. */
+    rt_err_t (*decrypt)(u8 *out, const u8 *in, size_t len); /**< Decrypt input buffer of @p len bytes into @p out. */
+    rt_err_t (*deinit)(void);                              /**< Optional cleanup called after decrypt stage. */
 } qboot_crypto_ops_t;
 
 typedef struct
 {
-    rt_err_t (*init)(void);                                /**< Optional initializer. */
-    rt_err_t (*process)(const u8 *in, size_t in_len,       /**< Streamed decompression. */
-                        u8 *out, size_t out_cap,
-                        size_t *consumed, size_t *produced,
-                        bool *finished);
-    rt_err_t (*deinit)(void);                              /**< Optional cleanup. */
+    rt_err_t (*init)(void);                                /**< Optional initializer for decompression. */
+    int (*decompress)(const u8 *in, size_t in_len,     /**< One-shot decompression operator; must finish or return error. */
+                           u8 *out, size_t out_len, bool *finished);
+    rt_err_t (*deinit)(void);                              /**< Optional cleanup after decompression. */
 } qboot_cmprs_ops_t;
 
 typedef struct
 {
-    u16 algo_id;                                            /**< Algorithm identifier (encryption/compression). */
-    const qboot_crypto_ops_t *crypt;                        /**< NULL when no decryption is required. */
-    const qboot_cmprs_ops_t *cmprs;                         /**< NULL when no decompression is required. */
-    rt_err_t (*apply)(void *src_handle, void *dst_handle,   /**< Special apply routine (e.g. differential update). */
+    u16 algo_id;                                            /**< Algorithm identifier (compression/encryption). */
+    const qboot_crypto_ops_t *crypt;                       /**< NULL when no decryption stage required. */
+    const qboot_cmprs_ops_t *cmprs;                        /**< NULL when no decompression stage required. */
+    rt_err_t (*apply)(void *src_handle, void *dst_handle,   /**< Optional apply hook for differential updates. */
                       fw_info_t *fw_info, size_t patch_offset);
 } qboot_algo_ops_t;
 
@@ -255,7 +256,8 @@ int qboot_register_storage_ops(void);
  *
  * The table size is auto-sized by the supported crypto/cmprs values. Each entry
  * is identified either by the compression algo id or the encryption algo id when
- * compression is not present. Passing the same algo twice returns -RT_ERROR.
+ * compression is not present. Each registered entry must provide a non-NULL
+ * `cmprs->deprocess`. Passing the same algo twice returns -RT_ERROR.
  */
 rt_err_t qboot_algo_register(const qboot_algo_ops_t *ops, u16 algo_id);
 
@@ -267,5 +269,7 @@ rt_err_t qboot_algo_register(const qboot_algo_ops_t *ops, u16 algo_id);
  * @return ops pointer or NULL when not registered.
  */
 const qboot_algo_ops_t *qboot_algo_find(u16 algo_id);
+
+int qbt_algo_none_register(void);
 
 #endif

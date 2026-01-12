@@ -16,9 +16,6 @@
 #include <fal.h>
 #include <qboot.h>
 #include <qboot_aes.h>
-#include <qboot_gzip.h>
-#include <qboot_fastlz.h>
-#include <qboot_quicklz.h>
 #include <qboot_hpatchlite.h>
 #include <string.h>
 #ifdef QBOOT_USING_SHELL
@@ -70,11 +67,11 @@
 #define QBOOT_ALGO2_VERIFY_MASK         0x0F
 
 static fw_info_t fw_info;
-static u8 cmprs_buf[QBOOT_CMPRS_BUF_SIZE];
-#if (defined(QBOOT_USING_AES) || defined(QBOOT_USING_GZIP) || defined(QBOOT_USING_QUICKLZ) || defined(QBOOT_USING_FASTLZ))
-static u8 crypt_buf[QBOOT_BUF_SIZE];
+static u8 g_cmprs_buf[QBOOT_CMPRS_BUF_SIZE];    /* Decompression buffer. */
+#ifdef QBOOT_USING_COMPRESSION
+static u8 g_crypt_buf[QBOOT_BUF_SIZE];          /* Decryption buffer. */
 #else
-static u8 *crypt_buf = NULL;
+#define g_crypt_buf g_cmprs_buf
 #endif
 
 #ifdef QBOOT_USING_GZIP
@@ -87,6 +84,16 @@ static const qboot_header_parser_ops_t *_header_parser_ops = RT_NULL;
 static const qboot_io_ops_t *_header_io_ops = RT_NULL;
 static const qboot_update_ops_t *_update_ops = RT_NULL;
 static const qboot_algo_ops_t *g_algo_table[QBOOT_ALGO_TABLE_SIZE];
+
+#define QBT_REGISTER_ALGO(fn_call)                              \
+do                                                              \
+{                                                               \
+    if ((fn_call) != RT_EOK)                                    \
+    {                                                           \
+        LOG_E("Qboot register algorithm fail: %s", #fn_call);   \
+        return -RT_ERROR;                                       \
+    }                                                           \
+} while (0)
 
 /**
  * @brief Default jump decision; always allow.
@@ -179,9 +186,25 @@ static size_t qboot_algo_id_to_index(u16 algo_id)
     return QBOOT_ALGO_CRYPTO_INDEX(crypt_id);
 }
 
+/**
+ * @brief Register algorithm handlers for a specific algorithm identifier.
+ *
+ * A handler entry may omit crypt/cmprs/apply functions when the algorithm
+ * simply declares availability (e.g. raw storage).  The build-in table enforces
+ * uniqueness for each identifier and rejects invalid ids.
+ *
+ * @param ops      Algorithm handler table; required to be non-null.
+ * @param algo_id  Identifier derived from compression/encryption mode.
+ * @return RT_EOK on success, -RT_ERROR on invalid inputs or duplicate ids.
+ */
 rt_err_t qboot_algo_register(const qboot_algo_ops_t *ops, u16 algo_id)
 {
-    if ((ops == RT_NULL) || ((ops->crypt == RT_NULL) && (ops->cmprs == RT_NULL) && (ops->apply == RT_NULL)))
+    if ((ops == RT_NULL) || (ops->cmprs == RT_NULL) || (ops->cmprs->decompress == RT_NULL))
+    {
+        return -RT_ERROR;
+    }
+
+    if (ops->algo_id != algo_id)
     {
         return -RT_ERROR;
     }
@@ -204,11 +227,6 @@ const qboot_algo_ops_t *qboot_algo_find(u16 algo_id)
         return RT_NULL;
     }
     return g_algo_table[idx];
-}
-
-static int qbt_cmprs_type_from_ops(const qboot_algo_ops_t *algo_ops)
-{
-    return ((algo_ops != RT_NULL) && (algo_ops->cmprs != RT_NULL)) ? algo_ops->cmprs->algo_id : QBOOT_ALGO_CMPRS_NONE;
 }
 
 static const qboot_algo_ops_t *qbt_fw_get_algo_ops(const fw_info_t *fw_info, u16 *out_algo_id)
@@ -313,12 +331,12 @@ static bool qbt_fw_crc_check(void *handle, const char *name, u32 addr, u32 size,
         {
             read_len = gzip_remain_len;
         }
-        if (_header_io_ops->read(handle, addr + pos, cmprs_buf, read_len) != RT_EOK)
+        if (_header_io_ops->read(handle, addr + pos, g_cmprs_buf, read_len) != RT_EOK)
         {
             LOG_E("Qboot read firmware datas fail. part = %s, addr = %08X, length = %d", name, pos, read_len);
             return(false);
         }
-        crc32 = crc32_cyc_cal(crc32, cmprs_buf, read_len);
+        crc32 = crc32_cyc_cal(crc32, g_cmprs_buf, read_len);
         pos += read_len;
     }
     crc32 ^= 0xFFFFFFFF;
@@ -355,392 +373,136 @@ static bool qbt_release_sign_write(void *handle, const char *name, fw_info_t *fw
     return true;
 }
 
-static bool qbt_fw_decrypt_init(const qboot_algo_ops_t *algo_ops)
+static bool qbt_fw_algo_init(const qboot_algo_ops_t *algo_ops)
 {
-    if ((algo_ops == RT_NULL) || (algo_ops->crypt == RT_NULL) || (algo_ops->crypt->init == RT_NULL))
+    bool ret = true;
+    if (algo_ops->cmprs != RT_NULL && algo_ops->cmprs->init != RT_NULL)
     {
-        return(true);
+        ret = (algo_ops->cmprs->init() == RT_EOK);
     }
-
-    return (algo_ops->crypt->init() == RT_EOK);
+    if (algo_ops->crypt != RT_NULL && algo_ops->crypt->init != RT_NULL)
+    {
+        ret = (algo_ops->crypt->init() == RT_EOK);
+    }
+    return ret;
 }
 
-static void qbt_fw_decrypt_deinit(const qboot_algo_ops_t *algo_ops)
+static void qbt_fw_algo_deinit(const qboot_algo_ops_t *algo_ops)
 {
-    if ((algo_ops != RT_NULL) && (algo_ops->crypt != RT_NULL) && (algo_ops->crypt->deinit != RT_NULL))
+    if (algo_ops != RT_NULL)
     {
-        algo_ops->crypt->deinit();
-    }
-}
-
-static void qbt_fw_algo_cleanup(const qboot_algo_ops_t *algo_ops)
-{
-    qbt_fw_decompress_deinit(algo_ops);
-    qbt_fw_decrypt_deinit(algo_ops);
-}
-
-static bool qbt_fw_decompress_init(const qboot_algo_ops_t *algo_ops)
-{
-    if ((algo_ops == RT_NULL) || (algo_ops->cmprs == RT_NULL))
-    {
-        return true;
-    }
-
-    if (algo_ops->cmprs->init == RT_NULL)
-    {
-        return true;
-    }
-
-    return (algo_ops->cmprs->init() == RT_EOK);
-}
-
-static void qbt_fw_decompress_deinit(const qboot_algo_ops_t *algo_ops)
-{
-    if ((algo_ops != RT_NULL) && (algo_ops->cmprs != RT_NULL) && (algo_ops->cmprs->deinit != RT_NULL))
-    {
-        algo_ops->cmprs->deinit();
+        if((algo_ops->crypt != RT_NULL) && (algo_ops->crypt->deinit != RT_NULL))
+        {
+            algo_ops->crypt->deinit();
+        }
+        if ((algo_ops->cmprs != RT_NULL) && (algo_ops->cmprs->deinit != RT_NULL))
+        {
+            algo_ops->cmprs->deinit();
+        }
     }
 }
 
-static bool qbt_fw_pkg_read(void *handle, u32 pos, u8 *buf, u32 read_len, u8 *crypt_buf, const qboot_algo_ops_t *algo_ops)
+/**
+ * @brief Read a package fragment and optionally decrypt into caller buffer.
+ *
+ * @param src_handle  Source handle (partition/file) to read from.
+ * @param src_off     Byte offset within the source.
+ * @param out_buf     Output buffer for plaintext.
+ * @param crypt_buf   Scratch buffer for cipher text (may alias @p out_buf when no decrypt).
+ * @param read_len    Number of bytes to read.
+ * @param algo_ops    Algorithm ops describing decrypt handler; may be NULL for raw.
+ *
+ * @return true on success, false on read/decrypt failure.
+ */
+static bool qbt_fw_pkg_read(void *src_handle, u32 src_off, u8 *out_buf, u8 *crypt_buf, u32 read_len, const qboot_algo_ops_t *algo_ops)
 {
-    if ((algo_ops != RT_NULL) && (algo_ops->crypt != RT_NULL))
+    if (algo_ops->crypt != RT_NULL)
     {
-        if (_header_io_ops->read(handle, pos, crypt_buf, read_len) != RT_EOK)
+        if (_header_io_ops->read(src_handle, src_off, crypt_buf, read_len) != RT_EOK)
         {
             return(false);
         }
 
         if (algo_ops->crypt->decrypt == RT_NULL)
         {
-            memcpy(buf, crypt_buf, read_len);
+            memcpy(out_buf, crypt_buf, read_len);
             return(true);
         }
-
-        if (algo_ops->crypt->decrypt(buf, crypt_buf, read_len) != RT_EOK)
+        else
         {
-            return(false);
+            return (algo_ops->crypt->decrypt(out_buf, crypt_buf, read_len) == RT_EOK);
         }
-
-        return(true);
     }
-
-    if (_header_io_ops->read(handle, pos, buf, read_len) != RT_EOK)
+    else
     {
-        return(false);
+        return (_header_io_ops->read(src_handle, src_off, out_buf, read_len) == RT_EOK);
     }
-
-    return(true);
 }
 
-static int qbt_dest_part_write(void *handle, u32 pos, u8 *decmprs_buf, u8 *cmprs_buf, u32 *p_cmprs_len, int cmprs_type)
+/**
+ * @brief Decompress one chunk and write to destination.
+ *
+ * @param dst_handle   Destination handle (partition/file).
+ * @param dst_off      Destination offset to write to.
+ * @param out_buf      Buffer to receive decompressed data.
+ * @param cmprs_buf    Input compressed buffer.
+ * @param p_cmprs_len  [in/out] Length of compressed data available; cleared on success.
+ * @param algo_ops     Algorithm ops providing decompress handler.
+ *
+ * @return Produced length on success, -1 on error.
+ */
+static int qbt_dest_part_write(void *dst_handle, u32 dst_off, u8 *out_buf, u8 *cmprs_buf, u32 *p_cmprs_len, const qboot_algo_ops_t *algo_ops)
 {
-    int write_len = 0;
-    int cmprs_len = 0;
-    int decomp_len = 0;
-    int block_size = 0;
-    
-    cmprs_len = *p_cmprs_len;
-    
-    switch(cmprs_type)
+    int cmprs_len = (int)(*p_cmprs_len);
+    bool finished = false;
+    size_t produce_len;
+
+    produce_len = algo_ops->cmprs->decompress(cmprs_buf, cmprs_len, out_buf, QBOOT_BUF_SIZE, &finished);
+    if ((produce_len <= 0) || (produce_len > QBOOT_BUF_SIZE) || (!finished))
     {
-    case QBOOT_ALGO_CMPRS_NONE:
-        if (_header_io_ops->write(handle, pos, cmprs_buf, cmprs_len) != RT_EOK)
-        {
-            return(-1);
-        }
-        write_len = cmprs_len;
-        cmprs_len = 0;
-        break;
-        
-    #ifdef QBOOT_USING_GZIP
-    case QBOOT_ALGO_CMPRS_GZIP:
-        qbt_gzip_set_in(cmprs_buf, cmprs_len);
-        while(1)
-        {
-            bool is_end;
+        return -1;
+    }
 
-            memcpy(decmprs_buf, gzip_remain_buf, gzip_remain_len);
-            decomp_len = qbt_gzip_decompress(decmprs_buf + gzip_remain_len, QBOOT_BUF_SIZE - gzip_remain_len);
-            if (decomp_len < 0)
-            {
-                write_len = -1;
-                cmprs_len = 0;
-                break;
-            }
-            is_end = (decomp_len < (QBOOT_BUF_SIZE - gzip_remain_len));
-            decomp_len += gzip_remain_len;
-            gzip_remain_len = decomp_len % GZIP_REMAIN_BUF_SIZE;
-            decomp_len -= gzip_remain_len;
-            memcpy(gzip_remain_buf, decmprs_buf + decomp_len, gzip_remain_len);
-            if (decomp_len > 0)
-            {
-                if (_header_io_ops->write(handle, pos, decmprs_buf, decomp_len) != RT_EOK)
-                {
-                    write_len = -1;
-                    cmprs_len = 0;
-                    break;
-                }
-            }
-            pos += decomp_len;
-            write_len += decomp_len;
-            if (is_end && (cmprs_len < QBOOT_CMPRS_READ_SIZE) && (gzip_remain_len > 0))//last package and remain > 0
-            {
-                memset(gzip_remain_buf + gzip_remain_len, 0xFF, GZIP_REMAIN_BUF_SIZE - gzip_remain_len);
-                if (_header_io_ops->write(handle, pos, gzip_remain_buf, GZIP_REMAIN_BUF_SIZE) != RT_EOK)
-                {
-                    write_len = -1;
-                    cmprs_len = 0;
-                    break;
-                }
-                write_len += GZIP_REMAIN_BUF_SIZE;
-            }
-            if (is_end)
-            {
-                cmprs_len = 0;
-                break;
-            }
-        }
-        break;
-    #endif
-    
-    #ifdef QBOOT_USING_QUICKLZ
-    case QBOOT_ALGO_CMPRS_QUICKLZ:
-        while(1)
-        {
-            if (cmprs_len < QBOOT_QUICKLZ_BLOCK_HDR_SIZE)
-            {
-                break;
-            }
-            block_size = qbt_quicklz_get_block_size(cmprs_buf);
-            if (block_size <= 0)
-            {
-                break;
-            }
-            if (cmprs_len < block_size + QBOOT_QUICKLZ_BLOCK_HDR_SIZE)
-            {
-                break;
-            }
-            decomp_len = qbt_quicklz_decompress(decmprs_buf, cmprs_buf + QBOOT_QUICKLZ_BLOCK_HDR_SIZE);
-            if (decomp_len <= 0)
-            {
-                write_len = -1;
-                cmprs_len = 0;
-                break;
-            }
-            if (_header_io_ops->write(handle, pos, decmprs_buf, decomp_len) != RT_EOK)
-            {
-                write_len = -1;
-                cmprs_len = 0;
-                break;
-            }
-            pos += decomp_len;
-            write_len += decomp_len;
-            cmprs_len -= (block_size + QBOOT_QUICKLZ_BLOCK_HDR_SIZE);
-            memcpy(cmprs_buf, cmprs_buf + (block_size + QBOOT_QUICKLZ_BLOCK_HDR_SIZE), cmprs_len);
-        }
-        break;
-    #endif
+    if (_header_io_ops->write(dst_handle, dst_off, out_buf, produce_len) != RT_EOK)
+    {
+        return -1;
+    }
 
-    #ifdef QBOOT_USING_FASTLZ
-    case QBOOT_ALGO_CMPRS_FASTLZ:
-        while(1)
-        {
-            if (cmprs_len < QBOOT_FASTLZ_BLOCK_HDR_SIZE)
-            {
-                break;
-            }
-            block_size = qbt_fastlz_get_block_size(cmprs_buf);
-            if (block_size <= 0)
-            {
-                break;
-            }
-            if (cmprs_len < block_size + QBOOT_FASTLZ_BLOCK_HDR_SIZE)
-            {
-                break;
-            }
-            decomp_len = qbt_fastlz_decompress(decmprs_buf, QBOOT_BUF_SIZE, cmprs_buf + QBOOT_FASTLZ_BLOCK_HDR_SIZE, block_size);
-            if (decomp_len <= 0)
-            {
-                write_len = -1;
-                cmprs_len = 0;
-                break;
-            }
-            if (_header_io_ops->write(handle, pos, decmprs_buf, decomp_len) != RT_EOK)
-            {
-                write_len = -1;
-                cmprs_len = 0;
-                break;
-            }
-            pos += decomp_len;
-            write_len += decomp_len;
-            cmprs_len -= (block_size + QBOOT_FASTLZ_BLOCK_HDR_SIZE);
-            memcpy(cmprs_buf, cmprs_buf + (block_size + QBOOT_FASTLZ_BLOCK_HDR_SIZE), cmprs_len);
-        }
-        break;
-    #endif
-        
-    default:
-        write_len = -1;
-        cmprs_len = 0;
-        break;
-    }  
+    *p_cmprs_len = 0;
 
-    *p_cmprs_len = cmprs_len;
-    
-    return(write_len);
+    return produce_len;
 }
 
 #ifdef QBOOT_USING_APP_CHECK
-static int qbt_app_crc_cal(u32 *p_crc32, u32 max_cal_len, u8 *decmprs_buf, u8 *cmprs_buf, u32 *p_cmprs_len, int cmprs_type)
+/**
+ * @brief Decompress one chunk and accumulate CRC over the output.
+ *
+ * @param p_crc32      [in/out] CRC accumulator.
+ * @param max_cal_len  Remaining bytes to be calculated for CRC (raw side).
+ * @param out_buf      Buffer to receive decompressed data.
+ * @param cmprs_buf    Input compressed buffer.
+ * @param p_cmprs_len  [in/out] Length of compressed data available; cleared on success.
+ * @param algo_ops     Algorithm ops providing decompress handler.
+ *
+ * @return Produced length on success, -1 on error.
+ */
+static int qbt_app_crc_cal(u32 *p_crc32, u32 max_cal_len, u8 *out_buf, u8 *cmprs_buf, u32 *p_cmprs_len, const qboot_algo_ops_t *algo_ops)
 {
-    int write_len = 0;
-    int cmprs_len = 0;
-    int decomp_len = 0;
-    int block_size = 0;
-    
-    cmprs_len = *p_cmprs_len;
-    
-    switch(cmprs_type)
+    int cmprs_len = (int)(*p_cmprs_len);
+    bool finished = false;
+    size_t produce_len;
+
+    size_t out_len = (max_cal_len < QBOOT_BUF_SIZE) ? max_cal_len : QBOOT_BUF_SIZE;
+    produce_len = algo_ops->cmprs->decompress(cmprs_buf, cmprs_len, out_buf, out_len, &finished);
+    if ((produce_len <= 0) || (produce_len > out_len) || (!finished))
     {
-    case QBOOT_ALGO_CMPRS_NONE:
-        if (cmprs_len > max_cal_len)
-        {
-            cmprs_len = max_cal_len;
-        }
-        *p_crc32 = crc32_cyc_cal(*p_crc32, cmprs_buf, cmprs_len);
-        write_len = cmprs_len;
-        cmprs_len = 0;
-        break;
-        
-    #ifdef QBOOT_USING_GZIP
-    case QBOOT_ALGO_CMPRS_GZIP:
-        qbt_gzip_set_in(cmprs_buf, cmprs_len);
-        while(1)
-        {
-            bool is_end;
+        return -1;
+    }
 
-            memcpy(decmprs_buf, gzip_remain_buf, gzip_remain_len);
-            decomp_len = qbt_gzip_decompress(decmprs_buf + gzip_remain_len, QBOOT_BUF_SIZE - gzip_remain_len);
-            if (decomp_len < 0)
-            {
-                write_len = -1;
-                cmprs_len = 0;
-                break;
-            }
-            is_end = (decomp_len < (QBOOT_BUF_SIZE - gzip_remain_len));
-            decomp_len += gzip_remain_len;
-            gzip_remain_len = decomp_len % GZIP_REMAIN_BUF_SIZE;
-            decomp_len -= gzip_remain_len;
-            memcpy(gzip_remain_buf, decmprs_buf + decomp_len, gzip_remain_len);
-            if (decomp_len > 0)
-            {
-                if (decomp_len > max_cal_len)
-                {
-                    decomp_len = max_cal_len;
-                }
-                *p_crc32 = crc32_cyc_cal(*p_crc32, decmprs_buf, decomp_len);
-            }
-            write_len += decomp_len;
-            if (is_end && (cmprs_len < QBOOT_CMPRS_READ_SIZE) && (gzip_remain_len > 0))//last package and remain > 0
-            {
-                if (gzip_remain_len > max_cal_len)
-                {
-                    gzip_remain_len = max_cal_len;
-                }
-                *p_crc32 = crc32_cyc_cal(*p_crc32, gzip_remain_buf, gzip_remain_len);
-                write_len += gzip_remain_len;
-            }
-            if (is_end)
-            {
-                cmprs_len = 0;
-                break;
-            }
-        }
-        break;
-    #endif
-    
-    #ifdef QBOOT_USING_QUICKLZ    
-    case QBOOT_ALGO_CMPRS_QUICKLZ:
-        while(1)
-        {
-            if (cmprs_len < QBOOT_QUICKLZ_BLOCK_HDR_SIZE)
-            {
-                break;
-            }
-            block_size = qbt_quicklz_get_block_size(cmprs_buf);
-            if (block_size <= 0)
-            {
-                break;
-            }
-            if (cmprs_len < block_size + QBOOT_QUICKLZ_BLOCK_HDR_SIZE)
-            {
-                break;
-            }
-            decomp_len = qbt_quicklz_decompress(decmprs_buf, cmprs_buf + QBOOT_QUICKLZ_BLOCK_HDR_SIZE);
-            if (decomp_len <= 0)
-            {
-                write_len = -1;
-                cmprs_len = 0;
-                break;
-            }
-            if (decomp_len > max_cal_len)
-            {
-                decomp_len = max_cal_len;
-            }
-            *p_crc32 = crc32_cyc_cal(*p_crc32, decmprs_buf, decomp_len);
-            write_len += decomp_len;
-            cmprs_len -= (block_size + QBOOT_QUICKLZ_BLOCK_HDR_SIZE);
-            memcpy(cmprs_buf, cmprs_buf + (block_size + QBOOT_QUICKLZ_BLOCK_HDR_SIZE), cmprs_len);
-        }
-        break;
-    #endif
+    *p_crc32 = crc32_cyc_cal(*p_crc32, out_buf, produce_len);
+    *p_cmprs_len = 0;
 
-    #ifdef QBOOT_USING_FASTLZ
-    case QBOOT_ALGO_CMPRS_FASTLZ:
-        while(1)
-        {
-            if (cmprs_len < QBOOT_FASTLZ_BLOCK_HDR_SIZE)
-            {
-                break;
-            }
-            block_size = qbt_fastlz_get_block_size(cmprs_buf);
-            if (block_size <= 0)
-            {
-                break;
-            }
-            if (cmprs_len < block_size + QBOOT_FASTLZ_BLOCK_HDR_SIZE)
-            {
-                break;
-            }
-            decomp_len = qbt_fastlz_decompress(decmprs_buf, QBOOT_BUF_SIZE, cmprs_buf + QBOOT_FASTLZ_BLOCK_HDR_SIZE, block_size);
-            if (decomp_len <= 0)
-            {
-                write_len = -1;
-                cmprs_len = 0;
-                break;
-            }
-            if (decomp_len > max_cal_len)
-            {
-                decomp_len = max_cal_len;
-            }
-            *p_crc32 = crc32_cyc_cal(*p_crc32, decmprs_buf, decomp_len);
-            write_len += decomp_len;
-            cmprs_len -= (block_size + QBOOT_FASTLZ_BLOCK_HDR_SIZE);
-            memcpy(cmprs_buf, cmprs_buf + (block_size + QBOOT_FASTLZ_BLOCK_HDR_SIZE), cmprs_len);
-        }
-        break;
-    #endif
-        
-    default:
-        write_len = -1;
-        cmprs_len = 0;
-        break;
-    }  
-
-    *p_cmprs_len = cmprs_len;
-    
-    return(write_len);
+    return produce_len;
 }
 
 static bool qbt_app_crc_check(void *src_handle, const char *src_name, fw_info_t *fw_info)
@@ -750,6 +512,7 @@ static bool qbt_app_crc_check(void *src_handle, const char *src_name, fw_info_t 
     u32 app_cal_pos = 0;
     u32 src_read_pos = sizeof(fw_info_t);
     u16 algo_id;
+    int read_len = QBOOT_CMPRS_READ_SIZE;
     const qboot_algo_ops_t *algo_ops = qbt_fw_get_algo_ops(fw_info, &algo_id);
 
     if (algo_ops == RT_NULL)
@@ -758,32 +521,22 @@ static bool qbt_app_crc_check(void *src_handle, const char *src_name, fw_info_t 
         return false;
     }
 
-    int cmprs_type = qbt_cmprs_type_from_ops(algo_ops);
-
-    if ( ! qbt_fw_decrypt_init(algo_ops))
+    if ( ! qbt_fw_algo_init(algo_ops))
     {
-        LOG_E("Qboot app crc check fail. nonsupport encrypt type.");
-        return(false);
-    }
-
-    if ( ! qbt_fw_decompress_init(algo_ops))
-    {
-        LOG_E("Qboot app crc check fail. nonsupport compress type.");
+        LOG_E("Qboot app crc check fail. algo init fail");
         return(false);
     }
 
     while(app_cal_pos < fw_info->raw_size)
     {
-        int cal_len = 0;
-        int read_len = QBOOT_CMPRS_READ_SIZE;
         int remain_len = (fw_info->pkg_size + sizeof(fw_info_t) - src_read_pos);
         if (read_len > remain_len)
         {
             read_len = remain_len;
         }
-        if ( ! qbt_fw_pkg_read(src_handle, src_read_pos, cmprs_buf + cmprs_len, read_len, crypt_buf, algo_ops))
+        if ( ! qbt_fw_pkg_read(src_handle, src_read_pos, g_cmprs_buf + cmprs_len, g_crypt_buf, read_len, algo_ops))
         {
-            qbt_fw_algo_cleanup(algo_ops);
+            qbt_fw_algo_deinit(algo_ops);
             LOG_E("Qboot app crc check fail. read package error, part = %s, addr = %08X, length = %d", src_name, src_read_pos, read_len);
             return(false);
         }
@@ -791,17 +544,17 @@ static bool qbt_app_crc_check(void *src_handle, const char *src_name, fw_info_t 
         cmprs_len += read_len;
 
         remain_len = fw_info->raw_size - app_cal_pos;
-        cal_len = qbt_app_crc_cal(&crc32, remain_len, crypt_buf, cmprs_buf, &cmprs_len, cmprs_type);
+        int cal_len = qbt_app_crc_cal(&crc32, remain_len, g_crypt_buf, g_cmprs_buf, &cmprs_len, algo_ops);
         if (cal_len < 0)
         {
-            qbt_fw_algo_cleanup(algo_ops);
+            qbt_fw_algo_deinit(algo_ops);
             LOG_E("Qboot app crc check fail. decompress error.");
             return(false);
         }
         app_cal_pos += cal_len;
     }
     
-    qbt_fw_algo_cleanup(algo_ops);
+    qbt_fw_algo_deinit(algo_ops);
     crc32 ^= 0xFFFFFFFF;
     if (crc32 != fw_info->raw_crc)
     {
@@ -819,6 +572,7 @@ static bool qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_na
     u32 dst_write_pos = 0;
     u32 src_read_pos = sizeof(fw_info_t);
     u16 algo_id;
+    int read_len = QBOOT_CMPRS_READ_SIZE;
     const qboot_algo_ops_t *algo_ops = qbt_fw_get_algo_ops(fw_info, &algo_id);
 
     if (algo_ops == RT_NULL)
@@ -827,21 +581,14 @@ static bool qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_na
         return false;
     }
 
-    int cmprs_type = qbt_cmprs_type_from_ops(algo_ops);
-
-    if ( ! qbt_fw_decrypt_init(algo_ops))
+    if ( ! qbt_fw_algo_init(algo_ops))
     {
-        LOG_E("Qboot release firmware fail. nonsupport encrypt type.");
+        LOG_E("Qboot release firmware fail. algo init fail");
         return(false);
     }
 
-    if ( ! qbt_fw_decompress_init(algo_ops))
-    {
-        LOG_E("Qboot release firmware fail. nonsupport compress type.");
-        return(false);
-    }
     #ifdef QBOOT_USING_HPATCHLITE
-    if(cmprs_type == QBOOT_ALGO_CMPRS_HPATCHLITE)
+    if (algo_ops->algo_id == QBOOT_ALGO_CMPRS_HPATCHLITE)
     {
         if(qbt_hpatchlite_release_from_part((fal_partition_t)src_handle, (fal_partition_t)dst_handle, fw_info->pkg_size, fw_info->raw_size, sizeof(fw_info_t)) == true)
         {
@@ -857,34 +604,33 @@ static bool qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_na
     if ((_header_io_ops->erase(dst_handle, 0, fw_info->raw_size) != RT_EOK) 
         || (_header_io_ops->erase(dst_handle, dst_size - sizeof(fw_info_t), sizeof(fw_info_t)) != RT_EOK))
     {
-        qbt_fw_algo_cleanup(algo_ops);
+        qbt_fw_algo_deinit(algo_ops);
         LOG_E("Qboot release firmware fail. erase %s error.", dst_name);
         return(false);
     }
 
     rt_kprintf("Start release firmware to %s ...     ", dst_name);
+
     while(dst_write_pos < fw_info->raw_size)
     {
-        int write_len = 0;
-        int read_len = QBOOT_CMPRS_READ_SIZE;
         int remain_len = (fw_info->pkg_size + sizeof(fw_info_t) - src_read_pos);
         if (read_len > remain_len)
         {
             read_len = remain_len;
         }
-        if ( ! qbt_fw_pkg_read(src_handle, src_read_pos, cmprs_buf + cmprs_len, read_len, crypt_buf, algo_ops))
+        if ( ! qbt_fw_pkg_read(src_handle, src_read_pos, g_cmprs_buf + cmprs_len, g_crypt_buf, read_len, algo_ops))
         {
-            qbt_fw_algo_cleanup(algo_ops);
+            qbt_fw_algo_deinit(algo_ops);
             LOG_E("Qboot release firmware fail. read package error, part = %s, addr = %08X, length = %d", src_name, src_read_pos, read_len);
             return(false);
         }
         src_read_pos += read_len;
         cmprs_len += read_len;
         
-        write_len = qbt_dest_part_write(dst_handle, dst_write_pos, crypt_buf, cmprs_buf, &cmprs_len, cmprs_type);
+        int write_len = qbt_dest_part_write(dst_handle, dst_write_pos, g_crypt_buf, g_cmprs_buf, &cmprs_len, algo_ops);
         if (write_len < 0)
         {
-            qbt_fw_algo_cleanup(algo_ops);
+            qbt_fw_algo_deinit(algo_ops);
             LOG_E("Qboot release firmware fail. write destination error, part = %s, addr = %08X", dst_name, dst_write_pos);
             return(false);
         }
@@ -896,7 +642,7 @@ static bool qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_na
 
 done:
 #endif
-    qbt_fw_algo_cleanup(algo_ops);
+    qbt_fw_algo_deinit(algo_ops);
     if ( ! qbt_fw_info_write(dst_handle, dst_size, fw_info, true))
     {
         LOG_E("Qboot release firmware fail. write firmware to %s fail.", dst_name);
@@ -1451,6 +1197,11 @@ static void qbt_thread_entry(void *params)
 
 static int qbt_startup(void)
 {
+#ifdef QBOOT_ALGO_CRYPT_NONE
+    extern int qbt_algo_none_register(void);
+    QBT_REGISTER_ALGO(qbt_algo_none_register());
+#endif // QBOOT_ALGO_CRYPT_NONE
+
     rt_thread_t tid = rt_thread_create("Qboot", qbt_thread_entry, NULL, QBOOT_THREAD_STACK_SIZE, QBOOT_THREAD_PRIO, 20);
     if (tid == NULL)
     {
@@ -1485,12 +1236,12 @@ static bool qbt_fw_clone(void *dst_handle, const char *dst_name, void *src_handl
         {
             read_len = remain_len;
         }
-        if (_header_io_ops->read(src_handle, pos, cmprs_buf, read_len) != RT_EOK)
+        if (_header_io_ops->read(src_handle, pos, g_cmprs_buf, read_len) != RT_EOK)
         {
             LOG_E("Qboot clone firmware fail. read error, part = %s, addr = %08X, length = %d", src_name, pos, read_len);
             return(false);
         }
-        if (_header_io_ops->write(dst_handle, pos, cmprs_buf, read_len) != RT_EOK)
+        if (_header_io_ops->write(dst_handle, pos, g_cmprs_buf, read_len) != RT_EOK)
         {
             LOG_E("Qboot clone firmware fail. write error, part = %s, addr = %08X, length = %d", dst_name, pos, read_len);
             return(false);
