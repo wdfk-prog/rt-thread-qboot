@@ -181,11 +181,16 @@ typedef struct
     rt_err_t (*deinit)(void);                              /**< Optional cleanup called after decrypt stage. */
 } qboot_crypto_ops_t;
 
+/**
+ * @brief Decompression operation table.
+ */
 typedef struct
 {
     rt_err_t (*init)(void);                                /**< Optional initializer for decompression. */
-    int (*decompress)(const u8 *in, size_t in_len,     /**< One-shot decompression operator; must finish or return error. */
-                           u8 *out, size_t out_len, bool *finished);
+    rt_err_t (*decompress)(const u8 *in, size_t in_len,    /**< Decompress input buffer. */
+                      u8 *out, size_t out_len,             /**< Output buffer and capacity. */
+                      size_t *consumed, size_t *produced,  /**< Bytes consumed/produced. */
+                      bool *finished);                     /**< Set true when this call consumed all input. */
     rt_err_t (*deinit)(void);                              /**< Optional cleanup after decompression. */
 } qboot_cmprs_ops_t;
 
@@ -269,7 +274,5 @@ rt_err_t qboot_algo_register(const qboot_algo_ops_t *ops, u16 algo_id);
  * @return ops pointer or NULL when not registered.
  */
 const qboot_algo_ops_t *qboot_algo_find(u16 algo_id);
-
-int qbt_algo_none_register(void);
 
 #endif

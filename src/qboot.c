@@ -15,8 +15,6 @@
 #include <rtdevice.h>
 #include <fal.h>
 #include <qboot.h>
-#include <qboot_aes.h>
-#include <qboot_hpatchlite.h>
 #include <string.h>
 #ifdef QBOOT_USING_SHELL
 #include "shell.h"
@@ -27,6 +25,16 @@
 #ifdef QBOOT_USING_STATUS_LED
 #include <qled.h>
 #endif
+
+#ifdef QBOOT_USING_AES
+#include <qboot_aes.h>
+#endif /* QBOOT_USING_AES */
+#ifdef QBOOT_USING_QUICKLZ
+#include <qboot_quicklz.h>
+#endif /* QBOOT_USING_QUICKLZ */
+#ifdef QBOOT_USING_HPATCHLITE
+#include <qboot_hpatchlite.h>
+#endif /* QBOOT_USING_HPATCHLITE */
 
 //#define QBOOT_DEBUG
 #define QBOOT_USING_LOG
@@ -49,7 +57,7 @@
 
 #include <rtdbg.h>
 
-#define QBOOT_VER_MSG                   "V1.0.8 2025.01.07"
+#define QBOOT_VER_MSG                   "V1.1.0 2026.01.01"
 #define QBOOT_SHELL_PROMPT              "Qboot>"
 
 #define QBOOT_BUF_SIZE                  4096//must is 4096
@@ -73,6 +81,8 @@ static u8 g_crypt_buf[QBOOT_BUF_SIZE];          /* Decryption buffer. */
 #else
 #define g_crypt_buf g_cmprs_buf
 #endif
+/* Share a buffer to reduce memory allocation */
+#define g_decmprs_buf g_crypt_buf               /* Decompression output buffer. */
 
 #ifdef QBOOT_USING_GZIP
 #define GZIP_REMAIN_BUF_SIZE 32
@@ -440,80 +450,257 @@ static bool qbt_fw_pkg_read(void *src_handle, u32 src_off, u8 *out_buf, u8 *cryp
 }
 
 /**
- * @brief Decompress one chunk and write to destination.
+ * @brief Consumer callback for a decompressed output chunk.
  *
- * @param dst_handle   Destination handle (partition/file).
- * @param dst_off      Destination offset to write to.
- * @param out_buf      Buffer to receive decompressed data.
- * @param cmprs_buf    Input compressed buffer.
- * @param p_cmprs_len  [in/out] Length of compressed data available; cleared on success.
- * @param algo_ops     Algorithm ops providing decompress handler.
+ * @param buf Output data buffer.
+ * @param len Output data length.
+ * @param ctx User context provided by the caller.
  *
- * @return Produced length on success, -1 on error.
+ * @return RT_EOK on success, negative error code otherwise.
  */
-static int qbt_dest_part_write(void *dst_handle, u32 dst_off, u8 *out_buf, u8 *cmprs_buf, u32 *p_cmprs_len, const qboot_algo_ops_t *algo_ops)
+typedef rt_err_t (*qbt_cmprs_consumer_t)(const u8 *buf, size_t len, void *ctx);
+
+/**
+ * @brief Decompress compressed input and forward each produced chunk to a consumer.
+ *
+ * @param algo_ops     Algorithm ops providing decompress handler.
+ * @param cmprs_buf    Input compressed buffer.
+ * @param p_cmprs_len  [in/out] Available compressed length; leftover after return.
+ * @param out_buf      Output buffer for decompressed data.
+ * @param out_cap      Capacity of @p out_buf.
+ * @param max_out      Optional cap on total bytes to produce this call (0 for unlimited).
+ * @param consumer     Callback invoked for each produced chunk.
+ * @param consumer_ctx User data passed to @p consumer.
+ *
+ * @return Total produced length on success, -1 on error.
+ */
+static int qbt_decompress_with_consumer(const qboot_algo_ops_t *algo_ops, u8 *cmprs_buf, u32 *p_cmprs_len,
+                                        u8 *out_buf, size_t out_cap, size_t max_out,
+                                        qbt_cmprs_consumer_t consumer, void *consumer_ctx)
 {
-    int cmprs_len = (int)(*p_cmprs_len);
-    bool finished = false;
-    size_t produce_len;
+    size_t cmprs_len = *p_cmprs_len;
+    size_t total_out = 0;
+    size_t remaining = max_out;
+    bool limit_output = (max_out > 0);
 
-    produce_len = algo_ops->cmprs->decompress(cmprs_buf, cmprs_len, out_buf, QBOOT_BUF_SIZE, &finished);
-    if ((produce_len <= 0) || (produce_len > QBOOT_BUF_SIZE) || (!finished))
+    /* Keep looping while input exists and output budget allows. */
+    while ((cmprs_len > 0) && (!limit_output || (remaining > 0)))
     {
-        return -1;
+        size_t consumed = 0;
+        size_t produced = 0;
+        bool finished = false;
+        size_t cur_cap = (limit_output && (remaining < out_cap)) ? remaining : out_cap;
+
+        /* Ask algorithm to decompress one unit of input. */
+        rt_err_t rst = algo_ops->cmprs->decompress(cmprs_buf, cmprs_len, out_buf, cur_cap, &consumed, &produced, &finished);
+        if (rst == -RT_ENOSPC)
+        {
+            break; /* Need more input: keep buffered data for next round. */
+        }
+        if ((rst != RT_EOK) || (consumed > cmprs_len) || (produced > cur_cap))
+        {
+            *p_cmprs_len = (u32)cmprs_len;
+            return -1;
+        }
+
+        /* No progress and not finished means the algorithm needs more input. */
+        if ((consumed == 0) && (produced == 0) && (!finished))
+        {
+            break;
+        }
+        if ((consumed == 0) || (produced == 0))
+        {
+            *p_cmprs_len = (u32)cmprs_len;
+            return -1;
+        }
+
+        /* Forward produced data to the consumer. */
+        if ((consumer != RT_NULL) && (consumer(out_buf, produced, consumer_ctx) != RT_EOK))
+        {
+            *p_cmprs_len = (u32)cmprs_len;
+            return -1;
+        }
+
+        /* Accumulate output and enforce the optional total output cap. */
+        total_out += produced;
+        if (limit_output)
+        {
+            if (produced > remaining)
+            {
+                *p_cmprs_len = (u32)cmprs_len;
+                return -1;
+            }
+            remaining -= produced;
+        }
+
+        /* Drop consumed input and compact the buffer for the next iteration. */
+        cmprs_len -= consumed;
+        if (cmprs_len > 0)
+        {
+            rt_memmove(cmprs_buf, cmprs_buf + consumed, cmprs_len);
+        }
     }
 
-    if (_header_io_ops->write(dst_handle, dst_off, out_buf, produce_len) != RT_EOK)
+    /* Report remaining compressed data to the caller. */
+    *p_cmprs_len = (u32)cmprs_len;
+    return (int)total_out;
+}
+
+/**
+ * @brief Stream processor callback for decompression output.
+ *
+ * @param ctx        User context provided by the caller.
+ * @param raw_pos    Current raw output offset (bytes).
+ * @param remaining  Remaining raw bytes allowed to be produced.
+ * @param out_buf    Output buffer for decompressed data.
+ * @param cmprs_buf  Input compressed buffer.
+ * @param p_cmprs_len [in/out] Available compressed length; leftover after return.
+ * @param algo_ops   Algorithm ops providing decompress handler.
+ *
+ * @return Produced length on success, negative on error.
+ */
+typedef int (*qbt_stream_proc_t)(void *ctx, u32 raw_pos, u32 remaining, u8 *out_buf, u8 *cmprs_buf, u32 *p_cmprs_len, const qboot_algo_ops_t *algo_ops);
+
+/**
+ * @brief Progress callback for streaming operations.
+ *
+ * @param ctx       User context provided by the caller.
+ * @param raw_pos   Current raw output offset (bytes).
+ * @param raw_total Total raw size to be produced.
+ */
+typedef void (*qbt_stream_progress_t)(void *ctx, u32 raw_pos, u32 raw_total);
+
+/**
+ * @brief Fixed configuration for a stream processing operation.
+ */
+typedef struct
+{
+    void *src_handle;                 /**< Package source handle. */
+    const fw_info_t *fw_info;         /**< Firmware info header. */
+    const qboot_algo_ops_t *algo_ops; /**< Algorithm handler table. */
+    u8 *cmprs_buf;                    /**< Buffer to accumulate compressed input. */
+    u8 *out_buf;                      /**< Buffer to hold decompressed output. */
+    u8 *crypt_buf;                    /**< Scratch buffer for encrypted input. */
+} qbt_stream_cfg_t;
+
+/**
+ * @brief Stream package data, decompress, and consume output with strict raw-size limits.
+ *
+ * This function loops over the package content, reads compressed data into a staging
+ * buffer, calls the decompressor, and forwards produced data to @p proc. Each call
+ * enforces a maximum output length equal to the remaining raw size to avoid overruns.
+ *
+ * @param cfg          Stream configuration (package source and working buffers).
+ * @param proc         Output consumer invoked for each produced chunk.
+ * @param proc_ctx     User context for @p proc.
+ * @param progress     Optional progress callback.
+ * @param progress_ctx User context for @p progress.
+ *
+ * @return true on success, false on read or decompression/consume error.
+ */
+static bool qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_proc_t proc, void *proc_ctx, qbt_stream_progress_t progress, void *progress_ctx)
+{
+    /* Track package read position, raw output position, and buffered input length. */
+    u32 src_read_pos = sizeof(fw_info_t);
+    u32 raw_pos = 0;
+    u32 cmprs_len = 0;
+    int read_len = QBOOT_CMPRS_READ_SIZE;
+
+    /* Continue until the expected raw size has been produced. */
+    while (raw_pos < cfg->fw_info->raw_size)
     {
-        return -1;
+        /* Limit read length to remaining package bytes. */
+        int remain_len = (cfg->fw_info->pkg_size + sizeof(fw_info_t) - src_read_pos);
+        if (read_len > remain_len)
+        {
+            read_len = remain_len;
+        }
+
+        /* Read (and decrypt if required) into the tail of the compressed buffer. */
+        if ( ! qbt_fw_pkg_read(cfg->src_handle, src_read_pos, cfg->cmprs_buf + cmprs_len, cfg->crypt_buf, read_len, cfg->algo_ops))
+        {
+            LOG_E("Qboot stream read pkg error. addr=%08X, len=%d", src_read_pos, read_len);
+            return false;
+        }
+
+        /* Advance read position and update buffered compressed length. */
+        src_read_pos += read_len;
+        cmprs_len += (u32)read_len;
+
+        /* Enforce strict raw output cap based on remaining expected size. */
+        u32 remaining = cfg->fw_info->raw_size - raw_pos;
+        int out_len = proc(proc_ctx, raw_pos, remaining, cfg->out_buf, cfg->cmprs_buf, &cmprs_len, cfg->algo_ops);
+        if (out_len < 0)
+        {
+            LOG_E("Qboot stream process error. addr=%08X", raw_pos);
+            return false;
+        }
+
+        /* Advance raw output position and report progress. */
+        raw_pos += (u32)out_len;
+        if (progress != RT_NULL)
+        {
+            progress(progress_ctx, raw_pos, cfg->fw_info->raw_size);
+        }
     }
 
-    *p_cmprs_len = 0;
-
-    return produce_len;
+    return true;
 }
 
 #ifdef QBOOT_USING_APP_CHECK
 /**
- * @brief Decompress one chunk and accumulate CRC over the output.
+ * @brief CRC consumer for a decompressed output chunk.
  *
- * @param p_crc32      [in/out] CRC accumulator.
- * @param max_cal_len  Remaining bytes to be calculated for CRC (raw side).
- * @param out_buf      Buffer to receive decompressed data.
- * @param cmprs_buf    Input compressed buffer.
- * @param p_cmprs_len  [in/out] Length of compressed data available; cleared on success.
- * @param algo_ops     Algorithm ops providing decompress handler.
+ * @param buf Output data buffer.
+ * @param len Output data length.
+ * @param ctx CRC accumulator pointer (u32 *).
  *
- * @return Produced length on success, -1 on error.
+ * @return RT_EOK on success.
  */
-static int qbt_app_crc_cal(u32 *p_crc32, u32 max_cal_len, u8 *out_buf, u8 *cmprs_buf, u32 *p_cmprs_len, const qboot_algo_ops_t *algo_ops)
+static rt_err_t qbt_crc_chunk_consumer(const u8 *buf, size_t len, void *ctx)
 {
-    int cmprs_len = (int)(*p_cmprs_len);
-    bool finished = false;
-    size_t produce_len;
-
-    size_t out_len = (max_cal_len < QBOOT_BUF_SIZE) ? max_cal_len : QBOOT_BUF_SIZE;
-    produce_len = algo_ops->cmprs->decompress(cmprs_buf, cmprs_len, out_buf, out_len, &finished);
-    if ((produce_len <= 0) || (produce_len > out_len) || (!finished))
-    {
-        return -1;
-    }
-
-    *p_crc32 = crc32_cyc_cal(*p_crc32, out_buf, produce_len);
-    *p_cmprs_len = 0;
-
-    return produce_len;
+    u32 *crc_acc = (u32 *)ctx;
+    *crc_acc = crc32_cyc_cal(*crc_acc, (u8 *)buf, len);
+    return RT_EOK;
 }
 
+/**
+ * @brief Stream processor to update CRC from decompressed data.
+ *
+ * @param ctx        CRC accumulator pointer (u32 *).
+ * @param raw_pos    Current raw output offset (unused).
+ * @param remaining  Remaining raw bytes allowed to be produced.
+ * @param out_buf    Output buffer for decompressed data.
+ * @param cmprs_buf  Input compressed buffer.
+ * @param p_cmprs_len [in/out] Available compressed length; leftover after return.
+ * @param algo_ops   Algorithm ops providing decompress handler.
+ *
+ * @return Produced length on success, negative on error.
+ */
+static int qbt_stream_crc_proc(void *ctx, u32 raw_pos, u32 remaining, u8 *out_buf, u8 *cmprs_buf, u32 *p_cmprs_len, const qboot_algo_ops_t *algo_ops)
+{
+    RT_UNUSED(raw_pos);
+    u32 *crc_acc = (u32 *)ctx;
+    return qbt_decompress_with_consumer(algo_ops, cmprs_buf, p_cmprs_len, out_buf, QBOOT_BUF_SIZE, remaining, qbt_crc_chunk_consumer, crc_acc);
+}
+
+/**
+ * @brief Stream and verify application CRC using the selected algorithm.
+ *
+ * @param src_handle Package source handle.
+ * @param src_name   Source name (unused, retained for signature compatibility).
+ * @param fw_info    Firmware info header.
+ *
+ * @return true on success, false on error or CRC mismatch.
+ */
 static bool qbt_app_crc_check(void *src_handle, const char *src_name, fw_info_t *fw_info)
 {
+    bool ret = true;
     u32 crc32 = 0xFFFFFFFF;
-    u32 cmprs_len = 0;
-    u32 app_cal_pos = 0;
-    u32 src_read_pos = sizeof(fw_info_t);
     u16 algo_id;
-    int read_len = QBOOT_CMPRS_READ_SIZE;
     const qboot_algo_ops_t *algo_ops = qbt_fw_get_algo_ops(fw_info, &algo_id);
+
+    RT_UNUSED(src_name);
 
     if (algo_ops == RT_NULL)
     {
@@ -527,53 +714,120 @@ static bool qbt_app_crc_check(void *src_handle, const char *src_name, fw_info_t 
         return(false);
     }
 
-    while(app_cal_pos < fw_info->raw_size)
+    qbt_stream_cfg_t stream_cfg =
     {
-        int remain_len = (fw_info->pkg_size + sizeof(fw_info_t) - src_read_pos);
-        if (read_len > remain_len)
-        {
-            read_len = remain_len;
-        }
-        if ( ! qbt_fw_pkg_read(src_handle, src_read_pos, g_cmprs_buf + cmprs_len, g_crypt_buf, read_len, algo_ops))
-        {
-            qbt_fw_algo_deinit(algo_ops);
-            LOG_E("Qboot app crc check fail. read package error, part = %s, addr = %08X, length = %d", src_name, src_read_pos, read_len);
-            return(false);
-        }
-        src_read_pos += read_len;
-        cmprs_len += read_len;
+        .src_handle = src_handle,
+        .fw_info = fw_info,
+        .algo_ops = algo_ops,
+        .cmprs_buf = g_cmprs_buf,
+        .out_buf = g_decmprs_buf,
+        .crypt_buf = g_crypt_buf,
+    };
 
-        remain_len = fw_info->raw_size - app_cal_pos;
-        int cal_len = qbt_app_crc_cal(&crc32, remain_len, g_crypt_buf, g_cmprs_buf, &cmprs_len, algo_ops);
-        if (cal_len < 0)
-        {
-            qbt_fw_algo_deinit(algo_ops);
-            LOG_E("Qboot app crc check fail. decompress error.");
-            return(false);
-        }
-        app_cal_pos += cal_len;
-    }
-    
-    qbt_fw_algo_deinit(algo_ops);
-    crc32 ^= 0xFFFFFFFF;
-    if (crc32 != fw_info->raw_crc)
+    if ( ! qbt_fw_stream_process(&stream_cfg, qbt_stream_crc_proc, &crc32, RT_NULL, RT_NULL))
     {
-        LOG_E("Qboot app crc check fail. cal.crc: %08X != raw.crc: %08X", crc32, fw_info->raw_crc);
-        return(false);
+        ret = false;
+        LOG_E("Qboot app crc check fail. decompress error.");
     }
-    
-    return(true);
+    else
+    {
+        crc32 ^= 0xFFFFFFFF;
+        if (crc32 != fw_info->raw_crc)
+        {
+            LOG_E("Qboot app crc check fail. cal.crc: %08X != raw.crc: %08X", crc32, fw_info->raw_crc);
+            ret = false;
+        }
+        else
+        {
+            ret = true;
+        }
+    }
+
+    qbt_fw_algo_deinit(algo_ops);
+    return ret;
 }
 #endif
 
+/**
+ * @brief Write context for output consumer.
+ */
+typedef struct
+{
+    void *handle; /**< Destination handle. */
+    u32 offset;   /**< Current write offset. */
+} qbt_write_ctx_t;
+
+/**
+ * @brief Output consumer that writes produced data to destination storage.
+ *
+ * @param buf Output data buffer.
+ * @param len Output data length.
+ * @param ctx Write context (qbt_write_ctx_t *).
+ *
+ * @return RT_EOK on success, negative error code on failure.
+ */
+static rt_err_t qbt_write_chunk_consumer(const u8 *buf, size_t len, void *ctx)
+{
+    qbt_write_ctx_t *w = (qbt_write_ctx_t *)ctx;
+    if (_header_io_ops->write(w->handle, w->offset, buf, len) != RT_EOK)
+    {
+        return -RT_ERROR;
+    }
+    w->offset += (u32)len;
+    return RT_EOK;
+}
+
+/**
+ * @brief Stream processor to write decompressed data to destination storage.
+ *
+ * @param ctx        Destination handle.
+ * @param raw_pos    Current raw output offset (write position).
+ * @param remaining  Remaining raw bytes allowed to be produced.
+ * @param out_buf    Output buffer for decompressed data.
+ * @param cmprs_buf  Input compressed buffer.
+ * @param p_cmprs_len [in/out] Available compressed length; leftover after return.
+ * @param algo_ops   Algorithm ops providing decompress handler.
+ *
+ * @return Produced length on success, negative on error.
+ */
+static int qbt_stream_write_proc(void *ctx, u32 raw_pos, u32 remaining, u8 *out_buf, u8 *cmprs_buf,
+                                 u32 *p_cmprs_len, const qboot_algo_ops_t *algo_ops)
+{
+    qbt_write_ctx_t write_ctx = { ctx, raw_pos };
+    return qbt_decompress_with_consumer(algo_ops, cmprs_buf, p_cmprs_len, out_buf, QBOOT_BUF_SIZE, remaining, qbt_write_chunk_consumer, &write_ctx);
+}
+
+/**
+ * @brief Progress callback for firmware release.
+ *
+ * @param ctx       Unused context.
+ * @param raw_pos   Current raw output offset (bytes).
+ * @param raw_total Total raw size to be produced.
+ */
+static void qbt_release_progress(void *ctx, u32 raw_pos, u32 raw_total)
+{
+    RT_UNUSED(ctx);
+    rt_kprintf("\b\b\b%02d%%", (raw_pos * 100 / raw_total));
+}
+
+/**
+ * @brief Release firmware package to the destination partition.
+ *
+ * @param dst_handle Destination handle (partition/file).
+ * @param dst_size   Destination total size.
+ * @param dst_name   Destination name.
+ * @param src_handle Source package handle.
+ * @param src_name   Source name (unused, retained for signature compatibility).
+ * @param fw_info    Firmware info header.
+ *
+ * @return true on success, false on error.
+ */
 static bool qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_name, void *src_handle, const char *src_name, fw_info_t *fw_info)
 {
-    u32 cmprs_len = 0;
-    u32 dst_write_pos = 0;
-    u32 src_read_pos = sizeof(fw_info_t);
     u16 algo_id;
-    int read_len = QBOOT_CMPRS_READ_SIZE;
     const qboot_algo_ops_t *algo_ops = qbt_fw_get_algo_ops(fw_info, &algo_id);
+
+    RT_UNUSED(src_name);
 
     if (algo_ops == RT_NULL)
     {
@@ -610,33 +864,20 @@ static bool qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_na
     }
 
     rt_kprintf("Start release firmware to %s ...     ", dst_name);
+    qbt_stream_cfg_t stream_cfg = {
+        .src_handle = src_handle,
+        .fw_info = fw_info,
+        .algo_ops = algo_ops,
+        .cmprs_buf = g_cmprs_buf,
+        .out_buf = g_decmprs_buf,
+        .crypt_buf = g_crypt_buf,
+    };
 
-    while(dst_write_pos < fw_info->raw_size)
+    if ( ! qbt_fw_stream_process(&stream_cfg, qbt_stream_write_proc, dst_handle, qbt_release_progress, RT_NULL))
     {
-        int remain_len = (fw_info->pkg_size + sizeof(fw_info_t) - src_read_pos);
-        if (read_len > remain_len)
-        {
-            read_len = remain_len;
-        }
-        if ( ! qbt_fw_pkg_read(src_handle, src_read_pos, g_cmprs_buf + cmprs_len, g_crypt_buf, read_len, algo_ops))
-        {
-            qbt_fw_algo_deinit(algo_ops);
-            LOG_E("Qboot release firmware fail. read package error, part = %s, addr = %08X, length = %d", src_name, src_read_pos, read_len);
-            return(false);
-        }
-        src_read_pos += read_len;
-        cmprs_len += read_len;
-        
-        int write_len = qbt_dest_part_write(dst_handle, dst_write_pos, g_crypt_buf, g_cmprs_buf, &cmprs_len, algo_ops);
-        if (write_len < 0)
-        {
-            qbt_fw_algo_deinit(algo_ops);
-            LOG_E("Qboot release firmware fail. write destination error, part = %s, addr = %08X", dst_name, dst_write_pos);
-            return(false);
-        }
-        dst_write_pos += write_len;
-
-        rt_kprintf("\b\b\b%02d%%", (dst_write_pos * 100 / fw_info->raw_size));
+        qbt_fw_algo_deinit(algo_ops);
+        LOG_E("Qboot release firmware fail. stream process to %s fail.", dst_name);
+        return(false);
     }
     rt_kprintf("\n");
 
@@ -1201,6 +1442,10 @@ static int qbt_startup(void)
     extern int qbt_algo_none_register(void);
     QBT_REGISTER_ALGO(qbt_algo_none_register());
 #endif // QBOOT_ALGO_CRYPT_NONE
+
+#ifdef QBOOT_USING_QUICKLZ
+    QBT_REGISTER_ALGO(qbt_algo_quicklz_register());
+#endif // QBOOT_USING_QUICKLZ
 
     rt_thread_t tid = rt_thread_create("Qboot", qbt_thread_entry, NULL, QBOOT_THREAD_STACK_SIZE, QBOOT_THREAD_PRIO, 20);
     if (tid == NULL)

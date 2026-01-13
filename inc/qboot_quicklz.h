@@ -18,6 +18,7 @@
 void qbt_quicklz_state_init(void);
 u32 qbt_quicklz_get_block_size(const u8 *comp_datas);
 u32 qbt_quicklz_decompress(u8 *out_buf, const u8 *in_buf);
+int qbt_algo_quicklz_register(void);
 
 #endif
 

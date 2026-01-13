@@ -20,6 +20,9 @@
 
 #ifdef QBOOT_PKG_SOURCE_FAL
 
+#define DBG_TAG "qb_fal"
+#define DBG_LVL DBG_INFO
+#include <rtdbg.h>
 /**
  * @brief Open FAL partition by name.
  *
@@ -167,16 +170,16 @@ static rt_err_t qbt_fal_sign_write(void *handle, const fw_info_t *fw_info)
 }
 
 static const qboot_io_ops_t g_qboot_io_fal = {
-    .open  = qbt_fal_open,
+    .open = qbt_fal_open,
     .close = qbt_fal_close,
-    .read  = qbt_fal_read,
+    .read = qbt_fal_read,
     .erase = qbt_fal_erase,
     .write = qbt_fal_write,
-    .size  = qbt_fal_size,
+    .size = qbt_fal_size,
 };
 
 static const qboot_header_parser_ops_t g_qboot_header_parser_fal = {
-    .sign_read  = qbt_fal_sign_read,
+    .sign_read = qbt_fal_sign_read,
     .sign_write = qbt_fal_sign_write,
 };
 
