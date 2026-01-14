@@ -182,15 +182,55 @@ typedef struct
 } qboot_crypto_ops_t;
 
 /**
+ * @brief Purpose of a stream decompression pass.
+ */
+typedef enum
+{
+    QBT_STREAM_WRITE = 0, /**< Produce output for writing to destination. */
+    QBT_STREAM_CRC   = 1, /**< Produce output only for CRC calculation. */
+} qbt_stream_purpose_t;
+
+/**
+ * @brief Input/output buffers for a single decompress call.
+ */
+typedef struct
+{
+    const u8 *in;   /**< Input buffer pointer. */
+    size_t in_len;  /**< Input buffer length. */
+    u8 *out;        /**< Output buffer pointer. */
+    size_t out_len; /**< Output buffer capacity. */
+} qbt_cmprs_buf_t;
+
+/**
+ * @brief Decompress call results.
+ */
+typedef struct
+{
+    size_t consumed; /**< Bytes consumed from input. */
+    size_t produced; /**< Bytes produced to output. */
+    bool finished;   /**< True when this call reaches stream end. */
+} qbt_cmprs_result_t;
+
+/**
+ * @brief Decompression stream context passed to each decompress call.
+ */
+typedef struct
+{
+    size_t cmprs_total;           /**< Total compressed length; 0 when unknown. */
+    size_t cmprs_consumed;        /**< Compressed bytes consumed before this call. */
+    size_t raw_remaining;         /**< Remaining raw bytes allowed to be produced (0 for unlimited). */
+    qbt_stream_purpose_t purpose; /**< Stream purpose (write/CRC). */
+} qbt_cmprs_ctx_t;
+
+/**
  * @brief Decompression operation table.
  */
 typedef struct
 {
     rt_err_t (*init)(void);                                /**< Optional initializer for decompression. */
-    rt_err_t (*decompress)(const u8 *in, size_t in_len,    /**< Decompress input buffer. */
-                      u8 *out, size_t out_len,             /**< Output buffer and capacity. */
-                      size_t *consumed, size_t *produced,  /**< Bytes consumed/produced. */
-                      bool *finished);                     /**< Set true when this call consumed all input. */
+    rt_err_t (*decompress)(const qbt_cmprs_buf_t *buf,     /**< Input/output buffers. */
+                      qbt_cmprs_result_t *result,          /**< Decompress results. */
+                      const qbt_cmprs_ctx_t *ctx);         /**< Stream context for this call. */
     rt_err_t (*deinit)(void);                              /**< Optional cleanup after decompression. */
 } qboot_cmprs_ops_t;
 

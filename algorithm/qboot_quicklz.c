@@ -70,71 +70,57 @@ u32 qbt_quicklz_decompress(u8 *out_buf, const u8 *in_buf)
 /**
  * @brief One-shot decompress handler for QuickLZ blocks.
  *
- * @param in         Input buffer containing a whole QuickLZ block (with header).
- * @param in_len     Length of input buffer.
- * @param out        Output buffer for decompressed data.
- * @param out_len    Capacity of output buffer.
- * @param consumed   [out] Bytes consumed from input.
- * @param produced   [out] Bytes produced to output.
- * @param finished   Output flag set true when the full block is consumed.
+ * @param buf        Input/output buffers.
+ * @param result     [out] Decompress results.
+ * @param ctx        Decompression stream context (unused for QuickLZ).
  *
  * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or -RT_ERROR on failure.
  */
-static rt_err_t qbt_algo_quicklz_decompress(const u8 *in, size_t in_len, u8 *out, size_t out_len,
-                                            size_t *consumed, size_t *produced, bool *finished)
+static rt_err_t qbt_algo_quicklz_decompress(const qbt_cmprs_buf_t *buf, qbt_cmprs_result_t *result,
+                                            const qbt_cmprs_ctx_t *ctx)
 {
+    RT_UNUSED(ctx);
     u32 block_size;
     u32 need_len;
     int decomp_len;
 
-    if ((in == RT_NULL) || (out == RT_NULL) || (finished == RT_NULL) || (consumed == RT_NULL) || (produced == RT_NULL))
+    if (buf->in_len < QBOOT_QUICKLZ_BLOCK_HDR_SIZE)
     {
-        return -RT_ERROR;
-    }
-
-    if (in_len < QBOOT_QUICKLZ_BLOCK_HDR_SIZE)
-    {
-        *consumed = 0;
-        *produced = 0;
-        *finished = false;
         return -RT_ENOSPC;
     }
 
-    block_size = qbt_quicklz_get_block_size(in);
+    block_size = qbt_quicklz_get_block_size(buf->in);
     need_len = block_size + QBOOT_QUICKLZ_BLOCK_HDR_SIZE;
     if (block_size == 0)
     {
         return -RT_ERROR;
     }
-    else if (need_len > (int)out_len)
+    else if (need_len > (int)buf->out_len)
     {
-        LOG_W("Qboot quicklz decompress warn. need_len=%u > out_len=%u", need_len, (u32)out_len);
-        decomp_len = (int)out_len;
+        LOG_W("Qboot quicklz decompress warn. need_len=%u > out_len=%u", need_len, (u32)buf->out_len);
+        decomp_len = (int)buf->out_len;
     }
 
-    if (in_len < need_len)
+    if (buf->in_len < need_len)
     {
-        *consumed = 0;
-        *produced = 0;
-        *finished = false;
         return -RT_ENOSPC;
     }
 
-    decomp_len = (int)qbt_quicklz_decompress(out, in + QBOOT_QUICKLZ_BLOCK_HDR_SIZE);
+    decomp_len = (int)qbt_quicklz_decompress(buf->out, buf->in + QBOOT_QUICKLZ_BLOCK_HDR_SIZE);
     if (decomp_len <= 0)
     {
         LOG_E("Qboot quicklz decompress error. decomp_len=%d <= 0", decomp_len);
         return -RT_ERROR;
     }
-    else if (decomp_len > (int)out_len)
+    else if (decomp_len > (int)buf->out_len)
     {
-        LOG_W("Qboot quicklz decompress warn. decomp_len=%d > out_len=%u", decomp_len, (u32)out_len);
-        decomp_len = (int)out_len;
+        LOG_W("Qboot quicklz decompress warn. decomp_len=%d > out_len=%u", decomp_len, (u32)buf->out_len);
+        decomp_len = (int)buf->out_len;
     }
 
-    *consumed = need_len;
-    *produced = (size_t)decomp_len;
-    *finished = true;
+    result->consumed = need_len;
+    result->produced = (size_t)decomp_len;
+    result->finished = true;
     return RT_EOK;
 }
 

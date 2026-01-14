@@ -19,36 +19,34 @@
 /**
  * @brief Pass-through decompress handler for NONE algorithm.
  *
- * Simply forwards input to output. When @p in and @p out are the same buffer,
+ * Simply forwards input to output. When input and output buffers are the same,
  * no copy is performed.
  *
- * @param in        Compressed input buffer (raw data for NONE).
- * @param in_len    Length of @p in.
- * @param out       Output buffer for decompressed data.
- * @param out_len   Capacity of @p out.
- * @param consumed  [out] Bytes consumed from @p in.
- * @param produced  [out] Bytes produced to @p out.
- * @param finished  Output flag: set true when all input is consumed.
+ * @param buf       Input/output buffers.
+ * @param result    [out] Decompress results.
+ * @param ctx       Decompression stream context (unused for NONE).
  *
- * @return Produced length on success; negative error code on invalid arguments.
+ * @return RT_EOK on success; negative error code on invalid arguments.
  */
-static rt_err_t qbt_algo_none_decompress(const u8 *in, size_t in_len, u8 *out, size_t out_len, size_t *consumed, size_t *produced, bool *finished)
+static rt_err_t qbt_algo_none_decompress(const qbt_cmprs_buf_t *buf, qbt_cmprs_result_t *result,
+                                         const qbt_cmprs_ctx_t *ctx)
 {
+    RT_UNUSED(ctx);
 #ifdef QBOOT_USING_COMPRESSION
-    size_t copy_len = (in_len < out_len) ? in_len : out_len;
-    if (copy_len > 0)
+    size_t copy_len = (buf->in_len < buf->out_len) ? buf->in_len : buf->out_len;
+    if ((copy_len > 0) && (buf->in != buf->out))
     {
-        memcpy(out, in, copy_len);
+        rt_memcpy(buf->out, buf->in, copy_len);
     }
-    *finished = (copy_len == in_len);
-    *consumed = copy_len;
-    *produced = copy_len;
+    result->finished = (copy_len == buf->in_len);
+    result->consumed = copy_len;
+    result->produced = copy_len;
 #else
-    if (in == out)
+    if (buf->in == buf->out)
     {
-        *consumed = in_len;
-        *produced = in_len;
-        *finished = true;
+        result->consumed = buf->in_len;
+        result->produced = buf->in_len;
+        result->finished = true;
     }
 #endif /* QBOOT_USING_COMPRESSION */
     return RT_EOK;
