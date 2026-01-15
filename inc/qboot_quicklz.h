@@ -16,8 +16,8 @@
 #define QBOOT_QUICKLZ_BLOCK_HDR_SIZE    4
 
 void qbt_quicklz_state_init(void);
-u32 qbt_quicklz_get_block_size(const u8 *comp_datas);
-u32 qbt_quicklz_decompress(u8 *out_buf, const u8 *in_buf);
+rt_uint32_t qbt_quicklz_get_block_size(const rt_uint8_t *comp_datas);
+rt_uint32_t qbt_quicklz_decompress(rt_uint8_t *out_buf, const rt_uint8_t *in_buf);
 int qbt_algo_quicklz_register(void);
 
 #endif

@@ -28,7 +28,7 @@ void qbt_gzip_init(void);
  * @param in_buf  Input buffer pointer.
  * @param in_size Input buffer length.
  */
-void qbt_gzip_set_in(const u8 *in_buf, u32 in_size);
+void qbt_gzip_set_in(const rt_uint8_t *in_buf, rt_uint32_t in_size);
 
 /**
  * @brief Decompress gzip data into the output buffer.
@@ -38,7 +38,7 @@ void qbt_gzip_set_in(const u8 *in_buf, u32 in_size);
  *
  * @return Produced length on success, negative zlib error code on failure.
  */
-int qbt_gzip_decompress(u8 *out_buf, u32 out_buf_size);
+int qbt_gzip_decompress(rt_uint8_t *out_buf, rt_uint32_t out_buf_size);
 
 /**
  * @brief Deinitialize gzip decompression state.

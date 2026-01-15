@@ -12,9 +12,7 @@
  * Date       Version Author      Description
  * 2026-01-12 1.0     wdfk-prog   first version
  */
-#include <rtthread.h>
 #include <qboot.h>
-#include <string.h>
 
 /**
  * @brief Pass-through decompress handler for NONE algorithm.

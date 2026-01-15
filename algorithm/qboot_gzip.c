@@ -9,6 +9,7 @@
  */
 
 #include <qboot_gzip.h>
+#include <qboot.h>
 
 #ifdef QBOOT_USING_GZIP
 
@@ -22,7 +23,7 @@
 /** Gzip inflate stream context. */
 static z_stream qbt_strm;
 /** Remainder buffer for alignment handling. */
-static u8 qbt_gzip_remain_buf[GZIP_REMAIN_BUF_SIZE];
+static rt_uint8_t qbt_gzip_remain_buf[GZIP_REMAIN_BUF_SIZE];
 /** Length of valid data in @ref qbt_gzip_remain_buf. */
 static size_t qbt_gzip_remain_len = 0;
 
@@ -31,7 +32,7 @@ static size_t qbt_gzip_remain_len = 0;
  */
 void qbt_gzip_init(void)
 {
-    memset((u8 *)&qbt_strm, 0, sizeof(qbt_strm));
+    memset((rt_uint8_t *)&qbt_strm, 0, sizeof(qbt_strm));
     inflateInit2(&qbt_strm, 47);
     qbt_gzip_remain_len = 0;
 }
@@ -42,7 +43,7 @@ void qbt_gzip_init(void)
  * @param in_buf  Input buffer pointer.
  * @param in_size Input buffer length.
  */
-void qbt_gzip_set_in(const u8 *in_buf, u32 in_size)
+void qbt_gzip_set_in(const rt_uint8_t *in_buf, rt_uint32_t in_size)
 {
     qbt_strm.next_in = (void *)in_buf;
     qbt_strm.avail_in = in_size;
@@ -56,7 +57,7 @@ void qbt_gzip_set_in(const u8 *in_buf, u32 in_size)
  *
  * @return Produced length on success, negative zlib error code on failure.
  */
-int qbt_gzip_decompress(u8 *out_buf, u32 out_buf_size)
+int qbt_gzip_decompress(rt_uint8_t *out_buf, rt_uint32_t out_buf_size)
 {
     int ret;
 
@@ -98,8 +99,8 @@ int qbt_gzip_decompress(u8 *out_buf, u32 out_buf_size)
  */
 static rt_err_t qbt_algo_gzip_decompress(const qbt_stream_buf_t *buf, qbt_stream_status_t *out, const qbt_stream_ctx_t *ctx)
 {
-    bool pad_output = false;                                 /**< Whether to pad tail output. */
-    bool last_chunk = false;                                 /**< Whether current input reaches stream end. */
+    rt_bool_t pad_output = RT_FALSE;                                 /**< Whether to pad tail output. */
+    rt_bool_t last_chunk = RT_FALSE;                                 /**< Whether current input reaches stream end. */
 
     pad_output = (ctx->purpose == QBT_STREAM_WRITE);         /**< Enable padding for write path. */
     if (ctx->total > 0)                                /**< Determine if this is the last chunk. */
@@ -110,7 +111,7 @@ static rt_err_t qbt_algo_gzip_decompress(const qbt_stream_buf_t *buf, qbt_stream
 
     if (qbt_gzip_remain_len > buf->out_len)                  /**< Ensure output buffer fits remainder. */
     {
-        LOG_E("Qboot gzip decompress error. remain_len=%u > out_len=%u", (u32)qbt_gzip_remain_len, (u32)buf->out_len);
+        LOG_E("Qboot gzip decompress error. remain_len=%u > out_len=%u", (rt_uint32_t)qbt_gzip_remain_len, (rt_uint32_t)buf->out_len);
         return -RT_ERROR;
     }
 
@@ -121,19 +122,19 @@ static rt_err_t qbt_algo_gzip_decompress(const qbt_stream_buf_t *buf, qbt_stream
         rt_memcpy(buf->out, qbt_gzip_remain_buf, qbt_gzip_remain_len);
     }
     int decomp_len = 0;                                      /**< Bytes decompressed by inflate. */
-    bool is_end = false;                                     /**< Track stream end. */
+    rt_bool_t is_end = RT_FALSE;                                     /**< Track stream end. */
     if (buf->in_len == 0)                                    /**< No input bytes provided. */
     {
         if (!last_chunk || (qbt_gzip_remain_len == 0))       /**< Not at end or nothing to flush. */
         {
             return -RT_ENOSPC;                               /**< Request more input. */
         }
-        is_end = true;                                       /**< Allow flush of remainder at stream end. */
+        is_end = RT_TRUE;                                       /**< Allow flush of remainder at stream end. */
     }
     else                                                     /**< Input data available. */
     {
-        qbt_gzip_set_in(buf->in, (u32)buf->in_len);          /**< Feed input to zlib stream. */
-        decomp_len = qbt_gzip_decompress(buf->out + qbt_gzip_remain_len, (u32)(buf->out_len - qbt_gzip_remain_len)); /**< Decompress into output buffer. */
+        qbt_gzip_set_in(buf->in, (rt_uint32_t)buf->in_len);          /**< Feed input to zlib stream. */
+        decomp_len = qbt_gzip_decompress(buf->out + qbt_gzip_remain_len, (rt_uint32_t)(buf->out_len - qbt_gzip_remain_len)); /**< Decompress into output buffer. */
         if (decomp_len < 0)
         {
             LOG_E("Qboot gzip decompress error. ret=%d", decomp_len);
@@ -180,12 +181,12 @@ static rt_err_t qbt_algo_gzip_decompress(const qbt_stream_buf_t *buf, qbt_stream
     }
     if (out->produced == 0)                                  /**< Produced nothing in a successful call. */
     {
-        LOG_E("Qboot gzip decompress error. consumed=%u produced=%u end=%d", (u32)out->consumed, (u32)out->produced, is_end);
+        LOG_E("Qboot gzip decompress error. consumed=%u produced=%u end=%d", (rt_uint32_t)out->consumed, (rt_uint32_t)out->produced, is_end);
         return -RT_ERROR;
     }
     if ((out->consumed == 0) && (buf->in_len > 0))           /**< Consumed nothing with non-empty input. */
     {
-        LOG_E("Qboot gzip decompress error. consumed=%u produced=%u end=%d", (u32)out->consumed, (u32)out->produced, is_end);
+        LOG_E("Qboot gzip decompress error. consumed=%u produced=%u end=%d", (rt_uint32_t)out->consumed, (rt_uint32_t)out->produced, is_end);
         return -RT_ERROR;
     }
 

@@ -14,8 +14,8 @@
      
 #define QBOOT_FASTLZ_BLOCK_HDR_SIZE    4
      
-u32 qbt_fastlz_get_block_size(const u8 *comp_datas);
-u32 qbt_fastlz_decompress(u8 *out_buf, u32 out_buf_size, const u8 *in_buf, u32 block_size);
+rt_uint32_t qbt_fastlz_get_block_size(const rt_uint8_t *comp_datas);
+rt_uint32_t qbt_fastlz_decompress(rt_uint8_t *out_buf, rt_uint32_t out_buf_size, const rt_uint8_t *in_buf, rt_uint32_t block_size);
 
 #endif
 

@@ -12,11 +12,8 @@
  * Date       Version Author      Description
  * 2026-01-07 1.0     wdfk-prog   first version
  */
-#include <rtthread.h>
-#include <fal.h>
 #include <qboot.h>
-#include <errno.h>
-#include <rtdbg.h>
+#include <fal.h>
 
 #ifdef QBOOT_PKG_SOURCE_FAL
 
@@ -142,12 +139,12 @@ static rt_err_t qbt_fal_size(void *handle, size_t *out_size)
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
-static rt_err_t qbt_fal_sign_read(void *handle, bool *released, const fw_info_t *fw_info)
+static rt_err_t qbt_fal_sign_read(void *handle, rt_bool_t *released, const fw_info_t *fw_info)
 {
     fal_partition_t part = (fal_partition_t)handle;
     size_t pos = (((sizeof(fw_info_t) + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
-    u32 release_sign = 0;
-    if (fal_partition_read(part, pos, (u8 *)&release_sign, sizeof(u32)) < 0)
+    rt_uint32_t release_sign = 0;
+    if (fal_partition_read(part, pos, (rt_uint8_t *)&release_sign, sizeof(rt_uint32_t)) < 0)
     {
         LOG_E("FAL sign read fail at pos=%u.", (unsigned int)pos);
         return -RT_ERROR;
@@ -159,9 +156,9 @@ static rt_err_t qbt_fal_sign_read(void *handle, bool *released, const fw_info_t 
 static rt_err_t qbt_fal_sign_write(void *handle, const fw_info_t *fw_info)
 {
     fal_partition_t part = (fal_partition_t)handle;
-    u32 release_sign = QBOOT_RELEASE_SIGN_WORD;
+    rt_uint32_t release_sign = QBOOT_RELEASE_SIGN_WORD;
     size_t pos = (((sizeof(fw_info_t) + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
-    if (fal_partition_write(part, pos, (u8 *)&release_sign, sizeof(u32)) < 0)
+    if (fal_partition_write(part, pos, (rt_uint8_t *)&release_sign, sizeof(rt_uint32_t)) < 0)
     {
         LOG_E("FAL sign write fail at pos=%u.", (unsigned int)pos);
         return -RT_ERROR;

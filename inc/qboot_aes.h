@@ -14,7 +14,7 @@
 #ifdef QBOOT_USING_AES
 
 void qbt_aes_decrypt_init(void);
-void qbt_aes_decrypt(u8 *dst_buf, const u8 *src_buf, u32 len);
+void qbt_aes_decrypt(rt_uint8_t *dst_buf, const rt_uint8_t *src_buf, rt_uint32_t len);
 
 #endif
 

@@ -17,9 +17,8 @@
 #include <qboot_quicklz.h>
 
 #ifdef QBOOT_USING_QUICKLZ
-
+#include <qboot.h>
 #include <quicklz.h>
-#include <string.h>
 
 #define DBG_TAG "qb_quicklz"
 #define DBG_LVL DBG_INFO
@@ -33,7 +32,7 @@ static qlz_state_decompress qbt_quicklz_state;
  */
 void qbt_quicklz_state_init(void)
 {
-    memset((u8 *)&qbt_quicklz_state, 0, sizeof(qbt_quicklz_state));
+    rt_memset((rt_uint8_t *)&qbt_quicklz_state, 0, sizeof(qbt_quicklz_state));
 }
 
 /**
@@ -43,9 +42,9 @@ void qbt_quicklz_state_init(void)
  *
  * @return Block size parsed from the header (big-endian).
  */
-u32 qbt_quicklz_get_block_size(const u8 *comp_datas)
+rt_uint32_t qbt_quicklz_get_block_size(const rt_uint8_t *comp_datas)
 {
-    u32 block_size = 0;
+    rt_uint32_t block_size = 0;
     for (int i = 0; i < QBOOT_QUICKLZ_BLOCK_HDR_SIZE; i++)
     {
         block_size <<= 8;
@@ -62,7 +61,7 @@ u32 qbt_quicklz_get_block_size(const u8 *comp_datas)
  *
  * @return Decompressed length.
  */
-u32 qbt_quicklz_decompress(u8 *out_buf, const u8 *in_buf)
+rt_uint32_t qbt_quicklz_decompress(rt_uint8_t *out_buf, const rt_uint8_t *in_buf)
 {
     return (qlz_decompress((char *)in_buf, out_buf, &qbt_quicklz_state));
 }
@@ -79,8 +78,8 @@ u32 qbt_quicklz_decompress(u8 *out_buf, const u8 *in_buf)
 static rt_err_t qbt_algo_quicklz_decompress(const qbt_stream_buf_t *buf, qbt_stream_status_t *out, const qbt_stream_ctx_t *ctx)
 {
     RT_UNUSED(ctx);
-    u32 block_size;
-    u32 need_len;
+    rt_uint32_t block_size;
+    rt_uint32_t need_len;
     int decomp_len;
 
     if (buf->in_len < QBOOT_QUICKLZ_BLOCK_HDR_SIZE)
@@ -96,7 +95,7 @@ static rt_err_t qbt_algo_quicklz_decompress(const qbt_stream_buf_t *buf, qbt_str
     }
     else if (need_len > (int)buf->out_len)
     {
-        LOG_W("Qboot quicklz decompress warn. need_len=%u > out_len=%u", need_len, (u32)buf->out_len);
+        LOG_W("Qboot quicklz decompress warn. need_len=%u > out_len=%u", need_len, (rt_uint32_t)buf->out_len);
         decomp_len = (int)buf->out_len;
     }
 
@@ -113,7 +112,7 @@ static rt_err_t qbt_algo_quicklz_decompress(const qbt_stream_buf_t *buf, qbt_str
     }
     else if (decomp_len > (int)buf->out_len)
     {
-        LOG_W("Qboot quicklz decompress warn. decomp_len=%d > out_len=%u", decomp_len, (u32)buf->out_len);
+        LOG_W("Qboot quicklz decompress warn. decomp_len=%d > out_len=%u", decomp_len, (rt_uint32_t)buf->out_len);
         decomp_len = (int)buf->out_len;
     }
 
