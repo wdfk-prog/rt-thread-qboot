@@ -18,27 +18,32 @@ qboot
 │   │   极简版Bootloader制作.md        // 极简bootloader制作示例
 │   └───qboot状态指示灯说明.md          // 状态指示灯说明
 ├───inc                               // 头文件目录
-│   │   qboot.h                       // 主模块头文件
+│   │   qboot.h                       // 统一头文件（聚合 include）
+│   │   qboot_cfg.h                   // 配置宏/分区名等
+│   │   qboot_ops.h                   // fw_info/IO/parser/update ops
+│   │   qboot_algo.h                  // algo id/ops 定义
+│   │   qboot_stream.h                // 流处理类型/接口
 │   │   qboot_aes.h                   // aes解密模块头文件
-│   │   qboot_fastlz.h                // fastlz解压模块头文件
-│   │   qboot_gzip.h                  // gzip解压模块头文件
 │   │   qboot_hpatchlite.h            // hpatchlite解压模块头文件
-│   └───qboot_quicklz.h     	      // quicklz解压模块头文件
 ├── src/                              // 源码目录
 │   ├── qboot.c                       // 主流程/调度
+│   ├── qboot_ops.c                   // ops 注册/固件头读写
+│   ├── qboot_algo.c                  // 算法表/注册与查找
+│   ├── qboot_stream.c                // 流式解压/consumer 链
 │   └── qboot_fal_ops.c               // FAL后端
 ├── algorithm/                        // 压缩/解密等算法实现
 │   │   qboot_aes.c                   // AES 解密模块
+│   │   qboot_algo_none.c             // NONE 算法模块
 │   │   qboot_fastlz.c                // fastlz 解压模块
 │   │   qboot_gzip.c                  // gzip 解压模块
 │   │   qboot_hpatchlite.c            // hpatchlite 差分模块
-│   └───qboot_quicklz                 // quicklz 解压模块
+│   └───qboot_quicklz.c               // quicklz 解压模块
 ├── platform/                         // MCU/平台适配
 │   ├── qboot_at32.c                  // AT32 系列移植
 │   ├── qboot_gd32.c                  // GD32 系列移植
-│   ├── qboot_qboot_hc32f460.c        // HC32F460 平台移植
-│   ├── qboot_qboot_n32.c             // N32 系列移植
-│   └── qboot_qboot_stm32.c           // STM32 系列移植
+│   ├── qboot_hc32f460.c              // HC32F460 平台移植
+│   ├── qboot_n32.c                   // N32 系列移植
+│   └── qboot_stm32.c                 // STM32 系列移植
 ├───tools                             // 工具目录
 │   │   package_tool.py               // 差分包头生成脚本
 │   └───QBootPackager_V1.00.zip       // 固件打包器

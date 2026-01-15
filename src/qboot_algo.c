@@ -71,7 +71,7 @@ static rt_uint32_t qboot_algo_id_to_index(rt_uint16_t algo_id)
  */
 rt_err_t qboot_algo_register(const qboot_algo_ops_t *ops, rt_uint16_t algo_id)
 {
-    if ((ops == RT_NULL) || (ops->cmprs == RT_NULL) || (ops->cmprs->decompress == RT_NULL))
+    if ((ops == RT_NULL) || (ops->cmprs == RT_NULL) || (ops->algo_name == RT_NULL))
     {
         return -RT_ERROR;
     }
@@ -187,5 +187,9 @@ rt_err_t qbot_algo_startup(void)
     extern rt_err_t qbt_algo_quicklz_register(void);
     QBT_REGISTER_ALGO(qbt_algo_quicklz_register());
 #endif // QBOOT_USING_QUICKLZ
+#ifdef QBOOT_USING_FASTLZ
+    extern rt_err_t qbt_algo_fastlz_register(void);
+    QBT_REGISTER_ALGO(qbt_algo_fastlz_register());
+#endif // QBOOT_USING_FASTLZ
     return RT_EOK;
 }

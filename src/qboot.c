@@ -875,7 +875,6 @@ static rt_bool_t qbt_fw_clone(void *dst_handle, const char *dst_name, void *src_
 }
 static void qbt_fw_info_show(const char *part_name)
 {
-    char str[20];
     void *handle = RT_NULL;
     rt_uint32_t part_size = 0;
 
@@ -890,46 +889,11 @@ static void qbt_fw_info_show(const char *part_name)
         return;
     }
 
-    rt_memset(str, 0x0, sizeof(str));
-    switch (fw_info.algo & QBOOT_ALGO_CRYPT_MASK)
-    {
-    case QBOOT_ALGO_CRYPT_NONE:
-        rt_strcpy(str, "NONE");
-        break;
-    case QBOOT_ALGO_CRYPT_XOR:
-        rt_strcpy(str, "XOR");
-        break;
-    case QBOOT_ALGO_CRYPT_AES:
-        rt_strcpy(str, "AES");
-        break;
-    default:
-        rt_strcpy(str, "UNKNOW");
-        break;
-    }
-    switch (fw_info.algo & QBOOT_ALGO_CMPRS_MASK)
-    {
-    case QBOOT_ALGO_CMPRS_NONE:
-        rt_strcpy(str + rt_strlen(str), " && NONE");
-        break;
-    case QBOOT_ALGO_CMPRS_GZIP:
-        rt_strcpy(str + rt_strlen(str), " && GZIP");
-        break;
-    case QBOOT_ALGO_CMPRS_QUICKLZ:
-        rt_strcpy(str + rt_strlen(str), " && QUCKLZ");
-        break;
-    case QBOOT_ALGO_CMPRS_FASTLZ:
-        rt_strcpy(str + rt_strlen(str), " && FASTLZ");
-        break;
-    case QBOOT_ALGO_CMPRS_HPATCHLITE:
-        rt_strcpy(str + rt_strlen(str), " && HPATCHLITE");
-        break;
-    default:
-        rt_strcpy(str + rt_strlen(str), " && UNKNOW");
-        break;
-    }
+    rt_uint16_t algo_id;
+    const qboot_algo_ops_t *algo_ops = qbt_fw_get_algo_ops(&fw_info, &algo_id);
     rt_kprintf("==== Firmware infomation of %s partition ====\n", part_name);
     rt_kprintf("| Product code          | %*.s |\n", 20, fw_info.prod_code);
-    rt_kprintf("| Algorithm mode        | %*.s |\n", 20, str);
+    rt_kprintf("| Algorithm mode        | %*.s |\n", 20, algo_ops->algo_name);
     rt_kprintf("| Destition partition   | %*.s |\n", 20, fw_info.part_name);
     rt_kprintf("| Version               | %*.s |\n", 20, fw_info.fw_ver);
     rt_kprintf("| Package size          | %20d |\n", fw_info.pkg_size);

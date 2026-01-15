@@ -1,11 +1,18 @@
 /**
  * @file qboot_gzip.c
- * @brief Gzip decompression adapter for Qboot.
- *
- * Change Logs:
- * Date           Author            Notes
- * 2020-07-08     qiyongzhong       first version
- * 2020-09-18     qiyongzhong       add deinit function
+ * @brief 
+ * @author wdfk-prog ()
+ * @version 1.0
+ * @date 2026-01-15
+ * 
+ * @copyright Copyright (c) 2026  
+ * 
+ * @note :
+ * @par Change Log:
+ * Date       Version   Author      Description
+ * 2020-07-08  1.0      qiyongzhong first version
+ * 2020-09-18  1.1      qiyongzhong add deinit function
+ * 2026-01-15  1.2      wdfk-prog   add one-shot decompress handler for blocks
  */
 
 #include <qboot.h>
@@ -235,6 +242,7 @@ static const qboot_cmprs_ops_t qbt_algo_gzip_cmprs_ops = {
 
 /** Gzip algorithm ops descriptor. */
 static const qboot_algo_ops_t qbt_algo_gzip_ops = {
+    .algo_name = "GZIP",
     .algo_id = QBOOT_ALGO_CMPRS_GZIP,
     .crypt = RT_NULL,
     .cmprs = &qbt_algo_gzip_cmprs_ops,

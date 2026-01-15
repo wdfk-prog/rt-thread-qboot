@@ -67,6 +67,7 @@ static const qboot_cmprs_ops_t qbt_algo_none_cmprs_ops = {
  * @brief Algorithm table entry representing the no-compression/no-encryption fallback.
  */
 static const qboot_algo_ops_t qbt_algo_none_ops = {
+    .algo_name = "NONE",
     .algo_id = QBOOT_ALGO_CMPRS_NONE,
     .crypt = RT_NULL,
     .cmprs = &qbt_algo_none_cmprs_ops,

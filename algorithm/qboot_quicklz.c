@@ -10,9 +10,9 @@
  * @note
  * - Provides one-shot block decompression for QuickLZ packaged data.
  * @par Change Log:
- * Date       Version Author      Description
- * 2020-07-06     qiyongzhong     first version
- * 2026-01-13 1.1 wdfk-prog       add one-shot decompress handler for QUICKLZ blocks
+ * Date       Version   Author      Description
+ * 2020-07-06 1.0       qiyongzhong first version
+ * 2026-01-13 1.1       wdfk-prog   add one-shot decompress handler for QUICKLZ blocks
  */
 #include <qboot.h>
 
@@ -142,6 +142,7 @@ static const qboot_cmprs_ops_t qbt_algo_quicklz_cmprs_ops = {
 
 /** QuickLZ algorithm ops descriptor. */
 static const qboot_algo_ops_t qbt_algo_quicklz_ops = {
+    .algo_name = "quicklz",
     .algo_id = QBOOT_ALGO_CMPRS_QUICKLZ,
     .crypt = RT_NULL,
     .cmprs = &qbt_algo_quicklz_cmprs_ops,

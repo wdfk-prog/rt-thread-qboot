@@ -60,6 +60,7 @@ typedef struct
 
 typedef struct qboot_algo_ops
 {
+    const char* algo_name;
     rt_uint16_t algo_id;                                    /**< Algorithm identifier (compression/encryption). */
     const qboot_crypto_ops_t *crypt;                        /**< NULL when no decryption stage required. */
     const qboot_cmprs_ops_t *cmprs;                         /**< NULL when no decompression stage required. */
