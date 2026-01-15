@@ -70,14 +70,13 @@ u32 qbt_quicklz_decompress(u8 *out_buf, const u8 *in_buf)
 /**
  * @brief One-shot decompress handler for QuickLZ blocks.
  *
- * @param buf        Input/output buffers.
- * @param result     [out] Decompress results.
- * @param ctx        Decompression stream context (unused for QuickLZ).
+ * @param buf Input/output buffers.
+ * @param out [out] Stream results.
+ * @param ctx Decompression stream context (unused for QuickLZ).
  *
  * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or -RT_ERROR on failure.
  */
-static rt_err_t qbt_algo_quicklz_decompress(const qbt_cmprs_buf_t *buf, qbt_cmprs_result_t *result,
-                                            const qbt_cmprs_ctx_t *ctx)
+static rt_err_t qbt_algo_quicklz_decompress(const qbt_stream_buf_t *buf, qbt_stream_status_t *out, const qbt_stream_ctx_t *ctx)
 {
     RT_UNUSED(ctx);
     u32 block_size;
@@ -118,9 +117,8 @@ static rt_err_t qbt_algo_quicklz_decompress(const qbt_cmprs_buf_t *buf, qbt_cmpr
         decomp_len = (int)buf->out_len;
     }
 
-    result->consumed = need_len;
-    result->produced = (size_t)decomp_len;
-    result->finished = true;
+    out->consumed = need_len;
+    out->produced = (size_t)decomp_len;
     return RT_EOK;
 }
 

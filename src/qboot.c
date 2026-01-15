@@ -466,145 +466,97 @@ typedef rt_err_t (*qbt_cmprs_consumer_t)(const u8 *buf, size_t len, void *ctx);
  * 4) Compact input buffer, track flush state, and report remaining input on exit.
  * 
  * @param algo_ops     Algorithm ops providing decompress handler.
- * @param cmprs_buf    Input compressed buffer.
- * @param p_cmprs_len  [in/out] Available compressed length; leftover after return.
- * @param out_buf      Output buffer for decompressed data.
- * @param out_cap      Capacity of @p out_buf.
- * @param remaining    Maximum bytes to produce for this call.
+ * @param stream_buf   Stream IO buffer; @p in_len is updated with remaining input.
+ * @param cmprs_ctx    Stream context for this call (may be NULL).
+ * @param out          [out] Stream results for this call.
  * @param consumer     Callback invoked for each produced chunk.
  * @param consumer_ctx User data passed to @p consumer.
- * @param cmprs_ctx    Stream context for this call (may be NULL).
  *
- * @return Total produced length on success, -1 on error.
+ * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or negative error code.
  */
-static int qbt_decompress_with_consumer(const qboot_algo_ops_t *algo_ops, u8 *cmprs_buf, u32 *p_cmprs_len,
-                                        u8 *out_buf, size_t out_cap, size_t remaining,
-                                        qbt_cmprs_consumer_t consumer, void *consumer_ctx,
-                                        const qbt_cmprs_ctx_t *cmprs_ctx)
+static rt_err_t qbt_decompress_with_consumer(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf, const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, qbt_cmprs_consumer_t consumer, void *consumer_ctx)
 {
-    size_t cmprs_len = *p_cmprs_len;
-    size_t total_out = 0;
-    size_t total_consumed = 0;
-    bool flushed_empty = false; /**< Track empty-input flush usage. */
+    size_t cmprs_len = stream_buf->in_len;
+    size_t remaining_out = cmprs_ctx->raw_remaining;
+    qbt_stream_status_t step = { 0 };
+    rt_err_t rst = RT_EOK;
 
     /* Keep looping while output budget remains. */
-    while (remaining > 0)
+    while (remaining_out > 0)
     {
-        size_t cur_cap = (remaining < out_cap) ? remaining : out_cap;   /**< Output cap for this iteration. */
-        const qbt_cmprs_ctx_t *ctx_ptr = RT_NULL;                       /**< Context pointer for decompressor. */
-        qbt_cmprs_ctx_t call_ctx;                                       /**< Local context copy. */
-        bool allow_empty = false;                                       /**< Allow one empty-input flush. */
-
         /* (1) Build per-iteration context and decide empty-input flush. */
-        if (cmprs_ctx != RT_NULL)
-        {
-            call_ctx = *cmprs_ctx;                          /**< Copy base context. */
-            call_ctx.cmprs_consumed = cmprs_ctx->cmprs_consumed + total_consumed; /**< Update consumed offset. */
-            call_ctx.raw_remaining = remaining;             /**< Refresh remaining raw budget. */
-            ctx_ptr = &call_ctx;                            /**< Pass updated context to decompressor. */
-        }
+        size_t cur_cap = (remaining_out < stream_buf->out_len) ? remaining_out : stream_buf->out_len; /**< Output cap for this iteration. */
+        qbt_stream_ctx_t call_ctx = *cmprs_ctx; /**< Local context copy. */
+        call_ctx.raw_remaining = remaining_out; /**< Refresh remaining raw budget. */
+        call_ctx.consumed = cmprs_ctx->consumed + out->consumed; /**< Update consumed offset. */
 
-        if (cmprs_len == 0)                                 /**< No buffered compressed input. */
+        if (cmprs_len == 0) /**< No buffered compressed input. */
         {
-            if ((cmprs_ctx != RT_NULL) && (call_ctx.cmprs_total > 0) && (call_ctx.cmprs_consumed >= call_ctx.cmprs_total)) /**< Stream ended. */
+            if (call_ctx.consumed < call_ctx.total) /**< Stream not ended. */
             {
-                allow_empty = true;                         /**< Allow a single flush with empty input. */
+                break;  /**< Wait for more input. */
             }
-            if (!allow_empty || flushed_empty)              /**< Disallow repeated empty flush. */
+            else
             {
-                break;                                      /**< Stop processing. */
+                /**< Allow a single flush with empty input. */
             }
         }
 
         /* (2) Invoke decompressor and validate progress paths. */
-        /* Ask algorithm to decompress one unit of input. */
-        qbt_cmprs_result_t result = { 0 };                    /**< Initialize result container. */
-        qbt_cmprs_buf_t io = { cmprs_buf, cmprs_len, out_buf, cur_cap }; /**< Prepare IO buffers. */
-        rt_err_t rst = algo_ops->cmprs->decompress(&io, &result, ctx_ptr); /**< Invoke decompressor. */
-        if (rst == -RT_ENOSPC)                               /**< Need more input data. */
+        qbt_stream_buf_t io = { stream_buf->in, (u32)cmprs_len, stream_buf->out, cur_cap };
+        rst = algo_ops->cmprs->decompress(&io, &step, &call_ctx);
+        if (rst == -RT_ENOSPC) /**< Need more input data. */
         {
-            break;                                          /**< Preserve input for next round. */
+            break;
         }
-        if ((rst != RT_EOK) || (result.consumed > cmprs_len) || (result.produced > cur_cap))
+        else if ((rst != RT_EOK)                  /**< Decompress failed. */
+                 || (step.consumed > cmprs_len)   /**< Consumed more input than available. */
+                 || (step.produced > cur_cap))    /**< Produced more output than buffer capacity. */
         {
-            *p_cmprs_len = (u32)cmprs_len;
-            return -1;
+            break;
         }
-
-        /* No progress and not finished means the algorithm needs more input. */
-        if ((result.consumed == 0) && (result.produced == 0) && (!result.finished)) /**< No progress and not finished. */
+        else if ((step.consumed == 0) && (step.produced == 0))
         {
-            break;                                          /**< Wait for more input. */
-        }
-        if ((result.produced == 0) || ((result.consumed == 0) && (cmprs_len > 0))) /**< Inconsistent progress. */
-        {
-            *p_cmprs_len = (u32)cmprs_len;
-            return -1;
+            break; /**< keep a minimal progress guard to avoid infinite loops */
         }
 
         /* (3) Dispatch output and update counters/budget. */
-        if ((consumer != RT_NULL) && (consumer(out_buf, result.produced, consumer_ctx) != RT_EOK))
+        rst = consumer(stream_buf->out, step.produced, consumer_ctx);
+        if (rst != RT_EOK)
         {
-            *p_cmprs_len = (u32)cmprs_len;
-            return -1;
+            break;
         }
 
         /* Accumulate output and enforce the optional total output cap. */
-        total_out += result.produced;
-        total_consumed += result.consumed;
-        if (result.produced > remaining) /**< Check budget overflow. */
-        {
-            *p_cmprs_len = (u32)cmprs_len;
-            return -1;
-        }
-        remaining -= result.produced;                       /**< Decrease remaining budget. */
+        remaining_out -= step.produced;
+        out->consumed += step.consumed;
+        out->produced += step.produced;
 
         /* (4) Compact input buffer and track empty flush usage. */
-        cmprs_len -= result.consumed;                       /**< Remove consumed input. */
-        if (cmprs_len > 0)                                  /**< Compact buffer when needed. */
+        cmprs_len -= step.consumed;
+        if (cmprs_len > 0)
         {
-            rt_memmove(cmprs_buf, cmprs_buf + result.consumed, cmprs_len); /**< Move remaining input forward. */
-        }
-        if (result.consumed == 0)                           /**< Track empty-input flush. */
-        {
-            flushed_empty = true;                           /**< Prevent repeated flush. */
+            rt_memmove(stream_buf->in, stream_buf->in + step.consumed, cmprs_len); /**< Move remaining input forward. */
         }
     }
 
     /* Report remaining compressed data to the caller. */
-    *p_cmprs_len = (u32)cmprs_len;                          /**< Return buffered input length. */
-    if (total_out == 0)                                     /**< Warn when no output produced. */
-    {
-        LOG_W("Qboot decompress produce no data.");
-    }
-    return (int)total_out;
+    out->remaining_in = stream_buf->in_len = (u32)cmprs_len;
+    return rst;
 }
 
 /**
  * @brief Stream processor callback for decompression output.
+ * 
+ * @param algo_ops    Algorithm ops providing decompress handler.
+ * @param stream_buf  Stream IO buffer (in_len updated with remaining input).
+ * @param cmprs_ctx   Stream context for this call.
+ * @param out         [out] Stream results for this call.
+ * @param ctx         User context provided by the caller.
  *
- * @param ctx        User context provided by the caller.
- * @param raw_pos    Current raw output offset (bytes).
- * @param remaining  Remaining raw bytes allowed to be produced.
- * @param out_buf    Output buffer for decompressed data.
- * @param cmprs_buf  Input compressed buffer.
- * @param p_cmprs_len [in/out] Available compressed length; leftover after return.
- * @param algo_ops   Algorithm ops providing decompress handler.
- * @param cmprs_ctx  Stream context for this call.
- *
- * @return Produced length on success, negative on error.
+ * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or negative error code.
  */
-typedef int (*qbt_stream_proc_t)(void *ctx, u32 raw_pos, u32 remaining, u8 *out_buf, u8 *cmprs_buf,
-                                 u32 *p_cmprs_len, const qboot_algo_ops_t *algo_ops, const qbt_cmprs_ctx_t *cmprs_ctx);
-
-/**
- * @brief Progress callback for streaming operations.
- *
- * @param ctx       User context provided by the caller.
- * @param raw_pos   Current raw output offset (bytes).
- * @param raw_total Total raw size to be produced.
- */
-typedef void (*qbt_stream_progress_t)(void *ctx, u32 raw_pos, u32 raw_total);
+typedef rt_err_t (*qbt_stream_proc_t)(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf, const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, void *ctx);
 
 /**
  * @brief Fixed configuration for a stream processing operation.
@@ -612,6 +564,7 @@ typedef void (*qbt_stream_progress_t)(void *ctx, u32 raw_pos, u32 raw_total);
 typedef struct
 {
     void *src_handle;                 /**< Package source handle. */
+    void *dst_handle;                 /**< Destination handle (optional). */
     const fw_info_t *fw_info;         /**< Firmware info header. */
     const qboot_algo_ops_t *algo_ops; /**< Algorithm handler table. */
     u8 *cmprs_buf;                    /**< Buffer to accumulate compressed input. */
@@ -620,23 +573,34 @@ typedef struct
 } qbt_stream_cfg_t;
 
 /**
+ * @brief Stream state used by the write path.
+ *
+ * Carries destination handle and current raw output offset while streaming.
+ * The stream loop updates @ref raw_pos before each call, and the write consumer
+ * advances it after successful writes.
+ */
+typedef struct
+{
+    void *dst_handle; /**< Destination handle for writes (partition/file). */
+    u32 raw_pos;      /**< Current raw output offset (bytes). */
+    u32 raw_size;     /**< Total raw size for progress display (0 to disable). */
+} qbt_stream_state_t;
+
+/**
  * @brief Stream package data, decompress, and consume output with strict raw-size limits.
  *
  * This function loops over the package content, reads compressed data into a staging
  * buffer, calls the decompressor, and forwards produced data to @p proc. Each call
  * enforces a maximum output length equal to the remaining raw size to avoid overruns.
  *
- * @param cfg          Stream configuration (package source and working buffers).
- * @param proc         Output consumer invoked for each produced chunk.
- * @param proc_ctx     User context for @p proc.
- * @param progress     Optional progress callback.
- * @param progress_ctx User context for @p progress.
- * @param purpose      Stream purpose (write/CRC).
+ * @param cfg       Stream configuration (package source and working buffers).
+ * @param proc      Output consumer invoked for each produced chunk.
+ * @param proc_ctx  User context for @p proc.
+ * @param purpose   Stream purpose (write/CRC).
  *
  * @return true on success, false on read or decompression/consume error.
  */
-static bool qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_proc_t proc, void *proc_ctx,
-                                  qbt_stream_progress_t progress, void *progress_ctx, qbt_stream_purpose_t purpose)
+static bool qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_t purpose, qbt_stream_proc_t proc, void *proc_ctx)
 {
     /* Track package read position, raw output position, and buffered input length. */
     u32 src_read_pos = sizeof(fw_info_t);
@@ -679,26 +643,29 @@ static bool qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_proc_t
         }
 
         /* Enforce strict raw output cap based on remaining expected size. */
-        u32 remaining = cfg->fw_info->raw_size - raw_pos;
-        qbt_cmprs_ctx_t cmprs_ctx = {
-            .cmprs_total = cfg->fw_info->pkg_size,
-            .cmprs_consumed = (size_t)(src_read_pos - sizeof(fw_info_t)) - cmprs_len,
-            .raw_remaining = remaining,
+        qbt_stream_ctx_t cmprs_ctx = {
+            .total = cfg->fw_info->pkg_size,
+            .consumed = (size_t)(src_read_pos - sizeof(fw_info_t)) - cmprs_len,
+            .raw_remaining = cfg->fw_info->raw_size - raw_pos,
             .purpose = purpose,
         };
-        int out_len = proc(proc_ctx, raw_pos, remaining, cfg->out_buf, cfg->cmprs_buf, &cmprs_len, cfg->algo_ops, &cmprs_ctx);
-        if (out_len <= 0)
+        qbt_stream_buf_t stream_buf = { cfg->cmprs_buf, cmprs_len, cfg->out_buf, QBOOT_BUF_SIZE };
+        qbt_stream_status_t out = { 0 };
+        /* Only the write path uses stream_state; CRC path passes a different ctx type. */
+        if (purpose == QBT_STREAM_WRITE)
         {
-            LOG_E("Qboot stream process error. addr=%08X, out_len = %d", raw_pos, out_len);
+            ((qbt_stream_state_t *)proc_ctx)->raw_pos = raw_pos;
+        }
+        rt_err_t rst = proc(cfg->algo_ops, &stream_buf, &cmprs_ctx, &out, proc_ctx);
+        if (rst != RT_EOK || out.produced <= 0)
+        {
+            LOG_E("Qboot stream process error %d. addr=%08X, out_len = %d", rst, raw_pos, out.produced);
             return false;
         }
+        cmprs_len = stream_buf.in_len;
 
-        /* Advance raw output position and report progress. */
-        raw_pos += (u32)out_len;
-        if (progress != RT_NULL)
-        {
-            progress(progress_ctx, raw_pos, cfg->fw_info->raw_size);
-        }
+        /* Advance raw output position. */
+        raw_pos += (u32)out.produced;
     }
 
     return true;
@@ -724,24 +691,18 @@ static rt_err_t qbt_crc_chunk_consumer(const u8 *buf, size_t len, void *ctx)
 /**
  * @brief Stream processor to update CRC from decompressed data.
  *
- * @param ctx        CRC accumulator pointer (u32 *).
- * @param raw_pos    Current raw output offset (unused).
- * @param remaining  Remaining raw bytes allowed to be produced.
- * @param out_buf    Output buffer for decompressed data.
- * @param cmprs_buf  Input compressed buffer.
- * @param p_cmprs_len [in/out] Available compressed length; leftover after return.
- * @param algo_ops   Algorithm ops providing decompress handler.
- * @param cmprs_ctx  Stream context for this call.
+ * @param algo_ops    Algorithm ops providing decompress handler.
+ * @param stream_buf  Stream IO buffer (in_len updated with remaining input).
+ * @param cmprs_ctx   Stream context for this call.
+ * @param out        [out] Stream results for this call.
+ * @param ctx         CRC accumulator pointer (u32 *).
  *
- * @return Produced length on success, negative on error.
+ * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or negative error code.
  */
-static int qbt_stream_crc_proc(void *ctx, u32 raw_pos, u32 remaining, u8 *out_buf, u8 *cmprs_buf,
-                               u32 *p_cmprs_len, const qboot_algo_ops_t *algo_ops, const qbt_cmprs_ctx_t *cmprs_ctx)
+static rt_err_t qbt_stream_crc_proc(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf, const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, void *ctx)
 {
-    RT_UNUSED(raw_pos);
     u32 *crc_acc = (u32 *)ctx;
-    return qbt_decompress_with_consumer(algo_ops, cmprs_buf, p_cmprs_len, out_buf, QBOOT_BUF_SIZE, remaining,
-                                        qbt_crc_chunk_consumer, crc_acc, cmprs_ctx);
+    return qbt_decompress_with_consumer(algo_ops, stream_buf, cmprs_ctx, out, qbt_crc_chunk_consumer, crc_acc);
 }
 
 /**
@@ -776,6 +737,7 @@ static bool qbt_app_crc_check(void *src_handle, const char *src_name, fw_info_t 
 
     qbt_stream_cfg_t stream_cfg = {
         .src_handle = src_handle,
+        .dst_handle = RT_NULL,
         .fw_info = fw_info,
         .algo_ops = algo_ops,
         .cmprs_buf = g_cmprs_buf,
@@ -783,7 +745,7 @@ static bool qbt_app_crc_check(void *src_handle, const char *src_name, fw_info_t 
         .crypt_buf = g_crypt_buf,
     };
 
-    if (!qbt_fw_stream_process(&stream_cfg, qbt_stream_crc_proc, &crc32, RT_NULL, RT_NULL, QBT_STREAM_CRC))
+    if (!qbt_fw_stream_process(&stream_cfg, QBT_STREAM_CRC, qbt_stream_crc_proc, &crc32))
     {
         ret = false;
         LOG_E("Qboot app crc check fail. decompress error.");
@@ -808,67 +770,45 @@ static bool qbt_app_crc_check(void *src_handle, const char *src_name, fw_info_t 
 #endif
 
 /**
- * @brief Write context for output consumer.
- */
-typedef struct
-{
-    void *handle; /**< Destination handle. */
-    u32 offset;   /**< Current write offset. */
-} qbt_write_ctx_t;
-
-/**
  * @brief Output consumer that writes produced data to destination storage.
  *
  * @param buf Output data buffer.
  * @param len Output data length.
- * @param ctx Write context (qbt_write_ctx_t *).
+ * @param ctx Stream state pointer (qbt_stream_state_t *).
  *
  * @return RT_EOK on success, negative error code on failure.
  */
 static rt_err_t qbt_write_chunk_consumer(const u8 *buf, size_t len, void *ctx)
 {
-    qbt_write_ctx_t *w = (qbt_write_ctx_t *)ctx;
-    if (_header_io_ops->write(w->handle, w->offset, buf, len) != RT_EOK)
+    qbt_stream_state_t *state = (qbt_stream_state_t *)ctx;
+    if (_header_io_ops->write(state->dst_handle, state->raw_pos, buf, len) != RT_EOK)
     {
         return -RT_ERROR;
     }
-    w->offset += (u32)len;
+    state->raw_pos += (u32)len;
     return RT_EOK;
 }
 
 /**
  * @brief Stream processor to write decompressed data to destination storage.
  *
- * @param ctx        Destination handle.
- * @param raw_pos    Current raw output offset (write position).
- * @param remaining  Remaining raw bytes allowed to be produced.
- * @param out_buf    Output buffer for decompressed data.
- * @param cmprs_buf  Input compressed buffer.
- * @param p_cmprs_len [in/out] Available compressed length; leftover after return.
- * @param algo_ops   Algorithm ops providing decompress handler.
- * @param cmprs_ctx  Stream context for this call.
+ * @param algo_ops    Algorithm ops providing decompress handler.
+ * @param stream_buf  Stream IO buffer (in_len updated with remaining input).
+ * @param cmprs_ctx   Stream context for this call.
+ * @param out        [out] Stream results for this call.
+ * @param ctx         Stream state pointer (qbt_stream_state_t *).
  *
- * @return Produced length on success, negative on error.
+ * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or negative error code.
  */
-static int qbt_stream_write_proc(void *ctx, u32 raw_pos, u32 remaining, u8 *out_buf, u8 *cmprs_buf,
-                                 u32 *p_cmprs_len, const qboot_algo_ops_t *algo_ops, const qbt_cmprs_ctx_t *cmprs_ctx)
+static rt_err_t qbt_stream_write_proc(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf, const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, void *ctx)
 {
-    qbt_write_ctx_t write_ctx = { ctx, raw_pos };
-    return qbt_decompress_with_consumer(algo_ops, cmprs_buf, p_cmprs_len, out_buf, QBOOT_BUF_SIZE, remaining,
-                                        qbt_write_chunk_consumer, &write_ctx, cmprs_ctx);
-}
-
-/**
- * @brief Progress callback for firmware release.
- *
- * @param ctx       Unused context.
- * @param raw_pos   Current raw output offset (bytes).
- * @param raw_total Total raw size to be produced.
- */
-static void qbt_release_progress(void *ctx, u32 raw_pos, u32 raw_total)
-{
-    RT_UNUSED(ctx);
-    rt_kprintf("\b\b\b%02d%%", (raw_pos * 100 / raw_total));
+    qbt_stream_state_t *state = (qbt_stream_state_t *)ctx;
+    rt_err_t rst = qbt_decompress_with_consumer(algo_ops, stream_buf, cmprs_ctx, out, qbt_write_chunk_consumer, state);
+    if ((rst == RT_EOK) && (out->produced > 0))
+    {
+        rt_kprintf("\b\b\b%02d%%", (state->raw_pos * 100 / state->raw_size));
+    }
+    return rst;
 }
 
 /**
@@ -926,14 +866,20 @@ static bool qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_na
     rt_kprintf("Start release firmware to %s ...     ", dst_name);
     qbt_stream_cfg_t stream_cfg = {
         .src_handle = src_handle,
+        .dst_handle = dst_handle,
         .fw_info = fw_info,
         .algo_ops = algo_ops,
         .cmprs_buf = g_cmprs_buf,
         .out_buf = g_decmprs_buf,
         .crypt_buf = g_crypt_buf,
     };
+    qbt_stream_state_t stream_state = {
+        .dst_handle = dst_handle,
+        .raw_pos = 0,
+        .raw_size = fw_info->raw_size,
+    };
 
-    if (!qbt_fw_stream_process(&stream_cfg, qbt_stream_write_proc, dst_handle, qbt_release_progress, RT_NULL, QBT_STREAM_WRITE))
+    if (!qbt_fw_stream_process(&stream_cfg, QBT_STREAM_WRITE, qbt_stream_write_proc, &stream_state))
     {
         qbt_fw_algo_deinit(algo_ops);
         LOG_E("Qboot release firmware fail. stream process to %s fail.", dst_name);

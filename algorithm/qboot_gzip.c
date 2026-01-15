@@ -90,23 +90,22 @@ int qbt_gzip_decompress(u8 *out_buf, u32 out_buf_size)
  * 2) Align output to 32 bytes, manage remainder buffer, optional padding.
  * 3) Fill result/flags and validate progress/error conditions.
  * 
- * @param buf        Input/output buffers.
- * @param result     [out] Decompress results.
- * @param ctx        Decompression stream context.
+ * @param buf Input/output buffers.
+ * @param out [out] Stream results.
+ * @param ctx Decompression stream context.
  *
  * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or -RT_ERROR on failure.
  */
-static rt_err_t qbt_algo_gzip_decompress(const qbt_cmprs_buf_t *buf, qbt_cmprs_result_t *result,
-                                         const qbt_cmprs_ctx_t *ctx)
+static rt_err_t qbt_algo_gzip_decompress(const qbt_stream_buf_t *buf, qbt_stream_status_t *out, const qbt_stream_ctx_t *ctx)
 {
     bool pad_output = false;                                 /**< Whether to pad tail output. */
     bool last_chunk = false;                                 /**< Whether current input reaches stream end. */
 
     pad_output = (ctx->purpose == QBT_STREAM_WRITE);         /**< Enable padding for write path. */
-    if (ctx->cmprs_total > 0)                                /**< Determine if this is the last chunk. */
+    if (ctx->total > 0)                                /**< Determine if this is the last chunk. */
     {
-        size_t available_end = ctx->cmprs_consumed + buf->in_len;   /**< End offset of available input. */
-        last_chunk = (available_end >= ctx->cmprs_total);           /**< Mark final chunk when reaching total. */
+        size_t available_end = ctx->consumed + buf->in_len;   /**< End offset of available input. */
+        last_chunk = (available_end >= ctx->total);           /**< Mark final chunk when reaching total. */
     }
 
     if (qbt_gzip_remain_len > buf->out_len)                  /**< Ensure output buffer fits remainder. */
@@ -172,22 +171,21 @@ static rt_err_t qbt_algo_gzip_decompress(const qbt_cmprs_buf_t *buf, qbt_cmprs_r
     }
 
     qbt_gzip_remain_len = new_remain;
-    result->consumed = buf->in_len - qbt_strm.avail_in;
-    result->produced = out_len_final;
-    result->finished = is_end;
+    out->consumed = buf->in_len - qbt_strm.avail_in;
+    out->produced = out_len_final;
 
-    if ((result->consumed == 0) && (result->produced == 0) && (!result->finished)) /**< No progress and not done. */
+    if ((out->consumed == 0) && (out->produced == 0) && (!is_end)) /**< No progress and not done. */
     {
         return -RT_ENOSPC;                                   /**< Request more input. */
     }
-    if (result->produced == 0)                               /**< Produced nothing in a successful call. */
+    if (out->produced == 0)                                  /**< Produced nothing in a successful call. */
     {
-        LOG_E("Qboot gzip decompress error. consumed=%u produced=%u finished=%d", (u32)result->consumed, (u32)result->produced, result->finished);
+        LOG_E("Qboot gzip decompress error. consumed=%u produced=%u end=%d", (u32)out->consumed, (u32)out->produced, is_end);
         return -RT_ERROR;
     }
-    if ((result->consumed == 0) && (buf->in_len > 0))        /**< Consumed nothing with non-empty input. */
+    if ((out->consumed == 0) && (buf->in_len > 0))           /**< Consumed nothing with non-empty input. */
     {
-        LOG_E("Qboot gzip decompress error. consumed=%u produced=%u finished=%d", (u32)result->consumed, (u32)result->produced, result->finished);
+        LOG_E("Qboot gzip decompress error. consumed=%u produced=%u end=%d", (u32)out->consumed, (u32)out->produced, is_end);
         return -RT_ERROR;
     }
 
