@@ -18,8 +18,9 @@
 #define __QBOOT_H__
 
 #include "qboot_cfg.h"
-#include "qboot_types.h"
+#include "qboot_ops.h"
 #include "qboot_stream.h"
 #include "qboot_algo.h"
+#include "crc32.h"
 
 #endif

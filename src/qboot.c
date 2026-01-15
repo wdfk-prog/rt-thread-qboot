@@ -1,19 +1,27 @@
-/*
- * qboot.c
- *
- * Change Logs:
- * Date           Author            Notes
+/**
+ * @file qboot.c
+ * @brief 
+ * @author qiyongzhong
+ * @version 1.0
+ * @date 2026-01-15
+ * 
+ * @copyright Copyright (c) 2026  
+ * 
+ * @note :
+ * @par Change Log:
+ * Date       Version Author        Description
  * 2020-07-06     qiyongzhong       first version
  * 2020-08-31     qiyongzhong       fix qbt_jump_to_app type from static to weak
  * 2020-09-01     qiyongzhong       add app verify when checking firmware
  * 2020-09-18     qiyongzhong       fix bug of gzip decompression
  * 2020-09-22     qiyongzhong       add erase firmware function, update version to v1.04
  * 2020-10-05     qiyongzhong       fix to support stm32h7xx, update version to v1.05
+ * 2026-01-15     wdfk-prog         split to qboot.c
  */
 
 #include <qboot.h>
 #include <fal.h>
-#include "crc32.h"
+
 #ifdef QBOOT_USING_SHELL
 #include "shell.h"
 #endif
@@ -23,12 +31,6 @@
 #ifdef QBOOT_USING_AES
 #include <qboot_aes.h>
 #endif /* QBOOT_USING_AES */
-#ifdef QBOOT_USING_GZIP
-#include <qboot_gzip.h>
-#endif /* QBOOT_USING_GZIP */
-#ifdef QBOOT_USING_QUICKLZ
-#include <qboot_quicklz.h>
-#endif /* QBOOT_USING_QUICKLZ */
 #ifdef QBOOT_USING_HPATCHLITE
 #include <qboot_hpatchlite.h>
 #endif /* QBOOT_USING_HPATCHLITE */
@@ -57,259 +59,21 @@
 #define QBOOT_VER_MSG      "V1.1.0 2026.01.01"
 #define QBOOT_SHELL_PROMPT "Qboot>"
 
-#define QBOOT_BUF_SIZE 4096//must is 4096
-#if (defined(QBOOT_USING_QUICKLZ) || defined(QBOOT_USING_FASTLZ))
-#define QBOOT_CMPRS_READ_SIZE 4096 //it can is 512, 1024, 2048, 4096,
-#define QBOOT_CMPRS_BUF_SIZE  (QBOOT_BUF_SIZE + QBOOT_CMPRS_READ_SIZE + 32)
-#else
-#define QBOOT_CMPRS_READ_SIZE QBOOT_BUF_SIZE
-#define QBOOT_CMPRS_BUF_SIZE  QBOOT_BUF_SIZE
-#endif
-
-
 #define QBOOT_ALGO2_VERIFY_NONE 0
 #define QBOOT_ALGO2_VERIFY_CRC  1
 #define QBOOT_ALGO2_VERIFY_MASK 0x0F
 
 static fw_info_t fw_info;
-static rt_uint8_t g_cmprs_buf[QBOOT_CMPRS_BUF_SIZE];    /* Decompression buffer. */
+static rt_uint8_t g_cmprs_buf[QBOOT_CMPRS_BUF_SIZE]; /* Decompression buffer. */
 #ifdef QBOOT_USING_COMPRESSION
-static rt_uint8_t g_crypt_buf[QBOOT_BUF_SIZE];          /* Decryption buffer. */
+static rt_uint8_t g_crypt_buf[QBOOT_BUF_SIZE]; /* Decryption buffer. */
 #else
 #define g_crypt_buf g_cmprs_buf
 #endif
 /* Share a buffer to reduce memory allocation */
-#define g_decmprs_buf g_crypt_buf               /* Decompression output buffer. */
+#define g_decmprs_buf g_crypt_buf /* Decompression output buffer. */
 
-static const qboot_header_parser_ops_t *_header_parser_ops = RT_NULL;
-static const qboot_io_ops_t *_header_io_ops = RT_NULL;
-static const qboot_update_ops_t *_update_ops = RT_NULL;
-static const qboot_algo_ops_t *g_algo_table[QBOOT_ALGO_TABLE_SIZE];
-
-#define QBT_REGISTER_ALGO(fn_call)                                \
-    do                                                            \
-    {                                                             \
-        if ((fn_call) != RT_EOK)                                  \
-        {                                                         \
-            LOG_E("Qboot register algorithm fail: %s", #fn_call); \
-            return -RT_ERROR;                                     \
-        }                                                         \
-    } while (0)
-
-/**
- * @brief Default jump decision; always allow.
- *
- * @return RT_TRUE jump to application is allowed.
- */
-static rt_bool_t qboot_default_allow_jump(void)
-{
-    return RT_TRUE;
-}
-
-const qboot_update_ops_t g_qboot_update_default = {
-    RT_NULL,
-    qboot_default_allow_jump,
-    RT_NULL,
-};
-
-/**
- * @brief Weak hook to register storage ops; override in backend implementations.
- */
-__WEAK int qboot_register_storage_ops(void)
-{
-    return RT_EOK;
-}
-
-/**
- * @brief Register header parser/package source operations.
- *
- * @param ops       Operation table; required fields must be non-NULL.
- *
- * @return RT_EOK on success, negative error code otherwise.
- */
-int qboot_register_header_parser_ops(const qboot_header_parser_ops_t *ops)
-{
-    if ((ops == RT_NULL) || (ops->sign_read == RT_NULL) || (ops->sign_write == RT_NULL))
-    {
-        return -RT_ERROR;
-    }
-    _header_parser_ops = ops;
-    return RT_EOK;
-}
-
-int qboot_register_header_io_ops(const qboot_io_ops_t *ops)
-{
-    if ((ops == RT_NULL) || (ops->open == RT_NULL) || (ops->close == RT_NULL) || (ops->read == RT_NULL) || (ops->erase == RT_NULL) || (ops->write == RT_NULL) || (ops->size == RT_NULL))
-    {
-        return -RT_ERROR;
-    }
-    _header_io_ops = ops;
-    return RT_EOK;
-}
-
-/**
- * @brief Register update callbacks.
- *
- * @param ops Operation table; required fields must be non-NULL.
- *
- * @return RT_EOK on success.
- */
-int qboot_register_update(const qboot_update_ops_t *ops)
-{
-    if (ops == RT_NULL || ops->allow_jump == RT_NULL)
-    {
-        return -RT_ERROR;
-    }
-
-    _update_ops = ops;
-    return RT_EOK;
-}
-
-static size_t qboot_algo_id_to_index(rt_uint16_t algo_id)
-{
-    if ((algo_id & QBOOT_ALGO_CMPRS_MASK) != QBOOT_ALGO_CMPRS_NONE)
-    {
-        rt_uint16_t cmprs_idx = (algo_id >> 8);
-        if (cmprs_idx >= QBOOT_ALGO_CMPRS_COUNT)
-        {
-            return QBOOT_ALGO_TABLE_SIZE;
-        }
-        return QBOOT_ALGO_CMPRS_INDEX(algo_id);
-    }
-
-    rt_uint16_t crypt_id = algo_id & QBOOT_ALGO_CRYPT_MASK;
-    if (crypt_id >= QBOOT_ALGO_CRYPT_COUNT)
-    {
-        return QBOOT_ALGO_TABLE_SIZE;
-    }
-
-    return QBOOT_ALGO_CRYPTO_INDEX(crypt_id);
-}
-
-/**
- * @brief Register algorithm handlers for a specific algorithm identifier.
- *
- * A handler entry may omit crypt/cmprs/apply functions when the algorithm
- * simply declares availability (e.g. raw storage).  The build-in table enforces
- * uniqueness for each identifier and rejects invalid ids.
- *
- * @param ops      Algorithm handler table; required to be non-null.
- * @param algo_id  Identifier derived from compression/encryption mode.
- * @return RT_EOK on success, -RT_ERROR on invalid inputs or duplicate ids.
- */
-rt_err_t qboot_algo_register(const qboot_algo_ops_t *ops, rt_uint16_t algo_id)
-{
-    if ((ops == RT_NULL) || (ops->cmprs == RT_NULL) || (ops->cmprs->decompress == RT_NULL))
-    {
-        return -RT_ERROR;
-    }
-
-    if (ops->algo_id != algo_id)
-    {
-        return -RT_ERROR;
-    }
-
-    size_t idx = qboot_algo_id_to_index(algo_id);
-    if (idx >= QBOOT_ALGO_TABLE_SIZE || g_algo_table[idx] != RT_NULL)
-    {
-        return -RT_ERROR;
-    }
-
-    g_algo_table[idx] = ops;
-    return RT_EOK;
-}
-
-const qboot_algo_ops_t *qboot_algo_find(rt_uint16_t algo_id)
-{
-    size_t idx = qboot_algo_id_to_index(algo_id);
-    if (idx >= QBOOT_ALGO_TABLE_SIZE)
-    {
-        return RT_NULL;
-    }
-    return g_algo_table[idx];
-}
-
-static const qboot_algo_ops_t *qbt_fw_get_algo_ops(const fw_info_t *fw_info, rt_uint16_t *out_algo_id)
-{
-    rt_uint16_t cmprs_id = fw_info->algo & QBOOT_ALGO_CMPRS_MASK;
-    rt_uint16_t algo_id = (cmprs_id != QBOOT_ALGO_CMPRS_NONE) ? cmprs_id : (fw_info->algo & QBOOT_ALGO_CRYPT_MASK);
-    if (out_algo_id != RT_NULL)
-    {
-        *out_algo_id = algo_id;
-    }
-    return qboot_algo_find(algo_id);
-}
-
-/**
- * @brief Open target by name and optionally query size.
- *
- * @param name      Target identifier (partition name/path).
- * @param handle    Output opaque handle.
- * @param out_size  Output total size; ignored if NULL.
- *
- * @return RT_TRUE on success, RT_FALSE otherwise.
- */
-static rt_bool_t qbt_target_open(const char *name, void **handle, size_t *out_size)
-{
-    if (_header_io_ops->open(handle, name) != RT_EOK)
-    {
-        return RT_FALSE;
-    }
-    if (out_size != RT_NULL)
-    {
-        if (_header_io_ops->size(*handle, out_size) != RT_EOK)
-        {
-            _header_io_ops->close(*handle);
-            return RT_FALSE;
-        }
-    }
-    return RT_TRUE;
-}
-
-static void qbt_target_close(void *handle)
-{
-    if (handle != RT_NULL)
-    {
-        _header_io_ops->close(handle);
-    }
-}
-
-static rt_bool_t qbt_fw_info_read(void *handle, size_t part_len, fw_info_t *fw_info, rt_bool_t from_tail)
-{
-    if (from_tail && part_len < sizeof(fw_info_t))
-    {
-        LOG_E("Qboot read firmware info fail. part size %u < hdr size.", (unsigned int)part_len);
-        return RT_FALSE;
-    }
-    size_t addr = from_tail ? (part_len - sizeof(fw_info_t)) : 0;
-    if (_header_io_ops->read(handle, addr, (rt_uint8_t *)fw_info, sizeof(fw_info_t)) != RT_EOK)
-    {
-        return (RT_FALSE);
-    }
-    return (RT_TRUE);
-}
-
-/**
- * @brief Write firmware header to head or tail of target.
- *
- * @param handle   Target handle from qbt_target_open.
- * @param part_len Target total size (required when @p to_tail is RT_TRUE).
- * @param fw_info  Firmware header to write.
- * @param to_tail  RT_TRUE to write at tail, RT_FALSE at offset 0.
- *
- * @return RT_TRUE on success, RT_FALSE on failure.
- */
-static rt_bool_t qbt_fw_info_write(void *handle, size_t part_len, fw_info_t *fw_info, rt_bool_t to_tail)
-{
-    size_t addr = to_tail ? (part_len - sizeof(fw_info_t)) : 0;
-    if (_header_io_ops->write(handle, addr, (rt_uint8_t *)fw_info, sizeof(fw_info_t)) != RT_EOK)
-    {
-        return (RT_FALSE);
-    }
-    return (RT_TRUE);
-}
-
-rt_bool_t qbt_fw_info_check(fw_info_t *fw_info)
+static rt_bool_t qbt_fw_info_check(fw_info_t *fw_info)
 {
     if (rt_strcmp((const char *)(fw_info->type), "RBL") != 0)
     {
@@ -350,355 +114,7 @@ static rt_bool_t qbt_fw_crc_check(void *handle, const char *name, rt_uint32_t ad
     return (RT_TRUE);
 }
 
-static rt_bool_t qbt_release_sign_check(void *handle, const char *name, fw_info_t *fw_info)
-{
-    rt_bool_t released = RT_FALSE;
-    rt_err_t rst = _header_parser_ops->sign_read(handle, &released, fw_info);
-    if (rst != RT_EOK)
-    {
-        LOG_E("Qboot read release sign fail from %s partition. rst=%d", name, rst);
-        return (RT_FALSE);
-    }
-    return released;
-}
-
-static rt_bool_t qbt_release_sign_write(void *handle, const char *name, fw_info_t *fw_info)
-{
-    rt_err_t rst = _header_parser_ops->sign_write(handle, fw_info);
-    if (rst != RT_EOK)
-    {
-        LOG_E("Qboot write release sign fail from %s partition. rst=%d", name, rst);
-        return (RT_FALSE);
-    }
-    return RT_TRUE;
-}
-
-static rt_bool_t qbt_fw_algo_init(const qboot_algo_ops_t *algo_ops)
-{
-    rt_bool_t ret = RT_TRUE;
-    if (algo_ops->cmprs != RT_NULL && algo_ops->cmprs->init != RT_NULL)
-    {
-        ret = (algo_ops->cmprs->init() == RT_EOK);
-    }
-    if (algo_ops->crypt != RT_NULL && algo_ops->crypt->init != RT_NULL)
-    {
-        ret = (algo_ops->crypt->init() == RT_EOK);
-    }
-    return ret;
-}
-
-static void qbt_fw_algo_deinit(const qboot_algo_ops_t *algo_ops)
-{
-    if (algo_ops != RT_NULL)
-    {
-        if ((algo_ops->crypt != RT_NULL) && (algo_ops->crypt->deinit != RT_NULL))
-        {
-            algo_ops->crypt->deinit();
-        }
-        if ((algo_ops->cmprs != RT_NULL) && (algo_ops->cmprs->deinit != RT_NULL))
-        {
-            algo_ops->cmprs->deinit();
-        }
-    }
-}
-
-/**
- * @brief Read a package fragment and optionally decrypt into caller buffer.
- *
- * @param src_handle  Source handle (partition/file) to read from.
- * @param src_off     Byte offset within the source.
- * @param out_buf     Output buffer for plaintext.
- * @param crypt_buf   Scratch buffer for cipher text (may alias @p out_buf when no decrypt).
- * @param read_len    Number of bytes to read.
- * @param algo_ops    Algorithm ops describing decrypt handler; may be NULL for raw.
- *
- * @return RT_TRUE on success, RT_FALSE on read/decrypt failure.
- */
-static rt_bool_t qbt_fw_pkg_read(void *src_handle, rt_uint32_t src_off, rt_uint8_t *out_buf, rt_uint8_t *crypt_buf, rt_uint32_t read_len, const qboot_algo_ops_t *algo_ops)
-{
-    if (algo_ops->crypt != RT_NULL)
-    {
-        if (_header_io_ops->read(src_handle, src_off, crypt_buf, read_len) != RT_EOK)
-        {
-            return (RT_FALSE);
-        }
-
-        if (algo_ops->crypt->decrypt == RT_NULL)
-        {
-            rt_memcpy(out_buf, crypt_buf, read_len);
-            return (RT_TRUE);
-        }
-        else
-        {
-            return (algo_ops->crypt->decrypt(out_buf, crypt_buf, read_len) == RT_EOK);
-        }
-    }
-    else
-    {
-        return (_header_io_ops->read(src_handle, src_off, out_buf, read_len) == RT_EOK);
-    }
-}
-
-/**
- * @brief Consumer callback for a decompressed output chunk.
- *
- * @param buf Output data buffer.
- * @param len Output data length.
- * @param ctx User context provided by the caller.
- *
- * @return RT_EOK on success, negative error code otherwise.
- */
-typedef rt_err_t (*qbt_cmprs_consumer_t)(const rt_uint8_t *buf, size_t len, void *ctx);
-
-/**
- * @brief Decompress compressed input and forward each produced chunk to a consumer.
- *
- * @par Flow Steps (1-4)
- * 1) Build per-iteration context and decide whether an empty-input flush is allowed.
- * 2) Invoke the decompressor and interpret -RT_ENOSPC vs errors vs progress.
- * 3) Dispatch produced data to the consumer and update counters/output budget.
- * 4) Compact input buffer, track flush state, and report remaining input on exit.
- * 
- * @param algo_ops     Algorithm ops providing decompress handler.
- * @param stream_buf   Stream IO buffer; @p in_len is updated with remaining input.
- * @param cmprs_ctx    Stream context for this call (may be NULL).
- * @param out          [out] Stream results for this call.
- * @param consumer     Callback invoked for each produced chunk.
- * @param consumer_ctx User data passed to @p consumer.
- *
- * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or negative error code.
- */
-static rt_err_t qbt_decompress_with_consumer(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf, const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, qbt_cmprs_consumer_t consumer, void *consumer_ctx)
-{
-    size_t cmprs_len = stream_buf->in_len;
-    size_t remaining_out = cmprs_ctx->raw_remaining;
-    qbt_stream_status_t step = { 0 };
-    rt_err_t rst = RT_EOK;
-
-    /* Keep looping while output budget remains. */
-    while (remaining_out > 0)
-    {
-        /* (1) Build per-iteration context and decide empty-input flush. */
-        size_t cur_cap = (remaining_out < stream_buf->out_len) ? remaining_out : stream_buf->out_len; /**< Output cap for this iteration. */
-        qbt_stream_ctx_t call_ctx = *cmprs_ctx; /**< Local context copy. */
-        call_ctx.raw_remaining = remaining_out; /**< Refresh remaining raw budget. */
-        call_ctx.consumed = cmprs_ctx->consumed + out->consumed; /**< Update consumed offset. */
-
-        if (cmprs_len == 0) /**< No buffered compressed input. */
-        {
-            if (call_ctx.consumed < call_ctx.total) /**< Stream not ended. */
-            {
-                break;  /**< Wait for more input. */
-            }
-            else
-            {
-                /**< Allow a single flush with empty input. */
-            }
-        }
-
-        /* (2) Invoke decompressor and validate progress paths. */
-        qbt_stream_buf_t io = { stream_buf->in, (rt_uint32_t)cmprs_len, stream_buf->out, cur_cap };
-        rst = algo_ops->cmprs->decompress(&io, &step, &call_ctx);
-        if (rst == -RT_ENOSPC) /**< Need more input data. */
-        {
-            break;
-        }
-        else if ((rst != RT_EOK)                  /**< Decompress failed. */
-                 || (step.consumed > cmprs_len)   /**< Consumed more input than available. */
-                 || (step.produced > cur_cap))    /**< Produced more output than buffer capacity. */
-        {
-            break;
-        }
-        else if ((step.consumed == 0) && (step.produced == 0))
-        {
-            break; /**< keep a minimal progress guard to avoid infinite loops */
-        }
-
-        /* (3) Dispatch output and update counters/budget. */
-        rst = consumer(stream_buf->out, step.produced, consumer_ctx);
-        if (rst != RT_EOK)
-        {
-            break;
-        }
-
-        /* Accumulate output and enforce the optional total output cap. */
-        remaining_out -= step.produced;
-        out->consumed += step.consumed;
-        out->produced += step.produced;
-
-        /* (4) Compact input buffer and track empty flush usage. */
-        cmprs_len -= step.consumed;
-        if (cmprs_len > 0)
-        {
-            rt_memmove(stream_buf->in, stream_buf->in + step.consumed, cmprs_len); /**< Move remaining input forward. */
-        }
-    }
-
-    /* Report remaining compressed data to the caller. */
-    out->remaining_in = stream_buf->in_len = (rt_uint32_t)cmprs_len;
-    return rst;
-}
-
-/**
- * @brief Stream processor callback for decompression output.
- * 
- * @param algo_ops    Algorithm ops providing decompress handler.
- * @param stream_buf  Stream IO buffer (in_len updated with remaining input).
- * @param cmprs_ctx   Stream context for this call.
- * @param out         [out] Stream results for this call.
- * @param ctx         User context provided by the caller.
- *
- * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or negative error code.
- */
-typedef rt_err_t (*qbt_stream_proc_t)(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf, const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, void *ctx);
-
-/**
- * @brief Fixed configuration for a stream processing operation.
- */
-typedef struct
-{
-    void *src_handle;                 /**< Package source handle. */
-    void *dst_handle;                 /**< Destination handle (optional). */
-    const fw_info_t *fw_info;         /**< Firmware info header. */
-    const qboot_algo_ops_t *algo_ops; /**< Algorithm handler table. */
-    rt_uint8_t *cmprs_buf;                    /**< Buffer to accumulate compressed input. */
-    rt_uint8_t *out_buf;                      /**< Buffer to hold decompressed output. */
-    rt_uint8_t *crypt_buf;                    /**< Scratch buffer for encrypted input. */
-} qbt_stream_cfg_t;
-
-/**
- * @brief Stream state used by the write path.
- *
- * Carries destination handle and current raw output offset while streaming.
- * The stream loop updates @ref raw_pos before each call, and the write consumer
- * advances it after successful writes.
- */
-typedef struct
-{
-    void *dst_handle; /**< Destination handle for writes (partition/file). */
-    rt_uint32_t raw_pos;      /**< Current raw output offset (bytes). */
-    rt_uint32_t raw_size;     /**< Total raw size for progress display (0 to disable). */
-} qbt_stream_state_t;
-
-/**
- * @brief Stream package data, decompress, and consume output with strict raw-size limits.
- *
- * This function loops over the package content, reads compressed data into a staging
- * buffer, calls the decompressor, and forwards produced data to @p proc. Each call
- * enforces a maximum output length equal to the remaining raw size to avoid overruns.
- *
- * @param cfg       Stream configuration (package source and working buffers).
- * @param proc      Output consumer invoked for each produced chunk.
- * @param proc_ctx  User context for @p proc.
- * @param purpose   Stream purpose (write/CRC).
- *
- * @return RT_TRUE on success, RT_FALSE on read or decompression/consume error.
- */
-static rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_t purpose, qbt_stream_proc_t proc, void *proc_ctx)
-{
-    /* Track package read position, raw output position, and buffered input length. */
-    rt_uint32_t src_read_pos = sizeof(fw_info_t);
-    rt_uint32_t raw_pos = 0;
-    rt_uint32_t cmprs_len = 0;
-
-    /* Continue until the expected raw size has been produced. */
-    while (raw_pos < cfg->fw_info->raw_size)
-    {
-        /* Limit read length to remaining package bytes. */
-        int remain_len = (cfg->fw_info->pkg_size + sizeof(fw_info_t) - src_read_pos);
-        if (remain_len > 0)
-        {
-            int read_len = QBOOT_CMPRS_READ_SIZE;
-            if (read_len > remain_len)
-            {
-                read_len = remain_len;
-            }
-
-            /* Read (and decrypt if required) into the tail of the compressed buffer. */
-            if (!qbt_fw_pkg_read(cfg->src_handle, src_read_pos, cfg->cmprs_buf + cmprs_len, cfg->crypt_buf, read_len, cfg->algo_ops))
-            {
-                LOG_E("Qboot stream read pkg error. addr=%08X, len=%d", src_read_pos, read_len);
-                return RT_FALSE;
-            }
-
-            /* Advance read position and update buffered compressed length. */
-            src_read_pos += read_len;
-            cmprs_len += (rt_uint32_t)read_len;
-        }
-        else if (remain_len < 0)
-        {
-            LOG_E("Qboot stream read pkg error. read beyond pkg size %d.", remain_len);
-            return RT_FALSE;
-        }
-        else if (cmprs_len == 0)
-        {
-            LOG_E("Qboot stream read pkg error. no compressed input left.");
-            return RT_FALSE;
-        }
-
-        /* Enforce strict raw output cap based on remaining expected size. */
-        qbt_stream_ctx_t cmprs_ctx = {
-            .total = cfg->fw_info->pkg_size,
-            .consumed = (size_t)(src_read_pos - sizeof(fw_info_t)) - cmprs_len,
-            .raw_remaining = cfg->fw_info->raw_size - raw_pos,
-            .purpose = purpose,
-        };
-        qbt_stream_buf_t stream_buf = { cfg->cmprs_buf, cmprs_len, cfg->out_buf, QBOOT_BUF_SIZE };
-        qbt_stream_status_t out = { 0 };
-        /* Only the write path uses stream_state; CRC path passes a different ctx type. */
-        if (purpose == QBT_STREAM_WRITE)
-        {
-            ((qbt_stream_state_t *)proc_ctx)->raw_pos = raw_pos;
-        }
-        rt_err_t rst = proc(cfg->algo_ops, &stream_buf, &cmprs_ctx, &out, proc_ctx);
-        if (rst != RT_EOK || out.produced <= 0)
-        {
-            LOG_E("Qboot stream process error %d. addr=%08X, out_len = %d", rst, raw_pos, out.produced);
-            return RT_FALSE;
-        }
-        cmprs_len = stream_buf.in_len;
-
-        /* Advance raw output position. */
-        raw_pos += (rt_uint32_t)out.produced;
-    }
-
-    return RT_TRUE;
-}
-
 #ifdef QBOOT_USING_APP_CHECK
-/**
- * @brief CRC consumer for a decompressed output chunk.
- *
- * @param buf Output data buffer.
- * @param len Output data length.
- * @param ctx CRC accumulator pointer (rt_uint32_t *).
- *
- * @return RT_EOK on success.
- */
-static rt_err_t qbt_crc_chunk_consumer(const rt_uint8_t *buf, size_t len, void *ctx)
-{
-    rt_uint32_t *crc_acc = (rt_uint32_t *)ctx;
-    *crc_acc = crc32_cyc_cal(*crc_acc, (rt_uint8_t *)buf, len);
-    return RT_EOK;
-}
-
-/**
- * @brief Stream processor to update CRC from decompressed data.
- *
- * @param algo_ops    Algorithm ops providing decompress handler.
- * @param stream_buf  Stream IO buffer (in_len updated with remaining input).
- * @param cmprs_ctx   Stream context for this call.
- * @param out        [out] Stream results for this call.
- * @param ctx         CRC accumulator pointer (rt_uint32_t *).
- *
- * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or negative error code.
- */
-static rt_err_t qbt_stream_crc_proc(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf, const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, void *ctx)
-{
-    rt_uint32_t *crc_acc = (rt_uint32_t *)ctx;
-    return qbt_decompress_with_consumer(algo_ops, stream_buf, cmprs_ctx, out, qbt_crc_chunk_consumer, crc_acc);
-}
-
 /**
  * @brief Stream and verify application CRC using the selected algorithm.
  *
@@ -764,48 +180,6 @@ static rt_bool_t qbt_app_crc_check(void *src_handle, const char *src_name, fw_in
 #endif
 
 /**
- * @brief Output consumer that writes produced data to destination storage.
- *
- * @param buf Output data buffer.
- * @param len Output data length.
- * @param ctx Stream state pointer (qbt_stream_state_t *).
- *
- * @return RT_EOK on success, negative error code on failure.
- */
-static rt_err_t qbt_write_chunk_consumer(const rt_uint8_t *buf, size_t len, void *ctx)
-{
-    qbt_stream_state_t *state = (qbt_stream_state_t *)ctx;
-    if (_header_io_ops->write(state->dst_handle, state->raw_pos, buf, len) != RT_EOK)
-    {
-        return -RT_ERROR;
-    }
-    state->raw_pos += (rt_uint32_t)len;
-    return RT_EOK;
-}
-
-/**
- * @brief Stream processor to write decompressed data to destination storage.
- *
- * @param algo_ops    Algorithm ops providing decompress handler.
- * @param stream_buf  Stream IO buffer (in_len updated with remaining input).
- * @param cmprs_ctx   Stream context for this call.
- * @param out        [out] Stream results for this call.
- * @param ctx         Stream state pointer (qbt_stream_state_t *).
- *
- * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or negative error code.
- */
-static rt_err_t qbt_stream_write_proc(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf, const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, void *ctx)
-{
-    qbt_stream_state_t *state = (qbt_stream_state_t *)ctx;
-    rt_err_t rst = qbt_decompress_with_consumer(algo_ops, stream_buf, cmprs_ctx, out, qbt_write_chunk_consumer, state);
-    if ((rst == RT_EOK) && (out->produced > 0))
-    {
-        rt_kprintf("\b\b\b%02d%%", (state->raw_pos * 100 / state->raw_size));
-    }
-    return rst;
-}
-
-/**
  * @brief Release firmware package to the destination partition.
  *
  * @param dst_handle Destination handle (partition/file).
@@ -817,7 +191,7 @@ static rt_err_t qbt_stream_write_proc(const qboot_algo_ops_t *algo_ops, qbt_stre
  *
  * @return RT_TRUE on success, RT_FALSE on error.
  */
-static rt_bool_t qbt_fw_release(void *dst_handle, size_t dst_size, const char *dst_name, void *src_handle, const char *src_name, fw_info_t *fw_info)
+static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const char *dst_name, void *src_handle, const char *src_name, fw_info_t *fw_info)
 {
     rt_uint16_t algo_id;
     const qboot_algo_ops_t *algo_ops = qbt_fw_get_algo_ops(fw_info, &algo_id);
@@ -893,7 +267,7 @@ done:
     return (RT_TRUE);
 }
 
-static rt_bool_t qbt_dest_part_verify(void *handle, size_t part_len, const char *name)
+static rt_bool_t qbt_dest_part_verify(void *handle, rt_uint32_t part_len, const char *name)
 {
     if (!qbt_fw_info_read(handle, part_len, &fw_info, RT_TRUE))
     {
@@ -923,7 +297,7 @@ static rt_bool_t qbt_dest_part_verify(void *handle, size_t part_len, const char 
     return (RT_TRUE);
 }
 
-static rt_bool_t qbt_fw_check(void *fw_handle, size_t part_len, const char *name, fw_info_t *fw_info, rt_bool_t output_log)
+static rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char *name, fw_info_t *fw_info, rt_bool_t output_log)
 {
     if (!qbt_fw_info_read(fw_handle, part_len, fw_info, RT_FALSE))
     {
@@ -964,7 +338,7 @@ static rt_bool_t qbt_fw_check(void *fw_handle, size_t part_len, const char *name
     return (RT_TRUE);
 }
 
-static rt_bool_t qbt_fw_update(void *dst_handle, size_t dst_size, const char *dst_name, void *src_handle, const char *src_name, fw_info_t *fw_info)
+static rt_bool_t qbt_fw_update(void *dst_handle, rt_uint32_t dst_size, const char *dst_name, void *src_handle, const char *src_name, fw_info_t *fw_info)
 {
     rt_bool_t rst;
 
@@ -1247,8 +621,8 @@ static rt_bool_t qbt_app_resume_from(const char *src_part_name)
 {
     void *src_handle = RT_NULL;
     void *dst_handle = RT_NULL;
-    size_t src_size = 0;
-    size_t dst_size = 0;
+    rt_uint32_t src_size = 0;
+    rt_uint32_t dst_size = 0;
     rt_bool_t rst = RT_FALSE;
 
     if (!qbt_target_open(src_part_name, &src_handle, &src_size))
@@ -1304,8 +678,8 @@ static rt_bool_t qbt_release_from_part(const char *part_name, rt_bool_t check_si
 {
     void *src_handle = RT_NULL;
     void *dst_handle = RT_NULL;
-    size_t src_size = 0;
-    size_t dst_size = 0;
+    rt_uint32_t src_size = 0;
+    rt_uint32_t dst_size = 0;
     rt_bool_t rst = RT_FALSE;
 
     if (!qbt_target_open(part_name, &src_handle, &src_size))
@@ -1442,16 +816,11 @@ static void qbt_thread_entry(void *params)
 
 static int qbt_startup(void)
 {
-#ifdef QBOOT_ALGO_CRYPT_NONE
-    extern int qbt_algo_none_register(void);
-    QBT_REGISTER_ALGO(qbt_algo_none_register());
-#endif // QBOOT_ALGO_CRYPT_NONE
-#ifdef QBOOT_USING_GZIP
-    QBT_REGISTER_ALGO(qbt_algo_gzip_register());
-#endif // QBOOT_USING_GZIP
-#ifdef QBOOT_USING_QUICKLZ
-    QBT_REGISTER_ALGO(qbt_algo_quicklz_register());
-#endif // QBOOT_USING_QUICKLZ
+    if(qbot_algo_startup() != RT_EOK)
+    {
+        LOG_E("qbot_algo_startup fail.");
+        return -RT_ERROR;
+    }
 
     rt_thread_t tid = rt_thread_create("Qboot", qbt_thread_entry, NULL, QBOOT_THREAD_STACK_SIZE, QBOOT_THREAD_PRIO, 20);
     if (tid == NULL)
@@ -1508,7 +877,7 @@ static void qbt_fw_info_show(const char *part_name)
 {
     char str[20];
     void *handle = RT_NULL;
-    size_t part_size = 0;
+    rt_uint32_t part_size = 0;
 
     if (!qbt_target_open(part_name, &handle, &part_size))
     {
@@ -1636,7 +1005,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         char *src, *dst;
         void *src_handle = RT_NULL;
         void *dst_handle = RT_NULL;
-        size_t src_size = 0;
+        rt_uint32_t src_size = 0;
         if (argc < 4)
         {
             rt_kprintf(cmd_info[3]);
@@ -1696,7 +1065,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
     {
         char *part_name;
         void *handle = RT_NULL;
-        size_t part_size = 0;
+        rt_uint32_t part_size = 0;
         if (argc < 3)
         {
             rt_kprintf(cmd_info[5]);
@@ -1725,7 +1094,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
     {
         char *part_name;
         void *handle = RT_NULL;
-        size_t part_size = 0;
+        rt_uint32_t part_size = 0;
 
         if (argc < 3)
         {

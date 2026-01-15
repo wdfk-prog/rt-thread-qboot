@@ -8,7 +8,6 @@
  * 2020-09-18     qiyongzhong       add deinit function
  */
 
-#include <qboot_gzip.h>
 #include <qboot.h>
 
 #ifdef QBOOT_USING_GZIP
@@ -20,17 +19,20 @@
 #define DBG_LVL DBG_INFO
 #include <rtdbg.h>
 
+/** Size for the gzip remainder buffer used for alignment. */
+#define GZIP_REMAIN_BUF_SIZE 32
+
 /** Gzip inflate stream context. */
 static z_stream qbt_strm;
 /** Remainder buffer for alignment handling. */
 static rt_uint8_t qbt_gzip_remain_buf[GZIP_REMAIN_BUF_SIZE];
 /** Length of valid data in @ref qbt_gzip_remain_buf. */
-static size_t qbt_gzip_remain_len = 0;
+static rt_uint32_t qbt_gzip_remain_len = 0;
 
 /**
  * @brief Initialize gzip decompression state.
  */
-void qbt_gzip_init(void)
+static void qbt_gzip_init(void)
 {
     memset((rt_uint8_t *)&qbt_strm, 0, sizeof(qbt_strm));
     inflateInit2(&qbt_strm, 47);
@@ -43,7 +45,7 @@ void qbt_gzip_init(void)
  * @param in_buf  Input buffer pointer.
  * @param in_size Input buffer length.
  */
-void qbt_gzip_set_in(const rt_uint8_t *in_buf, rt_uint32_t in_size)
+static void qbt_gzip_set_in(const rt_uint8_t *in_buf, rt_uint32_t in_size)
 {
     qbt_strm.next_in = (void *)in_buf;
     qbt_strm.avail_in = in_size;
@@ -57,7 +59,7 @@ void qbt_gzip_set_in(const rt_uint8_t *in_buf, rt_uint32_t in_size)
  *
  * @return Produced length on success, negative zlib error code on failure.
  */
-int qbt_gzip_decompress(rt_uint8_t *out_buf, rt_uint32_t out_buf_size)
+static int qbt_gzip_decompress(rt_uint8_t *out_buf, rt_uint32_t out_buf_size)
 {
     int ret;
 
@@ -105,7 +107,7 @@ static rt_err_t qbt_algo_gzip_decompress(const qbt_stream_buf_t *buf, qbt_stream
     pad_output = (ctx->purpose == QBT_STREAM_WRITE);         /**< Enable padding for write path. */
     if (ctx->total > 0)                                /**< Determine if this is the last chunk. */
     {
-        size_t available_end = ctx->consumed + buf->in_len;   /**< End offset of available input. */
+        rt_uint32_t available_end = ctx->consumed + buf->in_len;   /**< End offset of available input. */
         last_chunk = (available_end >= ctx->total);           /**< Mark final chunk when reaching total. */
     }
 
@@ -143,17 +145,17 @@ static rt_err_t qbt_algo_gzip_decompress(const qbt_stream_buf_t *buf, qbt_stream
         is_end = (decomp_len < (int)(buf->out_len - qbt_gzip_remain_len)); /**< End when output not filled. */
     }
     /* (2) Align output, manage remainder, optional padding. */
-    size_t total_len = (size_t)decomp_len + qbt_gzip_remain_len; /**< Total output including remainder. */
-    size_t new_remain = total_len % GZIP_REMAIN_BUF_SIZE;    /**< Bytes not aligned to 32. */
-    size_t out_len_aligned = total_len - new_remain;         /**< Aligned output length. */
+    rt_uint32_t total_len = (rt_uint32_t)decomp_len + qbt_gzip_remain_len; /**< Total output including remainder. */
+    rt_uint32_t new_remain = total_len % GZIP_REMAIN_BUF_SIZE; /**< Bytes not aligned to 32. */
+    rt_uint32_t out_len_aligned = total_len - new_remain; /**< Aligned output length. */
 
     if (new_remain > 0)                                      /**< Store new remainder for next call. */
     {
         rt_memcpy(qbt_gzip_remain_buf, buf->out + out_len_aligned, new_remain); /**< Save remainder bytes. */
     }
 
-    size_t out_len_final = out_len_aligned;                  /**< Final output size for this call. */
-    if (is_end)                                              /**< Tail handling on stream end. */
+    rt_uint32_t out_len_final = out_len_aligned; /**< Final output size for this call. */
+    if (is_end) /**< Tail handling on stream end. */
     {
         if (new_remain > 0)                                  /**< There is leftover data. */
         {
@@ -196,7 +198,7 @@ static rt_err_t qbt_algo_gzip_decompress(const qbt_stream_buf_t *buf, qbt_stream
 /**
  * @brief Deinitialize gzip decompression state.
  */
-void qbt_gzip_deinit(void)
+static void qbt_gzip_deinit(void)
 {
     inflateEnd(&qbt_strm);
     qbt_gzip_remain_len = 0;
@@ -244,7 +246,7 @@ static const qboot_algo_ops_t qbt_algo_gzip_ops = {
  *
  * @return RT_EOK on success, negative error code on failure.
  */
-int qbt_algo_gzip_register(void)
+rt_err_t qbt_algo_gzip_register(void)
 {
     return qboot_algo_register(&qbt_algo_gzip_ops, QBOOT_ALGO_CMPRS_GZIP);
 }

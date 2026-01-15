@@ -14,15 +14,16 @@
  * 2020-07-06     qiyongzhong     first version
  * 2026-01-13 1.1 wdfk-prog       add one-shot decompress handler for QUICKLZ blocks
  */
-#include <qboot_quicklz.h>
+#include <qboot.h>
 
 #ifdef QBOOT_USING_QUICKLZ
-#include <qboot.h>
 #include <quicklz.h>
 
 #define DBG_TAG "qb_quicklz"
 #define DBG_LVL DBG_INFO
 #include <rtdbg.h>
+
+#define QBOOT_QUICKLZ_BLOCK_HDR_SIZE    4
 
 /** QuickLZ decompression state for streaming API. */
 static qlz_state_decompress qbt_quicklz_state;
@@ -80,7 +81,7 @@ static rt_err_t qbt_algo_quicklz_decompress(const qbt_stream_buf_t *buf, qbt_str
     RT_UNUSED(ctx);
     rt_uint32_t block_size;
     rt_uint32_t need_len;
-    int decomp_len;
+    rt_uint32_t decomp_len;
 
     if (buf->in_len < QBOOT_QUICKLZ_BLOCK_HDR_SIZE)
     {
@@ -93,10 +94,10 @@ static rt_err_t qbt_algo_quicklz_decompress(const qbt_stream_buf_t *buf, qbt_str
     {
         return -RT_ERROR;
     }
-    else if (need_len > (int)buf->out_len)
+    else if (need_len > buf->out_len)
     {
         LOG_W("Qboot quicklz decompress warn. need_len=%u > out_len=%u", need_len, (rt_uint32_t)buf->out_len);
-        decomp_len = (int)buf->out_len;
+        decomp_len = buf->out_len;
     }
 
     if (buf->in_len < need_len)
@@ -104,20 +105,20 @@ static rt_err_t qbt_algo_quicklz_decompress(const qbt_stream_buf_t *buf, qbt_str
         return -RT_ENOSPC;
     }
 
-    decomp_len = (int)qbt_quicklz_decompress(buf->out, buf->in + QBOOT_QUICKLZ_BLOCK_HDR_SIZE);
-    if (decomp_len <= 0)
+    decomp_len = qbt_quicklz_decompress(buf->out, buf->in + QBOOT_QUICKLZ_BLOCK_HDR_SIZE);
+    if (decomp_len == 0)
     {
-        LOG_E("Qboot quicklz decompress error. decomp_len=%d <= 0", decomp_len);
+        LOG_E("Qboot quicklz decompress error", decomp_len);
         return -RT_ERROR;
     }
-    else if (decomp_len > (int)buf->out_len)
+    else if (decomp_len > buf->out_len)
     {
         LOG_W("Qboot quicklz decompress warn. decomp_len=%d > out_len=%u", decomp_len, (rt_uint32_t)buf->out_len);
-        decomp_len = (int)buf->out_len;
+        decomp_len = buf->out_len;
     }
 
     out->consumed = need_len;
-    out->produced = (size_t)decomp_len;
+    out->produced = (rt_uint32_t)decomp_len;
     return RT_EOK;
 }
 
@@ -152,7 +153,7 @@ static const qboot_algo_ops_t qbt_algo_quicklz_ops = {
  *
  * @return RT_EOK on success, negative error code on failure.
  */
-int qbt_algo_quicklz_register(void)
+rt_err_t qbt_algo_quicklz_register(void)
 {
     return qboot_algo_register(&qbt_algo_quicklz_ops, QBOOT_ALGO_CMPRS_QUICKLZ);
 }

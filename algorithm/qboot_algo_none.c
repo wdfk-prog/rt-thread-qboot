@@ -36,7 +36,7 @@ static rt_err_t qbt_algo_none_decompress(const qbt_stream_buf_t *buf, qbt_stream
         return -RT_ENOSPC;
     }
 #ifdef QBOOT_USING_COMPRESSION
-    size_t copy_len = (buf->in_len < buf->out_len) ? buf->in_len : buf->out_len;
+    rt_uint32_t copy_len = (buf->in_len < buf->out_len) ? buf->in_len : buf->out_len;
     if (copy_len > 0)
     {
         rt_memcpy(buf->out, buf->in, copy_len);
@@ -78,7 +78,7 @@ static const qboot_algo_ops_t qbt_algo_none_ops = {
  *
  * @return RT_EOK if the registration succeeds, or -RT_ERROR on failure.
  */
-int qbt_algo_none_register(void)
+rt_err_t qbt_algo_none_register(void)
 {
     return qboot_algo_register(&qbt_algo_none_ops, QBOOT_ALGO_CMPRS_NONE);
 }

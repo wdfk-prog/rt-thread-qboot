@@ -63,11 +63,11 @@ static rt_err_t qbt_fal_close(void *handle)
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
-static rt_err_t qbt_fal_read(void *handle, size_t off, void *buf, size_t len)
+static rt_err_t qbt_fal_read(void *handle, rt_uint32_t off, void *buf, rt_uint32_t len)
 {
     if (fal_partition_read((fal_partition_t)handle, off, buf, len) < 0)
     {
-        LOG_E("FAL read fail, off=%u len=%u", (unsigned int)off, (unsigned int)len);
+        LOG_E("FAL read fail, off=%u len=%u", off, len);
         return -RT_ERROR;
     }
     return RT_EOK;
@@ -82,11 +82,11 @@ static rt_err_t qbt_fal_read(void *handle, size_t off, void *buf, size_t len)
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
-static rt_err_t qbt_fal_erase(void *handle, size_t off, size_t len)
+static rt_err_t qbt_fal_erase(void *handle, rt_uint32_t off, rt_uint32_t len)
 {
     if (fal_partition_erase((fal_partition_t)handle, off, len) < 0)
     {
-        LOG_E("FAL erase fail, off=%u len=%u", (unsigned int)off, (unsigned int)len);
+        LOG_E("FAL erase fail, off=%u len=%u", off, len);
         return -RT_ERROR;
     }
     return RT_EOK;
@@ -102,11 +102,11 @@ static rt_err_t qbt_fal_erase(void *handle, size_t off, size_t len)
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
-static rt_err_t qbt_fal_write(void *handle, size_t off, const void *buf, size_t len)
+static rt_err_t qbt_fal_write(void *handle, rt_uint32_t off, const void *buf, rt_uint32_t len)
 {
     if (fal_partition_write((fal_partition_t)handle, off, buf, len) < 0)
     {
-        LOG_E("FAL write fail, off=%u len=%u", (unsigned int)off, (unsigned int)len);
+        LOG_E("FAL write fail, off=%u len=%u", off, len);
         return -RT_ERROR;
     }
     return RT_EOK;
@@ -120,7 +120,7 @@ static rt_err_t qbt_fal_write(void *handle, size_t off, const void *buf, size_t 
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
-static rt_err_t qbt_fal_size(void *handle, size_t *out_size)
+static rt_err_t qbt_fal_size(void *handle, rt_uint32_t *out_size)
 {
     if (out_size == RT_NULL)
     {
@@ -142,7 +142,7 @@ static rt_err_t qbt_fal_size(void *handle, size_t *out_size)
 static rt_err_t qbt_fal_sign_read(void *handle, rt_bool_t *released, const fw_info_t *fw_info)
 {
     fal_partition_t part = (fal_partition_t)handle;
-    size_t pos = (((sizeof(fw_info_t) + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
+    rt_uint32_t pos = (((sizeof(fw_info_t) + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
     rt_uint32_t release_sign = 0;
     if (fal_partition_read(part, pos, (rt_uint8_t *)&release_sign, sizeof(rt_uint32_t)) < 0)
     {
@@ -157,7 +157,7 @@ static rt_err_t qbt_fal_sign_write(void *handle, const fw_info_t *fw_info)
 {
     fal_partition_t part = (fal_partition_t)handle;
     rt_uint32_t release_sign = QBOOT_RELEASE_SIGN_WORD;
-    size_t pos = (((sizeof(fw_info_t) + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
+    rt_uint32_t pos = (((sizeof(fw_info_t) + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
     if (fal_partition_write(part, pos, (rt_uint8_t *)&release_sign, sizeof(rt_uint32_t)) < 0)
     {
         LOG_E("FAL sign write fail at pos=%u.", (unsigned int)pos);
@@ -185,7 +185,7 @@ static const qboot_header_parser_ops_t g_qboot_header_parser_fal = {
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
-int qboot_register_storage_ops(void)
+rt_err_t qboot_register_storage_ops(void)
 {
     if (fal_init() <= 0)
     {
@@ -193,7 +193,7 @@ int qboot_register_storage_ops(void)
         return -RT_ERROR;
     }
 
-    int rst = qboot_register_header_io_ops(&g_qboot_io_fal);
+    rt_err_t rst = qboot_register_header_io_ops(&g_qboot_io_fal);
     if (rst != RT_EOK)
     {
         LOG_E("Register header IO ops fail: %d", rst);
