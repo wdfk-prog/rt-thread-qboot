@@ -135,18 +135,11 @@ static rt_err_t qbt_algo_quicklz_init(void)
 
 /** QuickLZ compression ops for Qboot. */
 static const qboot_cmprs_ops_t qbt_algo_quicklz_cmprs_ops = {
+    .cmprs_name = "quicklz",
+    .cmprs_id = QBOOT_ALGO_CMPRS_QUICKLZ,
     .init = qbt_algo_quicklz_init,
     .decompress = qbt_algo_quicklz_decompress,
     .deinit = RT_NULL,
-};
-
-/** QuickLZ algorithm ops descriptor. */
-static const qboot_algo_ops_t qbt_algo_quicklz_ops = {
-    .algo_name = "quicklz",
-    .algo_id = QBOOT_ALGO_CMPRS_QUICKLZ,
-    .crypt = RT_NULL,
-    .cmprs = &qbt_algo_quicklz_cmprs_ops,
-    .apply = RT_NULL,
 };
 
 /**
@@ -156,7 +149,7 @@ static const qboot_algo_ops_t qbt_algo_quicklz_ops = {
  */
 rt_err_t qbt_algo_quicklz_register(void)
 {
-    return qboot_algo_register(&qbt_algo_quicklz_ops, QBOOT_ALGO_CMPRS_QUICKLZ);
+    return qboot_cmprs_register(&qbt_algo_quicklz_cmprs_ops);
 }
 
 #endif

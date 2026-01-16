@@ -17,7 +17,6 @@
 #include <qboot.h>
 
 #ifdef QBOOT_USING_FASTLZ
-#include <qboot_fastlz.h>
 #include <fastlz.h>
 
 #define DBG_TAG "qb_fastlz"
@@ -25,6 +24,18 @@
 #include <rtdbg.h>
 
 #define QBOOT_FASTLZ_BLOCK_HDR_SIZE    4
+/**
+ * @brief      Retrieves the size of a data block from a FastLZ compressed data header.
+ *
+ *             This function reads the first QBOOT_FASTLZ_BLOCK_HDR_SIZE bytes from the
+ *             provided compressed data pointer to reconstruct the original block size.
+ *             It assumes the size is stored in big-endian format within the header.
+ *
+ * @param[in]  comp_datas  A pointer to the beginning of the compressed data,
+ *                         which includes the header.
+ *
+ * @return     The size of the data block as a 32-bit unsigned integer.
+ */
 rt_uint32_t qbt_fastlz_get_block_size(const rt_uint8_t *comp_datas)
 {
     rt_uint32_t block_size = 0;
@@ -36,7 +47,20 @@ rt_uint32_t qbt_fastlz_get_block_size(const rt_uint8_t *comp_datas)
     return(block_size);
 }
 
-rt_uint32_t qbt_fastlz_decompress(rt_uint8_t *out_buf, rt_uint32_t out_buf_size, const rt_uint8_t *in_buf, rt_uint32_t block_size)
+/**
+ * @brief      Decompresses a block of data using the FastLZ algorithm.
+ *
+ *             This function serves as a wrapper for the `fastlz_decompress` function,
+ *             passing the provided buffers and sizes directly to it.
+ *
+ * @param[out] out_buf       Pointer to the destination buffer for the decompressed data.
+ * @param[in]  out_buf_size  The size of the destination buffer.
+ * @param[in]  in_buf        Pointer to the source buffer containing the compressed data.
+ * @param[in]  block_size    The size of the compressed data block to decompress.
+ *
+ * @return     The number of bytes decompressed upon success, or 0 on failure.
+ */
+int qbt_fastlz_decompress(rt_uint8_t *out_buf, rt_uint32_t out_buf_size, const rt_uint8_t *in_buf, rt_uint32_t block_size)
 {
     return(fastlz_decompress(in_buf, block_size, out_buf, out_buf_size));
 }
@@ -55,7 +79,7 @@ static rt_err_t qbt_algo_fastlz_decompress(const qbt_stream_buf_t *buf, qbt_stre
     RT_UNUSED(ctx);
     rt_uint32_t block_size;
     rt_uint32_t need_len;
-    rt_uint32_t decomp_len;
+    int decomp_len;
     rt_uint32_t out_cap = (rt_uint32_t)buf->out_len;
 
     if (buf->in_len < QBOOT_FASTLZ_BLOCK_HDR_SIZE)
@@ -76,9 +100,9 @@ static rt_err_t qbt_algo_fastlz_decompress(const qbt_stream_buf_t *buf, qbt_stre
     }
 
     decomp_len = qbt_fastlz_decompress(buf->out, out_cap, buf->in + QBOOT_FASTLZ_BLOCK_HDR_SIZE, block_size);
-    if (decomp_len == 0)
+    if (decomp_len <= 0)
     {
-        LOG_E("Qboot fastlz decompress error. block=%u", block_size);
+        LOG_E("Qboot fastlz decompress error. decomp_len=%d", decomp_len);
         return -RT_ERROR;
     }
     if (decomp_len > out_cap)
@@ -94,18 +118,11 @@ static rt_err_t qbt_algo_fastlz_decompress(const qbt_stream_buf_t *buf, qbt_stre
 
 /** FastLZ compression ops for Qboot. */
 static const qboot_cmprs_ops_t qbt_algo_fastlz_cmprs_ops = {
+    .cmprs_name = "fastlz",
+    .cmprs_id = QBOOT_ALGO_CMPRS_FASTLZ,
     .init = RT_NULL,
     .decompress = qbt_algo_fastlz_decompress,
     .deinit = RT_NULL,
-};
-
-/** FastLZ algorithm ops descriptor. */
-static const qboot_algo_ops_t qbt_algo_fastlz_ops = {
-    .algo_name = "fastlz",
-    .algo_id = QBOOT_ALGO_CMPRS_FASTLZ,
-    .crypt = RT_NULL,
-    .cmprs = &qbt_algo_fastlz_cmprs_ops,
-    .apply = RT_NULL,
 };
 
 /**
@@ -115,8 +132,7 @@ static const qboot_algo_ops_t qbt_algo_fastlz_ops = {
  */
 rt_err_t qbt_algo_fastlz_register(void)
 {
-    return qboot_algo_register(&qbt_algo_fastlz_ops, QBOOT_ALGO_CMPRS_FASTLZ);
+    return qboot_cmprs_register(&qbt_algo_fastlz_cmprs_ops);
 }
-
 #endif
 

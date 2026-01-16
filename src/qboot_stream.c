@@ -30,24 +30,16 @@
  *
  * @return RT_TRUE on success, RT_FALSE on read/decrypt failure.
  */
-rt_bool_t qbt_fw_pkg_read(void *src_handle, rt_uint32_t src_off, rt_uint8_t *out_buf, rt_uint8_t *crypt_buf, rt_uint32_t read_len, const qboot_algo_ops_t *algo_ops)
+rt_bool_t qbt_fw_pkg_read(void *src_handle, rt_uint32_t src_off, rt_uint8_t *out_buf, rt_uint8_t *crypt_buf, rt_uint32_t read_len, const qbt_algo_context_t *algo_ops)
 {
-    if (algo_ops->crypt != RT_NULL)
+    if (algo_ops->crypt_ops != RT_NULL)
     {
         if (_header_io_ops->read(src_handle, src_off, crypt_buf, read_len) != RT_EOK)
         {
             return (RT_FALSE);
         }
 
-        if (algo_ops->crypt->decrypt == RT_NULL)
-        {
-            rt_memcpy(out_buf, crypt_buf, read_len);
-            return (RT_TRUE);
-        }
-        else
-        {
-            return (algo_ops->crypt->decrypt(out_buf, crypt_buf, read_len) == RT_EOK);
-        }
+        return (algo_ops->crypt_ops->decrypt(out_buf, crypt_buf, read_len) == RT_EOK);
     }
     else
     {
@@ -78,7 +70,7 @@ typedef rt_err_t (*qbt_cmprs_consumer_t)(const rt_uint8_t *buf, rt_uint32_t len,
  *
  * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or negative error code.
  */
-static rt_err_t qbt_decompress_with_consumer(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf,
+static rt_err_t qbt_decompress_with_consumer(const qbt_algo_context_t *algo_ops, qbt_stream_buf_t *stream_buf,
                                              const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out,
                                              qbt_cmprs_consumer_t consumer, void *consumer_ctx)
 {
@@ -110,7 +102,7 @@ static rt_err_t qbt_decompress_with_consumer(const qboot_algo_ops_t *algo_ops, q
 
         /* (2) Invoke decompressor and validate progress paths. */
         qbt_stream_buf_t io = { stream_buf->in, (rt_uint32_t)cmprs_len, stream_buf->out, cur_cap };
-        rst = algo_ops->cmprs->decompress(&io, &step, &call_ctx);
+        rst = algo_ops->cmprs_ops->decompress(&io, &step, &call_ctx);
         if (rst == -RT_ENOSPC) /**< Need more input data. */
         {
             break;
@@ -218,7 +210,7 @@ rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_
         rt_err_t rst = proc(cfg->algo_ops, &stream_buf, &cmprs_ctx, &out, proc_ctx);
         if ((rst != RT_EOK && rst != -ENOSPC) || out.produced <= 0)
         {
-            LOG_E("Qboot stream process error %d. addr=%08X, out_len = %d", rst, raw_pos, out.produced);
+            LOG_E("Qboot stream process error %d. addr=0X%08X, out_len = %d", rst, raw_pos, out.produced);
             return RT_FALSE;
         }
         cmprs_len = stream_buf.in_len;
@@ -258,7 +250,7 @@ static rt_err_t qbt_crc_chunk_consumer(const rt_uint8_t *buf, rt_uint32_t len, v
  *
  * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or negative error code.
  */
-rt_err_t qbt_stream_crc_proc(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf,
+rt_err_t qbt_stream_crc_proc(const qbt_algo_context_t *algo_ops, qbt_stream_buf_t *stream_buf,
                              const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, void *ctx)
 {
     rt_uint32_t *crc_acc = (rt_uint32_t *)ctx;
@@ -297,7 +289,7 @@ static rt_err_t qbt_write_chunk_consumer(const rt_uint8_t *buf, rt_uint32_t len,
  *
  * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or negative error code.
  */
-rt_err_t qbt_stream_write_proc(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf,
+rt_err_t qbt_stream_write_proc(const qbt_algo_context_t *algo_ops, qbt_stream_buf_t *stream_buf,
                                const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, void *ctx)
 {
     qbt_stream_state_t *state = (qbt_stream_state_t *)ctx;

@@ -17,8 +17,8 @@
 
 #include "qboot_ops.h"
 
-struct qboot_algo_ops;
-typedef struct qboot_algo_ops qboot_algo_ops_t;
+struct qbt_algo_context;
+typedef struct qbt_algo_context qbt_algo_context_t;
 
 /**
  * @brief Purpose of a stream decompression pass.
@@ -72,7 +72,7 @@ typedef struct
     void *src_handle;                 /**< Package source handle. */
     void *dst_handle;                 /**< Destination handle (optional). */
     const fw_info_t *fw_info;         /**< Firmware info header. */
-    const qboot_algo_ops_t *algo_ops; /**< Algorithm handler table. */
+    const qbt_algo_context_t *algo_ops; /**< Algorithm handler table. */
     rt_uint8_t *cmprs_buf;            /**< Buffer to accumulate compressed input. */
     rt_uint8_t *out_buf;              /**< Buffer to hold decompressed output. */
     rt_uint8_t *crypt_buf;            /**< Scratch buffer for encrypted input. */
@@ -103,12 +103,12 @@ typedef struct
  *
  * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or negative error code.
  */
-typedef rt_err_t (*qbt_stream_proc_t)(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf, const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, void *ctx);
+typedef rt_err_t (*qbt_stream_proc_t)(const qbt_algo_context_t *algo_ops, qbt_stream_buf_t *stream_buf, const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, void *ctx);
 
 rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_t purpose, qbt_stream_proc_t proc, void *proc_ctx);
-rt_err_t qbt_stream_crc_proc(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf,
+rt_err_t qbt_stream_crc_proc(const qbt_algo_context_t *algo_ops, qbt_stream_buf_t *stream_buf,
                              const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, void *ctx);
-rt_err_t qbt_stream_write_proc(const qboot_algo_ops_t *algo_ops, qbt_stream_buf_t *stream_buf,
+rt_err_t qbt_stream_write_proc(const qbt_algo_context_t *algo_ops, qbt_stream_buf_t *stream_buf,
                                const qbt_stream_ctx_t *cmprs_ctx, qbt_stream_status_t *out, void *ctx);
 
 #endif

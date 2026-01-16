@@ -235,18 +235,11 @@ static rt_err_t qbt_algo_gzip_deinit(void)
 
 /** Gzip compression ops for Qboot. */
 static const qboot_cmprs_ops_t qbt_algo_gzip_cmprs_ops = {
+    .cmprs_name = "GZIP",
+    .cmprs_id = QBOOT_ALGO_CMPRS_GZIP,
     .init = qbt_algo_gzip_init,
     .decompress = qbt_algo_gzip_decompress,
     .deinit = qbt_algo_gzip_deinit,
-};
-
-/** Gzip algorithm ops descriptor. */
-static const qboot_algo_ops_t qbt_algo_gzip_ops = {
-    .algo_name = "GZIP",
-    .algo_id = QBOOT_ALGO_CMPRS_GZIP,
-    .crypt = RT_NULL,
-    .cmprs = &qbt_algo_gzip_cmprs_ops,
-    .apply = RT_NULL,
 };
 
 /**
@@ -256,6 +249,6 @@ static const qboot_algo_ops_t qbt_algo_gzip_ops = {
  */
 rt_err_t qbt_algo_gzip_register(void)
 {
-    return qboot_algo_register(&qbt_algo_gzip_ops, QBOOT_ALGO_CMPRS_GZIP);
+    return qboot_cmprs_register(&qbt_algo_gzip_cmprs_ops);
 }
 #endif

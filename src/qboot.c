@@ -28,9 +28,6 @@
 #ifdef QBOOT_USING_STATUS_LED
 #include <qled.h>
 #endif
-#ifdef QBOOT_USING_AES
-#include <qboot_aes.h>
-#endif /* QBOOT_USING_AES */
 #ifdef QBOOT_USING_HPATCHLITE
 #include <qboot_hpatchlite.h>
 #endif /* QBOOT_USING_HPATCHLITE */
@@ -128,18 +125,16 @@ static rt_bool_t qbt_app_crc_check(void *src_handle, const char *src_name, fw_in
 {
     rt_bool_t ret = RT_TRUE;
     rt_uint32_t crc32 = 0xFFFFFFFF;
-    rt_uint16_t algo_id;
-    const qboot_algo_ops_t *algo_ops = qbt_fw_get_algo_ops(fw_info, &algo_id);
-
+    qbt_algo_context_t algo_ops = {0};
     RT_UNUSED(src_name);
 
-    if (algo_ops == RT_NULL)
+    if (qbt_fw_get_algo_context(fw_info, &algo_ops) == RT_FALSE)
     {
-        LOG_E("Qboot app crc check fail. algo 0x%04X not registered.", algo_id);
+        LOG_E("Qboot release firmware fail. algo 0x%04X not registered.", fw_info->algo);
         return RT_FALSE;
     }
 
-    if (!qbt_fw_algo_init(algo_ops))
+    if (!qbt_fw_algo_init(&algo_ops))
     {
         LOG_E("Qboot app crc check fail. algo init fail");
         return (RT_FALSE);
@@ -149,7 +144,7 @@ static rt_bool_t qbt_app_crc_check(void *src_handle, const char *src_name, fw_in
         .src_handle = src_handle,
         .dst_handle = RT_NULL,
         .fw_info = fw_info,
-        .algo_ops = algo_ops,
+        .algo_ops = &algo_ops,
         .cmprs_buf = g_cmprs_buf,
         .out_buf = g_decmprs_buf,
         .crypt_buf = g_crypt_buf,
@@ -174,7 +169,7 @@ static rt_bool_t qbt_app_crc_check(void *src_handle, const char *src_name, fw_in
         }
     }
 
-    qbt_fw_algo_deinit(algo_ops);
+    qbt_fw_algo_deinit(&algo_ops);
     return ret;
 }
 #endif
@@ -193,18 +188,16 @@ static rt_bool_t qbt_app_crc_check(void *src_handle, const char *src_name, fw_in
  */
 static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const char *dst_name, void *src_handle, const char *src_name, fw_info_t *fw_info)
 {
-    rt_uint16_t algo_id;
-    const qboot_algo_ops_t *algo_ops = qbt_fw_get_algo_ops(fw_info, &algo_id);
-
+    qbt_algo_context_t algo_ops = {0};
     RT_UNUSED(src_name);
 
-    if (algo_ops == RT_NULL)
+    if (qbt_fw_get_algo_context(fw_info, &algo_ops) == RT_FALSE)
     {
-        LOG_E("Qboot release firmware fail. algo 0x%04X not registered.", algo_id);
+        LOG_E("Qboot release firmware fail. algo 0x%04X not registered.", fw_info->algo);
         return RT_FALSE;
     }
 
-    if (!qbt_fw_algo_init(algo_ops))
+    if (!qbt_fw_algo_init(&algo_ops))
     {
         LOG_E("Qboot release firmware fail. algo init fail");
         return (RT_FALSE);
@@ -226,7 +219,7 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
     rt_kprintf("Start erase partition %s ...\n", dst_name);
     if ((_header_io_ops->erase(dst_handle, 0, fw_info->raw_size) != RT_EOK) || (_header_io_ops->erase(dst_handle, dst_size - sizeof(fw_info_t), sizeof(fw_info_t)) != RT_EOK))
     {
-        qbt_fw_algo_deinit(algo_ops);
+        qbt_fw_algo_deinit(&algo_ops);
         LOG_E("Qboot release firmware fail. erase %s error.", dst_name);
         return (RT_FALSE);
     }
@@ -236,7 +229,7 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
         .src_handle = src_handle,
         .dst_handle = dst_handle,
         .fw_info = fw_info,
-        .algo_ops = algo_ops,
+        .algo_ops = &algo_ops,
         .cmprs_buf = g_cmprs_buf,
         .out_buf = g_decmprs_buf,
         .crypt_buf = g_crypt_buf,
@@ -249,7 +242,7 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
 
     if (!qbt_fw_stream_process(&stream_cfg, QBT_STREAM_WRITE, qbt_stream_write_proc, &stream_state))
     {
-        qbt_fw_algo_deinit(algo_ops);
+        qbt_fw_algo_deinit(&algo_ops);
         LOG_E("Qboot release firmware fail. stream process to %s fail.", dst_name);
         return (RT_FALSE);
     }
@@ -257,7 +250,7 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
 
 done:
 #endif
-    qbt_fw_algo_deinit(algo_ops);
+    qbt_fw_algo_deinit(&algo_ops);
     if (!qbt_fw_info_write(dst_handle, dst_size, fw_info, RT_TRUE))
     {
         LOG_E("Qboot release firmware fail. write firmware to %s fail.", dst_name);
@@ -889,11 +882,12 @@ static void qbt_fw_info_show(const char *part_name)
         return;
     }
 
-    rt_uint16_t algo_id;
-    const qboot_algo_ops_t *algo_ops = qbt_fw_get_algo_ops(&fw_info, &algo_id);
+    qbt_algo_context_t algo_ops = {0};
+    qbt_fw_get_algo_context(&fw_info, &algo_ops);
     rt_kprintf("==== Firmware infomation of %s partition ====\n", part_name);
     rt_kprintf("| Product code          | %*.s |\n", 20, fw_info.prod_code);
-    rt_kprintf("| Algorithm mode        | %*.s |\n", 20, algo_ops->algo_name);
+    rt_kprintf("| Crypt Algorithm       | %*.s |\n", 20, algo_ops.crypt_ops->crypto_name);
+    rt_kprintf("| Cmprs Algorithm       | %*.s |\n", 20, algo_ops.cmprs_ops->cmprs_name);
     rt_kprintf("| Destition partition   | %*.s |\n", 20, fw_info.part_name);
     rt_kprintf("| Version               | %*.s |\n", 20, fw_info.fw_ver);
     rt_kprintf("| Package size          | %20d |\n", fw_info.pkg_size);

@@ -33,12 +33,10 @@
 #define QBOOT_ALGO_CMPRS_LAST       QBOOT_ALGO_CMPRS_HPATCHLITE
 #define QBOOT_ALGO_CMPRS_COUNT      ((QBOOT_ALGO_CMPRS_LAST >> 8) + 1)
 
-#define QBOOT_ALGO_TABLE_SIZE       (QBOOT_ALGO_CRYPT_COUNT + QBOOT_ALGO_CMPRS_COUNT)
-#define QBOOT_ALGO_CRYPTO_INDEX(id) ((id))
-#define QBOOT_ALGO_CMPRS_INDEX(id)  (QBOOT_ALGO_CRYPT_COUNT + ((id) >> 8))
-
 typedef struct
 {
+    const char* crypto_name;                    /**< Cryption name. */
+    rt_uint16_t crypto_id;                      /**< Cryption identifier. */
     rt_err_t (*init)(void);                     /**< Optional initializer for decryption. */
     rt_err_t (*decrypt)(rt_uint8_t *out,        /**< Output buffer for plaintext. */
                         const rt_uint8_t *in,   /**< Input ciphertext buffer. */
@@ -51,29 +49,28 @@ typedef struct
  */
 typedef struct
 {
-    rt_err_t (*init)(void);                                   /**< Optional initializer for decompression. */
-    rt_err_t (*decompress)(const qbt_stream_buf_t *buf,       /**< Input/output buffers. */
-                           qbt_stream_status_t *out,          /**< [out] Stream results. */
-                           const qbt_stream_ctx_t *ctx);      /**< Stream context for this call. */
-    rt_err_t (*deinit)(void);                                 /**< Optional cleanup after decompression. */
+    const char* cmprs_name;                                 /**< Compression name. */
+    rt_uint16_t cmprs_id;                                   /**< Compression identifier. */
+    rt_err_t (*init)(void);                                 /**< Optional initializer for decompression. */
+    rt_err_t (*decompress)(const qbt_stream_buf_t *buf,     /**< Input/output buffers. */
+                           qbt_stream_status_t *out,        /**< [out] Stream results. */
+                           const qbt_stream_ctx_t *ctx);    /**< Stream context for this call. */
+    rt_err_t (*deinit)(void);                               /**< Optional cleanup after decompression. */
 } qboot_cmprs_ops_t;
 
-typedef struct qboot_algo_ops
+typedef struct qbt_algo_context
 {
-    const char* algo_name;
-    rt_uint16_t algo_id;                                    /**< Algorithm identifier (compression/encryption). */
-    const qboot_crypto_ops_t *crypt;                        /**< NULL when no decryption stage required. */
-    const qboot_cmprs_ops_t *cmprs;                         /**< NULL when no decompression stage required. */
-    rt_err_t (*apply)(void *src_handle,                     /**< Source handle to read from. */
-                      void *dst_handle,                     /**< Destination handle to write to. */
-                      fw_info_t *fw_info,                   /**< Firmware header context. */
-                      rt_uint32_t patch_offset);            /**< Patch data offset within the package. */
-} qboot_algo_ops_t;
+    const qboot_crypto_ops_t *crypt_ops;                    /**< NULL when no decryption stage required. */
+    const qboot_cmprs_ops_t *cmprs_ops;                     /**< NULL when no decompression stage required. */
+} qbt_algo_context_t;
 
-rt_err_t qboot_algo_register(const qboot_algo_ops_t *ops, rt_uint16_t algo_id);
-const qboot_algo_ops_t *qbt_fw_get_algo_ops(const fw_info_t *fw_info, rt_uint16_t *out_algo_id);
-rt_bool_t qbt_fw_algo_init(const qboot_algo_ops_t *algo_ops);
-void qbt_fw_algo_deinit(const qboot_algo_ops_t *algo_ops);
+rt_err_t qboot_crypto_register(const qboot_crypto_ops_t *ops);
+rt_err_t qboot_cmprs_register(const qboot_cmprs_ops_t *ops);
+
+rt_bool_t qbt_fw_get_algo_context(const fw_info_t *fw_info, qbt_algo_context_t *ctx);
+rt_bool_t qbt_fw_algo_init(const qbt_algo_context_t  *algo_ops);
+void qbt_fw_algo_deinit(const qbt_algo_context_t  *algo_ops);
+
 rt_err_t qbot_algo_startup(void);
 
 #endif
