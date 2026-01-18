@@ -37,6 +37,11 @@ typedef struct
 } fw_info_t;
 
 /**
+ * @brief IO control commands for qboot IO backends.
+ */
+#define QBOOT_IO_CMD_GET_ERASE_ALIGN 1
+
+/**
  * @brief Common IO operations shared by sources and targets. must be non-NULL
  */
 typedef struct
@@ -57,6 +62,9 @@ typedef struct
                       rt_uint32_t len);           /**< Number of bytes to write. */
     rt_err_t (*size)(void *handle,                /**< Handle to query size for. */
                      rt_uint32_t *out_size);      /**< [out] Total size in bytes. */
+    rt_err_t (*ioctl)(void *handle,               /**< Handle to query/set. */
+                      int cmd,                    /**< Command selector. */
+                      void *arg);                 /**< Command argument. */
 } qboot_io_ops_t;
 
 /**

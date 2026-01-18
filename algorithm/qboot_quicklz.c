@@ -79,7 +79,7 @@ rt_uint32_t qbt_quicklz_decompress(rt_uint8_t *out_buf, const rt_uint8_t *in_buf
 static rt_err_t qbt_algo_quicklz_decompress(const qbt_stream_buf_t *buf, qbt_stream_status_t *out, const qbt_stream_ctx_t *ctx)
 {
     RT_UNUSED(ctx);
-    rt_uint32_t block_size;
+    rt_uint32_t block_size; /**< Compressed block size. */
     rt_uint32_t need_len;
     rt_uint32_t decomp_len;
 
@@ -94,13 +94,7 @@ static rt_err_t qbt_algo_quicklz_decompress(const qbt_stream_buf_t *buf, qbt_str
     {
         return -RT_ERROR;
     }
-    else if (need_len > buf->out_len)
-    {
-        LOG_W("Qboot quicklz decompress warn. need_len=%u > out_len=%u", need_len, (rt_uint32_t)buf->out_len);
-        decomp_len = buf->out_len;
-    }
-
-    if (buf->in_len < need_len)
+    else if (buf->in_len < need_len)
     {
         return -RT_ENOSPC;
     }
@@ -115,6 +109,7 @@ static rt_err_t qbt_algo_quicklz_decompress(const qbt_stream_buf_t *buf, qbt_str
     {
         LOG_W("Qboot quicklz decompress warn. decomp_len=%d > out_len=%u", decomp_len, (rt_uint32_t)buf->out_len);
         decomp_len = buf->out_len;
+        return -RT_ERROR;
     }
 
     out->consumed = need_len;

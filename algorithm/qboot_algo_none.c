@@ -75,9 +75,7 @@ static rt_err_t qbt_algo_none_decompress(const qbt_stream_buf_t *buf, qbt_stream
  */
 rt_err_t qbt_algo_none_crypt(rt_uint8_t *out, const rt_uint8_t *in, rt_uint32_t len)
 {
-#ifndef QBOOT_USING_COMPRESSION
-    if (in != out)
-#else
+#ifdef QBOOT_USING_COMPRESSION
     rt_memcpy(out, in, len);
 #endif /* QBOOT_USING_COMPRESSION */
     return RT_EOK;

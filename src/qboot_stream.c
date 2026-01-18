@@ -296,7 +296,12 @@ rt_err_t qbt_stream_write_proc(const qbt_algo_context_t *algo_ops, qbt_stream_bu
     rt_err_t rst = qbt_decompress_with_consumer(algo_ops, stream_buf, cmprs_ctx, out, qbt_write_chunk_consumer, state);
     if ((rst == RT_EOK) && (out->produced > 0) && (state != RT_NULL) && (state->raw_size > 0))
     {
-        rt_kprintf("\b\b\b%02d%%", (state->raw_pos * 100 / state->raw_size));
+        rt_uint32_t percent = state->raw_pos * 100 / state->raw_size;
+        rt_kprintf("\b\b\b%02d%%", percent);
+        if (percent >= 100)
+        {
+            rt_kprintf("\n");
+        }
     }
     return rst;
 }

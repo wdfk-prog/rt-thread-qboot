@@ -8,48 +8,53 @@
 
 `Quick bootloader` 软件包目录结构如下所示：
 
-``` 
+```
 qboot
-├───doc                                // 说明文档目录
-│   │   qboot各项配置资源占用情况说明.md  // 资源占用说明
-│   │   qboot工作流程说明.md            // 工作流程说明
-│   │   qboot命令详述.md            	  // shell命令说明
-│   │   qboot使用指导.md               // 使用示例详解
-│   │   极简版Bootloader制作.md        // 极简bootloader制作示例
-│   └───qboot状态指示灯说明.md          // 状态指示灯说明
-├───inc                               // 头文件目录
-│   │   qboot.h                       // 统一头文件（聚合 include）
-│   │   qboot_cfg.h                   // 配置宏/分区名等
-│   │   qboot_ops.h                   // fw_info/IO/parser/update ops
-│   │   qboot_algo.h                  // algo id/ops 定义
-│   │   qboot_stream.h                // 流处理类型/接口
-│   │   qboot_aes.h                   // aes解密模块头文件
-│   │   qboot_hpatchlite.h            // hpatchlite解压模块头文件
-├── src/                              // 源码目录
-│   ├── qboot.c                       // 主流程/调度
-│   ├── qboot_ops.c                   // ops 注册/固件头读写
-│   ├── qboot_algo.c                  // 算法表/注册与查找
-│   ├── qboot_stream.c                // 流式解压/consumer 链
-│   └── qboot_fal_ops.c               // FAL后端
-├── algorithm/                        // 压缩/解密等算法实现
-│   │   qboot_aes.c                   // AES 解密模块
-│   │   qboot_algo_none.c             // NONE 算法模块
-│   │   qboot_fastlz.c                // fastlz 解压模块
-│   │   qboot_gzip.c                  // gzip 解压模块
-│   │   qboot_hpatchlite.c            // hpatchlite 差分模块
-│   └───qboot_quicklz.c               // quicklz 解压模块
-├── platform/                         // MCU/平台适配
-│   ├── qboot_at32.c                  // AT32 系列移植
-│   ├── qboot_gd32.c                  // GD32 系列移植
-│   ├── qboot_hc32f460.c              // HC32F460 平台移植
-│   ├── qboot_n32.c                   // N32 系列移植
-│   └── qboot_stm32.c                 // STM32 系列移植
-├───tools                             // 工具目录
-│   │   package_tool.py               // 差分包头生成脚本
-│   └───QBootPackager_V1.00.zip       // 固件打包器
-│   license                           // 软件包许可证
-│   readme.md                         // 软件包使用说明
-└───SConscript                        // RT-Thread 默认的构建脚本
+├── .git.zip
+├── doc
+│   ├── figures
+│   ├── QBootHpatchLite使用说明.md
+│   ├── QBoot使用指导.md
+│   ├── QBoot各项配置资源占用情况说明.md
+│   ├── QBoot命令详述.md
+│   ├── QBoot工作流程说明.md
+│   ├── QBoot状态指示灯说明.md
+│   └── 极简版Bootloader制作.md
+├── inc
+│   ├── qboot.h
+│   ├── qboot_cfg.h
+│   ├── qboot_ops.h
+│   ├── qboot_algo.h
+│   ├── qboot_stream.h
+│   ├── qboot_aes.h
+│   └── qboot_hpatchlite.h
+├── src
+│   ├── qboot.c
+│   ├── qboot_ops.c
+│   ├── qboot_algo.c
+│   ├── qboot_stream.c
+│   └── qboot_fal_ops.c
+├── algorithm
+│   ├── qboot_aes.c
+│   ├── qboot_none.c
+│   ├── qboot_fastlz.c
+│   ├── qboot_gzip.c
+│   ├── qboot_hpatchlite.c
+│   └── qboot_quicklz.c
+├── platform
+│   ├── qboot_at32.c
+│   ├── qboot_gd32.c
+│   ├── qboot_hc32f460.c
+│   ├── qboot_n32.c
+│   └── qboot_stm32.c
+├── tools
+│   ├── package_tool.py
+│   └── QBootPackager_V1.00.zip
+├── Kconfig
+├── LICENSE
+├── readme.md
+├── SConscript
+└── todolist.md
 ```
 
 ### 1.2 许可证
@@ -61,6 +66,15 @@ Quick bootloader 遵循 LGPLv2.1 许可，详见 `LICENSE` 文件。
 - RT_Thread 4.0
 - fal
 - crclib
+
+### 1.4 设计实现与流程小结
+
+- 启动时注册存储与算法：`qboot_register_storage_ops()` 绑定 `_header_io_ops/_header_parser_ops`，`qbot_algo_startup()` 注册加密/压缩算法。
+- 固件处理流程：读取 `fw_info` -> 校验包体/签名 -> 选择算法上下文。
+- 常规包释放：走 `qbt_fw_stream_process()` 完成解密+解压+写入/CRC。
+- HPatchLite 包：命中 `QBOOT_ALGO_CMPRS_HPATCHLITE` 时走差分流程，使用 RAM/FLASH 缓冲原地更新。
+- 完成后写回尾部头信息，并进行可选校验与标记。
+
 
 ## 2. 使用
 
@@ -100,6 +114,8 @@ Quick bootloader 遵循 LGPLv2.1 许可，详见 `LICENSE` 文件。
 | QBOOT_FACTORY_KEY_PIN 	| 按键使用的引脚
 | QBOOT_FACTORY_KEY_LEVEL 	| 按键按下后的引脚电平
 | QBOOT_FACTORY_KEY_CHK_TMO | 检测按键持续按下的超时时间
+待实现：⬜ QBOOT_ALGO_CRYPT_XOR（加密算法）
+
 
 ### 2.3 各功能模块资源使用情况，详见 ：[qboot各项配置资源占用情况说明](https://gitee.com/qiyongzhong0/rt-thread-qboot/blob/master/doc/QBoot%E5%90%84%E9%A1%B9%E9%85%8D%E7%BD%AE%E8%B5%84%E6%BA%90%E5%8D%A0%E7%94%A8%E6%83%85%E5%86%B5%E8%AF%B4%E6%98%8E.md)
 

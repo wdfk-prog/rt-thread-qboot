@@ -132,6 +132,42 @@ static rt_err_t qbt_fal_size(void *handle, rt_uint32_t *out_size)
 }
 
 /**
+ * @brief IO control for FAL partition handles.
+ *
+ * @param handle Partition handle.
+ * @param cmd    IO control command.
+ * @param arg    Command argument pointer.
+ *
+ * @return RT_EOK on success, negative error code otherwise.
+ */
+static rt_err_t qbt_fal_ioctl(void *handle, int cmd, void *arg)
+{
+    fal_partition_t part = (fal_partition_t)handle;
+
+    switch (cmd)
+    {
+    case QBOOT_IO_CMD_GET_ERASE_ALIGN:
+    {
+        if (arg == RT_NULL)
+        {
+            LOG_E("FAL ioctl fail, arg null");
+            return -RT_ERROR;
+        }
+        const struct fal_flash_dev *flash_dev = fal_flash_device_find(part->flash_name);
+        if (flash_dev == RT_NULL)
+        {
+            LOG_E("FAL ioctl fail, flash dev not found");
+            return -RT_ERROR;
+        }
+        *(rt_uint32_t *)arg = flash_dev->blk_size;
+        return RT_EOK;
+    }
+    default:
+        return -RT_ERROR;
+    }
+}
+
+/**
  * @brief Read release sign from FAL package partition.
  *
  * @param handle    Partition handle.
@@ -173,6 +209,7 @@ static const qboot_io_ops_t g_qboot_io_fal = {
     .erase = qbt_fal_erase,
     .write = qbt_fal_write,
     .size = qbt_fal_size,
+    .ioctl = qbt_fal_ioctl,
 };
 
 static const qboot_header_parser_ops_t g_qboot_header_parser_fal = {

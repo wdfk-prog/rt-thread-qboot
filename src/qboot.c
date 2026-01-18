@@ -20,7 +20,6 @@
  */
 
 #include <qboot.h>
-#include <fal.h>
 
 #ifdef QBOOT_USING_SHELL
 #include "shell.h"
@@ -28,9 +27,6 @@
 #ifdef QBOOT_USING_STATUS_LED
 #include <qled.h>
 #endif
-#ifdef QBOOT_USING_HPATCHLITE
-#include <qboot_hpatchlite.h>
-#endif /* QBOOT_USING_HPATCHLITE */
 
 //#define QBOOT_DEBUG
 #define QBOOT_USING_LOG
@@ -189,7 +185,6 @@ static rt_bool_t qbt_app_crc_check(void *src_handle, const char *src_name, fw_in
 static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const char *dst_name, void *src_handle, const char *src_name, fw_info_t *fw_info)
 {
     qbt_algo_context_t algo_ops = {0};
-    RT_UNUSED(src_name);
 
     if (qbt_fw_get_algo_context(fw_info, &algo_ops) == RT_FALSE)
     {
@@ -204,9 +199,10 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
     }
 
 #ifdef QBOOT_USING_HPATCHLITE
-    if (algo_ops->algo_id == QBOOT_ALGO_CMPRS_HPATCHLITE)
+    if (algo_ops.cmprs_ops->cmprs_id == QBOOT_ALGO_CMPRS_HPATCHLITE)
     {
-        if (qbt_hpatchlite_release_from_part((fal_partition_t)src_handle, (fal_partition_t)dst_handle, fw_info->pkg_size, fw_info->raw_size, sizeof(fw_info_t)) == RT_TRUE)
+        extern int qbt_hpatchlite_release_from_part(void *patch_part, void *old_part, const char *patch_name, const char *old_name, int patch_file_len, int newer_file_len, int patch_file_offset);
+        if (qbt_hpatchlite_release_from_part(src_handle, dst_handle, src_name, dst_name, fw_info->pkg_size, fw_info->raw_size, sizeof(fw_info_t)) == RT_TRUE)
         {
             goto done;
         }

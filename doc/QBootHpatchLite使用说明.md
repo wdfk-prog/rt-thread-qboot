@@ -128,6 +128,15 @@ config QBOOT_USING_HPatchLITE
             default 4096
         ```
 
+#### 3.3 存储后端与擦除对齐（新增）
+
+HPatchLite 差分流程通过 `qboot_io_ops_t` 访问存储后端，不直接依赖 FAL。  
+后端需要实现 `open/close/read/erase/write/size`，并建议实现可选 `ioctl` 扩展点：
+
+- **`QBOOT_IO_CMD_GET_ERASE_ALIGN`**：返回擦除对齐/块大小，用于尾部对齐擦除与 swap 逻辑。
+- 若未实现 `ioctl`，将回退到 **`QBOOT_HPATCH_ERASE_ALIGN_DEFAULT`**（默认 4096），可在工程配置或编译参数中覆盖。
+- 自定义后端时，在 `qboot_register_storage_ops()` 中注册 `qboot_register_header_io_ops()` 与 `qboot_register_header_parser_ops()`。
+
 ## 4. FAL分区与配置示例
 
 正确的FAL分区规划是差分升级成功的前提。以下是一个典型的配置示例。

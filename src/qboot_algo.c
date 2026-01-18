@@ -272,5 +272,9 @@ rt_err_t qbot_algo_startup(void)
     extern rt_err_t qbt_algo_fastlz_register(void);
     QBT_REGISTER_ALGO(qbt_algo_fastlz_register());
 #endif // QBOOT_USING_FASTLZ
+#ifdef QBOOT_USING_HPATCHLITE
+    extern rt_err_t qbt_algo_hpatchlite_register(void);
+    QBT_REGISTER_ALGO(qbt_algo_hpatchlite_register());
+#endif // QBOOT_USING_HPATCHLITE
     return RT_EOK;
 }
