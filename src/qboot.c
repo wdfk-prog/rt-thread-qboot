@@ -313,13 +313,20 @@ static rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char 
     }
 
 #ifdef QBOOT_USING_APP_CHECK
-    if ((fw_info->algo2 & QBOOT_ALGO2_VERIFY_MASK) == QBOOT_ALGO2_VERIFY_CRC)
+    /*
+    * The difference algorithm does not support streaming decompression. Therefore, 
+    * it cannot support the CRC check of the app and can only rely on the CRC of the package.
+    */
+    if((fw_info->algo & QBOOT_ALGO_CMPRS_MASK) != QBOOT_ALGO_CMPRS_HPATCHLITE)
     {
-        if (!qbt_app_crc_check(fw_handle, name, fw_info))
+        if ((fw_info->algo2 & QBOOT_ALGO2_VERIFY_MASK) == QBOOT_ALGO2_VERIFY_CRC)
         {
-            if (output_log)
-                LOG_E("Qboot firmware check fail. partition \"%s\" app check fail.", name);
-            return (RT_FALSE);
+            if (!qbt_app_crc_check(fw_handle, name, fw_info))
+            {
+                if (output_log)
+                    LOG_E("Qboot firmware check fail. partition \"%s\" app check fail.", name);
+                return (RT_FALSE);
+            }
         }
     }
 #endif

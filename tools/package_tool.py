@@ -22,7 +22,8 @@ QBOOT_ALGO_CMPRS_QUICKLZ    = (2 << 8)
 QBOOT_ALGO_CMPRS_FASTLZ     = (3 << 8)
 QBOOT_ALGO_CMPRS_HPATCHLITE = (4 << 8)
 
-QBOOT_ALGO2_VERIFY_CRC = 1
+QBOOT_ALGO2_VERIFY_NONE = 0
+QBOOT_ALGO2_VERIFY_CRC  = 1
 
 # ==================================================
 
@@ -52,11 +53,22 @@ def create_rbl_header(raw_fw: bytes, pkg_obj: bytes, algo: int, algo2: int,
     header += struct.pack("<I", hdr_crc)
     return header
 
-def parse_algo(name: str, table: dict) -> int:
-    if not name:
+def parse_algo_strict(opt_name: str, value: str, table: dict) -> int:
+    """
+    Strict parse: value must exactly match one of table keys (case-insensitive).
+    Otherwise exit with error.
+    """
+    if value is None:
+        # 一般不会发生（argparse 会给 default），留作兜底
         return 0
-    name = name.lower()
-    return table.get(name, 0)
+
+    v = value.strip().lower()
+    if v not in table:
+        allowed = ", ".join(table.keys())
+        print(f"Error: invalid {opt_name} '{value}'. Allowed: {allowed}")
+        sys.exit(2)
+    return table[v]
+
 
 def package_rbl(args):
     # -------- read pkg --------
@@ -71,26 +83,38 @@ def package_rbl(args):
         raw_fw = f.read()
 
     # -------- parse algo --------
-    crypt_algo = parse_algo(args.crypt, {
+    crypt_algo = parse_algo_strict("--crypt", args.crypt, {
         "none": QBOOT_ALGO_CRYPT_NONE,
         "xor":  QBOOT_ALGO_CRYPT_XOR,
         "aes":  QBOOT_ALGO_CRYPT_AES,
     })
-    cmprs_algo = parse_algo(args.cmprs, {
+
+    cmprs_algo = parse_algo_strict("--cmprs", args.cmprs, {
         "none":       QBOOT_ALGO_CMPRS_NONE,
         "gzip":       QBOOT_ALGO_CMPRS_GZIP,
         "quicklz":    QBOOT_ALGO_CMPRS_QUICKLZ,
         "fastlz":     QBOOT_ALGO_CMPRS_FASTLZ,
         "hpatchlite": QBOOT_ALGO_CMPRS_HPATCHLITE,
     })
+
     algo = crypt_algo | cmprs_algo
+
+    # -------- parse algo2 (configurable) --------
+    algo2 = parse_algo_strict("--algo2", args.algo2, {
+        "none": QBOOT_ALGO2_VERIFY_NONE,
+        "crc":  QBOOT_ALGO2_VERIFY_CRC,
+    })
+
+    # -------- rule: hpatchlite => algo2 must be NONE --------
+    if cmprs_algo == QBOOT_ALGO_CMPRS_HPATCHLITE:
+        algo2 = QBOOT_ALGO2_VERIFY_NONE
 
     # -------- create header --------
     header = create_rbl_header(
         raw_fw=raw_fw,
         pkg_obj=pkg_obj,
         algo=algo,
-        algo2=QBOOT_ALGO2_VERIFY_CRC,
+        algo2=algo2,
         timestamp=int(time.time()),
         part_name=args.part,
         fw_ver=args.version,
@@ -102,7 +126,10 @@ def package_rbl(args):
         f.write(header)
         f.write(pkg_obj)
 
-    print(f"RBL package created: {args.output} | pkg: {len(pkg_obj)} bytes | raw: {len(raw_fw)} bytes | algo=0x{algo:04X}")
+    print(
+        f"RBL package created: {args.output} | pkg: {len(pkg_obj)} bytes | "
+        f"raw: {len(raw_fw)} bytes | algo=0x{algo:04X} | algo2=0x{algo2:04X}"
+    )
 
 def main():
     parser = argparse.ArgumentParser(description="RBL header packager (raw required)")
@@ -111,6 +138,7 @@ def main():
     parser.add_argument("-o", "--output", required=True, help="Output RBL file")
     parser.add_argument("--crypt", default="none", help="Crypt algo: none, xor, aes")
     parser.add_argument("--cmprs", default="none", help="Compress algo: none, gzip, quicklz, fastlz, hpatchlite")
+    parser.add_argument("--algo2", default="crc", help="Verify algo2: none, crc")
     parser.add_argument("--part", default="app", help="Partition name")
     parser.add_argument("--version", default="v1.00", help="Firmware version")
     parser.add_argument("--product", default="00010203040506070809", help="Product code")
