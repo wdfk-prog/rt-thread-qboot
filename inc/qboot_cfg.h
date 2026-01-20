@@ -18,6 +18,23 @@
 
 #include <rtconfig.h>
 
+//#define QBOOT_DEBUG
+#define QBOOT_USING_LOG
+#ifdef QBOOT_DEBUG
+#define DBG_LVL DBG_LOG
+#else
+#define DBG_LVL DBG_INFO
+#endif
+
+#ifdef QBOOT_USING_LOG
+#ifndef DBG_ENABLE
+#define DBG_ENABLE
+#endif
+#ifndef DBG_COLOR
+#define DBG_COLOR
+#endif
+#endif
+
 //#define QBOOT_USING_PRODUCT_CODE
 //#define QBOOT_USING_AES
 //#define QBOOT_USING_GZIP

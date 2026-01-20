@@ -28,25 +28,8 @@
 #include <qled.h>
 #endif
 
-//#define QBOOT_DEBUG
-#define QBOOT_USING_LOG
 #define DBG_TAG "Qboot"
-
-#ifdef QBOOT_DEBUG
-#define DBG_LVL DBG_LOG
-#else
 #define DBG_LVL DBG_INFO
-#endif
-
-#ifdef QBOOT_USING_LOG
-#ifndef DBG_ENABLE
-#define DBG_ENABLE
-#endif
-#ifndef DBG_COLOR
-#define DBG_COLOR
-#endif
-#endif
-
 #include <rtdbg.h>
 
 #define QBOOT_VER_MSG      "V1.1.0 2026.01.01"
@@ -166,9 +149,9 @@ static rt_bool_t qbt_app_crc_check(void *src_handle, const char *src_name, fw_in
         .crypt_buf = g_crypt_buf,
     };
 
-    if (!qbt_fw_stream_process(&stream_cfg, QBT_STREAM_CRC, qbt_stream_crc_proc, &crc32))
+    ret = qbt_fw_stream_process(&stream_cfg, QBT_STREAM_CRC, qbt_stream_crc_proc, &crc32);
+    if (!ret)
     {
-        ret = RT_FALSE;
         LOG_E("Qboot app crc check fail. decompress error.");
     }
     else
