@@ -203,7 +203,7 @@ rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_
         qbt_stream_buf_t stream_buf = { cfg->cmprs_buf, cmprs_len, cfg->out_buf, QBOOT_BUF_SIZE };
         qbt_stream_status_t out = { 0 };
 
-        if ((purpose == QBT_STREAM_WRITE) && (proc_ctx != RT_NULL))
+        if (purpose == QBT_STREAM_WRITE)
         {
             ((qbt_stream_state_t *)proc_ctx)->raw_pos = raw_pos;
         }
@@ -294,7 +294,7 @@ rt_err_t qbt_stream_write_proc(const qbt_algo_context_t *algo_ops, qbt_stream_bu
 {
     qbt_stream_state_t *state = (qbt_stream_state_t *)ctx;
     rt_err_t rst = qbt_decompress_with_consumer(algo_ops, stream_buf, cmprs_ctx, out, qbt_write_chunk_consumer, state);
-    if ((rst == RT_EOK) && (out->produced > 0) && (state != RT_NULL) && (state->raw_size > 0))
+    if ((rst == RT_EOK) && (out->produced > 0) && (state->raw_size > 0))
     {
         rt_uint32_t percent = state->raw_pos * 100 / state->raw_size;
         rt_kprintf("\b\b\b%02d%%", percent);

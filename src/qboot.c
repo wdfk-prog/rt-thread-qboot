@@ -606,29 +606,31 @@ static void qbt_show_msg(void)
 #endif
 }
 
-static rt_bool_t qbt_app_resume_from(const char *src_part_name)
+static rt_bool_t qbt_app_resume_from(qbt_target_id_t src_id)
 {
     void *src_handle = RT_NULL;
     void *dst_handle = RT_NULL;
     rt_uint32_t src_size = 0;
     rt_uint32_t dst_size = 0;
     rt_bool_t rst = RT_FALSE;
+    const qboot_store_desc_t *src_desc = qbt_target_desc(src_id);
 
-    if (!qbt_target_open(src_part_name, &src_handle, &src_size))
+    if (src_desc == RT_NULL || !qbt_target_open(src_id, &src_handle, &src_size, QBT_OPEN_READ))
     {
-        LOG_E("Qboot resume fail. partition \"%s\" is not exist.", src_part_name);
+        LOG_E("Qboot resume fail. target id %d is not exist.", src_id);
         return (RT_FALSE);
     }
 
-    if (!qbt_target_open(QBOOT_APP_PART_NAME, &dst_handle, &dst_size))
+    const qboot_store_desc_t *app_desc = qbt_target_desc(QBOOT_TARGET_APP);
+    if (app_desc == RT_NULL || !qbt_target_open(QBOOT_TARGET_APP, &dst_handle, &dst_size, QBT_OPEN_WRITE | QBT_OPEN_CREATE))
     {
-        LOG_E("Qboot resume fail from %s.", src_part_name);
-        LOG_E("Destination partition %s is not exist.", QBOOT_APP_PART_NAME);
+        LOG_E("Qboot resume fail from %s.", src_desc->role_name);
+        LOG_E("Destination partition %s is not exist.", app_desc ? app_desc->role_name : "app");
         qbt_target_close(src_handle);
         return (RT_FALSE);
     }
 
-    if (!qbt_fw_check(src_handle, src_size, src_part_name, &fw_info, RT_TRUE))
+    if (!qbt_fw_check(src_handle, src_size, src_desc->role_name, &fw_info, RT_TRUE))
     {
         goto exit;
     }
@@ -636,25 +638,25 @@ static rt_bool_t qbt_app_resume_from(const char *src_part_name)
 #ifdef QBOOT_USING_PRODUCT_CODE
     if (rt_strcmp((char *)fw_info.prod_code, QBOOT_PRODUCT_CODE) != 0)
     {
-        LOG_E("Qboot resume fail from %s.", src_part_name);
+        LOG_E("Qboot resume fail from %s.", src_desc->role_name);
         LOG_E("The product code error. ");
         goto exit;
     }
 #endif
 
-    if (rt_strcmp((char *)fw_info.part_name, QBOOT_APP_PART_NAME) != 0)
+    if (rt_strcmp((char *)fw_info.part_name, app_desc->role_name) != 0)
     {
-        LOG_E("Qboot resume fail from %s.", src_part_name);
-        LOG_E("The firmware of %s partition is not application. fw_info.part_name(%s) != %s", src_part_name, fw_info.part_name, QBOOT_APP_PART_NAME);
+        LOG_E("Qboot resume fail from %s.", src_desc->role_name);
+        LOG_E("The firmware of %s partition is not application. fw_info.part_name(%s) != %s", src_desc->role_name, fw_info.part_name, app_desc->role_name);
         goto exit;
     }
 
-    if (!qbt_fw_update(dst_handle, dst_size, QBOOT_APP_PART_NAME, src_handle, src_part_name, &fw_info))
+    if (!qbt_fw_update(dst_handle, dst_size, app_desc->role_name, src_handle, src_desc->role_name, &fw_info))
     {
         goto exit;
     }
 
-    LOG_I("Qboot resume success from %s.", src_part_name);
+    LOG_I("Qboot resume success from %s.", src_desc->role_name);
     rst = RT_TRUE;
 
 exit:
@@ -663,21 +665,23 @@ exit:
     return rst;
 }
 
-static rt_bool_t qbt_release_from_part(const char *part_name, rt_bool_t check_sign)
+static rt_bool_t qbt_release_from_part(qbt_target_id_t src_id, rt_bool_t check_sign)
 {
+    qbt_target_id_t dst_id = QBOOT_TARGET_COUNT;
     void *src_handle = RT_NULL;
     void *dst_handle = RT_NULL;
     rt_uint32_t src_size = 0;
     rt_uint32_t dst_size = 0;
     rt_bool_t rst = RT_FALSE;
+    const qboot_store_desc_t *src_desc = qbt_target_desc(src_id);
 
-    if (!qbt_target_open(part_name, &src_handle, &src_size))
+    if (src_desc == RT_NULL || !qbt_target_open(src_id, &src_handle, &src_size, QBT_OPEN_READ))
     {
-        LOG_E("Qboot release fail. partition \"%s\" is not exist.", part_name);
+        LOG_E("Qboot release fail. target id %d is not exist.", src_id);
         return (RT_FALSE);
     }
 
-    if (!qbt_fw_check(src_handle, src_size, part_name, &fw_info, RT_TRUE))
+    if (!qbt_fw_check(src_handle, src_size, src_desc->role_name, &fw_info, RT_TRUE))
     {
         goto exit;
     }
@@ -692,30 +696,31 @@ static rt_bool_t qbt_release_from_part(const char *part_name, rt_bool_t check_si
 
     if (check_sign)
     {
-        if (qbt_release_sign_check(src_handle, part_name, &fw_info))//not need release
+        if (qbt_release_sign_check(src_handle, src_desc->role_name, &fw_info))//not need release
         {
             rst = RT_TRUE;
             goto exit;
         }
     }
 
-    if (!qbt_target_open((char *)fw_info.part_name, &dst_handle, &dst_size))
+    dst_id = qbt_name_to_id((char *)fw_info.part_name);
+    if (dst_id >= QBOOT_TARGET_COUNT || !qbt_target_open(dst_id, &dst_handle, &dst_size, QBT_OPEN_WRITE | QBT_OPEN_CREATE))
     {
         LOG_E("The destination %s partition is not exist.", fw_info.part_name);
         goto exit;
     }
 
-    if (!qbt_fw_update(dst_handle, dst_size, (char *)fw_info.part_name, src_handle, part_name, &fw_info))
+    if (!qbt_fw_update(dst_handle, dst_size, (char *)fw_info.part_name, src_handle, src_desc->role_name, &fw_info))
     {
         goto exit;
     }
 
-    if (!qbt_release_sign_check(src_handle, part_name, &fw_info))
+    if (!qbt_release_sign_check(src_handle, src_desc->role_name, &fw_info))
     {
-        qbt_release_sign_write(src_handle, part_name, &fw_info);
+        qbt_release_sign_write(src_handle, src_desc->role_name, &fw_info);
     }
 
-    LOG_I("Release firmware success from %s to %s.", part_name, fw_info.part_name);
+    LOG_I("Release firmware success from %s to %s.", src_desc->role_name, fw_info.part_name);
     rst = RT_TRUE;
 
 exit:
@@ -762,7 +767,7 @@ static void qbt_thread_entry(void *params)
 #ifdef QBOOT_USING_FACTORY_KEY
     if (qbt_factory_key_check())
     {
-        if (qbt_app_resume_from(QBOOT_FACTORY_PART_NAME))
+        if (qbt_app_resume_from(QBOOT_TARGET_FACTORY))
         {
             qbt_jump_to_app();
         }
@@ -776,17 +781,19 @@ static void qbt_thread_entry(void *params)
     }
 #endif
 
-    qbt_release_from_part(QBOOT_DOWNLOAD_PART_NAME, RT_TRUE);
+    const qboot_store_desc_t *download_desc = qbt_target_desc(QBOOT_TARGET_DOWNLOAD);
+    qbt_release_from_part(QBOOT_TARGET_DOWNLOAD, RT_TRUE);
     qbt_jump_to_app();
 
-    LOG_I("Try resume application from %s", QBOOT_DOWNLOAD_PART_NAME);
-    if (qbt_app_resume_from(QBOOT_DOWNLOAD_PART_NAME))
+    LOG_I("Try resume application from %s", download_desc->role_name);
+    if (qbt_app_resume_from(QBOOT_TARGET_DOWNLOAD))
     {
         qbt_jump_to_app();
     }
 
-    LOG_I("Try resume application from %s", QBOOT_FACTORY_PART_NAME);
-    if (qbt_app_resume_from(QBOOT_FACTORY_PART_NAME))
+    const qboot_store_desc_t *factory_desc = qbt_target_desc(QBOOT_TARGET_FACTORY);
+    LOG_I("Try resume application from %s", factory_desc->role_name);
+    if (qbt_app_resume_from(QBOOT_TARGET_FACTORY))
     {
         qbt_jump_to_app();
     }
@@ -862,17 +869,24 @@ static rt_bool_t qbt_fw_clone(void *dst_handle, const char *dst_name, void *src_
 
     return (RT_TRUE);
 }
-static void qbt_fw_info_show(const char *part_name)
+static void qbt_fw_info_show(qbt_target_id_t part_id)
 {
     void *handle = RT_NULL;
     rt_uint32_t part_size = 0;
+    const qboot_store_desc_t *desc = qbt_target_desc(part_id);
 
-    if (!qbt_target_open(part_name, &handle, &part_size))
+    if (desc == RT_NULL)
     {
+        rt_kprintf("The target id %d is not exist.", part_id);
+        return;
+    }
+    if (!qbt_target_open(part_id, &handle, &part_size, QBT_OPEN_READ))
+    {
+        rt_kprintf("The %s partition is not exist.", desc->role_name);
         return;
     }
 
-    if (!qbt_fw_check(handle, part_size, part_name, &fw_info, RT_FALSE))
+    if (!qbt_fw_check(handle, part_size, desc->role_name, &fw_info, RT_FALSE))
     {
         qbt_target_close(handle);
         return;
@@ -880,7 +894,7 @@ static void qbt_fw_info_show(const char *part_name)
 
     qbt_algo_context_t algo_ops = {0};
     qbt_fw_get_algo_context(&fw_info, &algo_ops);
-    rt_kprintf("==== Firmware infomation of %s partition ====\n", part_name);
+    rt_kprintf("==== Firmware infomation of %s partition ====\n", desc->role_name);
     rt_kprintf("| Product code          | %*.s |\n", 20, fw_info.prod_code);
     rt_kprintf("| Crypt Algorithm       | %*.s |\n", 20, algo_ops.crypt_ops->crypto_name);
     rt_kprintf("| Cmprs Algorithm       | %*.s |\n", 20, algo_ops.cmprs_ops->cmprs_name);
@@ -933,30 +947,40 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
 
     if (rt_strcmp(argv[1], "probe") == 0)
     {
-        qbt_fw_info_show(QBOOT_DOWNLOAD_PART_NAME);
-        qbt_fw_info_show(QBOOT_FACTORY_PART_NAME);
+        qbt_fw_info_show(QBOOT_TARGET_DOWNLOAD);
+        qbt_fw_info_show(QBOOT_TARGET_FACTORY);
         return;
     }
 
     if (rt_strcmp(argv[1], "resume") == 0)
     {
+        qbt_target_id_t src_id = QBOOT_TARGET_COUNT;
         if (argc < 3)
         {
             rt_kprintf(cmd_info[2]);
             return;
         }
-        qbt_app_resume_from(argv[2]);
+        src_id = qbt_name_to_id(argv[2]);
+        if (src_id < QBOOT_TARGET_COUNT)
+        {
+            qbt_app_resume_from(src_id);
+        }
+        else
+        {
+            rt_kprintf("The %s partition is not exist.\n", argv[2]);
+        }
 
 #ifdef QBOOT_USING_STATUS_LED
         qled_set_blink(QBOOT_STATUS_LED_PIN, 50, 950);
 #endif
-
         return;
     }
 
     if (rt_strcmp(argv[1], "clone") == 0)
     {
         char *src, *dst;
+        qbt_target_id_t src_id = QBOOT_TARGET_COUNT;
+        qbt_target_id_t dst_id = QBOOT_TARGET_COUNT;
         void *src_handle = RT_NULL;
         void *dst_handle = RT_NULL;
         rt_uint32_t src_size = 0;
@@ -967,12 +991,14 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         }
         src = argv[2];
         dst = argv[3];
-        if (!qbt_target_open(dst, &dst_handle, NULL))
+        dst_id = qbt_name_to_id(dst);
+        if (dst_id >= QBOOT_TARGET_COUNT || !qbt_target_open(dst_id, &dst_handle, NULL, QBT_OPEN_WRITE | QBT_OPEN_CREATE))
         {
             rt_kprintf("Desttition %s partition is not exist.\n", dst);
             return;
         }
-        if (!qbt_target_open(src, &src_handle, &src_size))
+        src_id = qbt_name_to_id(src);
+        if (src_id >= QBOOT_TARGET_COUNT || !qbt_target_open(src_id, &src_handle, &src_size, QBT_OPEN_READ))
         {
             rt_kprintf("Soure %s partition is not exist.\n", src);
             qbt_target_close(dst_handle);
@@ -998,13 +1024,15 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
     if (rt_strcmp(argv[1], "release") == 0)
     {
         char *part_name;
+        qbt_target_id_t part_id = QBOOT_TARGET_COUNT;
         if (argc < 3)
         {
             rt_kprintf(cmd_info[4]);
             return;
         }
         part_name = argv[2];
-        if (qbt_release_from_part(part_name, RT_FALSE))
+        part_id = qbt_name_to_id(part_name);
+        if (part_id < QBOOT_TARGET_COUNT && qbt_release_from_part(part_id, RT_FALSE))
         {
             rt_kprintf("Release firmware success from %s partition.\n", part_name);
         }
@@ -1018,6 +1046,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
     if (rt_strcmp(argv[1], "verify") == 0)
     {
         char *part_name;
+        qbt_target_id_t part_id = QBOOT_TARGET_COUNT;
         void *handle = RT_NULL;
         rt_uint32_t part_size = 0;
         if (argc < 3)
@@ -1026,7 +1055,8 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
             return;
         }
         part_name = argv[2];
-        if (!qbt_target_open(part_name, &handle, &part_size))
+        part_id = qbt_name_to_id(part_name);
+        if (part_id >= QBOOT_TARGET_COUNT || !qbt_target_open(part_id, &handle, &part_size, QBT_OPEN_READ))
         {
             rt_kprintf("%s partition is not exist.\n", part_name);
             return;
@@ -1047,6 +1077,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
     if (rt_strcmp(argv[1], "del") == 0)
     {
         char *part_name;
+        qbt_target_id_t part_id = QBOOT_TARGET_COUNT;
         void *handle = RT_NULL;
         rt_uint32_t part_size = 0;
 
@@ -1057,7 +1088,8 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         }
 
         part_name = argv[2];
-        if (!qbt_target_open(part_name, &handle, &part_size))
+        part_id = qbt_name_to_id(part_name);
+        if (part_id >= QBOOT_TARGET_COUNT || !qbt_target_open(part_id, &handle, &part_size, QBT_OPEN_WRITE))
         {
             rt_kprintf("%s partition is not exist.\n", part_name);
             return;

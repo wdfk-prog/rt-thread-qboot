@@ -82,16 +82,59 @@
 #endif
 #endif
 
-#ifndef QBOOT_APP_PART_NAME
-#define QBOOT_APP_PART_NAME "app"
-#endif
-
-#ifndef QBOOT_DOWNLOAD_PART_NAME
+/* The character name is used for fw_info.part_name matching and log output, 
+ * and should remain stable to avoid compatibility issues. */
+#define QBOOT_APP_PART_NAME      "app"
 #define QBOOT_DOWNLOAD_PART_NAME "download"
+#define QBOOT_FACTORY_PART_NAME  "factory"
+
+#if defined(QBOOT_APP_STORE_FAL) && !defined(QBOOT_APP_FAL_PART_NAME)
+#error "QBOOT_APP_FAL_PART_NAME must be defined when QBOOT_APP_STORE_FAL is enabled."
+#endif
+#if defined(QBOOT_APP_STORE_FS) && !defined(QBOOT_APP_FILE_PATH)
+#error "QBOOT_APP_FILE_PATH must be defined when QBOOT_APP_STORE_FS is enabled."
+#endif
+#if defined(QBOOT_APP_STORE_FS) && !defined(QBOOT_APP_SIGN_FILE_PATH)
+#error "QBOOT_APP_SIGN_FILE_PATH must be defined when QBOOT_APP_STORE_FS is enabled."
+#endif
+#if defined(QBOOT_APP_STORE_CUSTOM) && !defined(QBOOT_APP_FLASH_ADDR)
+#error "QBOOT_APP_FLASH_ADDR must be defined when QBOOT_APP_STORE_CUSTOM is enabled."
+#endif
+#if defined(QBOOT_APP_STORE_CUSTOM) && !defined(QBOOT_APP_FLASH_LEN)
+#error "QBOOT_APP_FLASH_LEN must be defined when QBOOT_APP_STORE_CUSTOM is enabled."
 #endif
 
-#ifndef QBOOT_FACTORY_PART_NAME
-#define QBOOT_FACTORY_PART_NAME "factory"
+#if defined(QBOOT_DOWNLOAD_STORE_FAL) && !defined(QBOOT_DOWNLOAD_FAL_PART_NAME)
+#error "QBOOT_DOWNLOAD_FAL_PART_NAME must be defined when QBOOT_DOWNLOAD_STORE_FAL is enabled."
+#endif
+#if defined(QBOOT_DOWNLOAD_STORE_FS) && !defined(QBOOT_DOWNLOAD_FILE_PATH)
+#error "QBOOT_DOWNLOAD_FILE_PATH must be defined when QBOOT_DOWNLOAD_STORE_FS is enabled."
+#endif
+#if defined(QBOOT_DOWNLOAD_STORE_FS) && !defined(QBOOT_DOWNLOAD_SIGN_FILE_PATH)
+#error "QBOOT_DOWNLOAD_SIGN_FILE_PATH must be defined when QBOOT_DOWNLOAD_STORE_FS is enabled."
+#endif
+#if defined(QBOOT_DOWNLOAD_STORE_CUSTOM) && !defined(QBOOT_DOWNLOAD_FLASH_ADDR)
+#error "QBOOT_DOWNLOAD_FLASH_ADDR must be defined when QBOOT_DOWNLOAD_STORE_CUSTOM is enabled."
+#endif
+#if defined(QBOOT_DOWNLOAD_STORE_CUSTOM) && !defined(QBOOT_DOWNLOAD_FLASH_LEN)
+#error "QBOOT_DOWNLOAD_FLASH_LEN must be defined when QBOOT_DOWNLOAD_STORE_CUSTOM is enabled."
+#endif
+
+#if defined(QBOOT_FACTORY_STORE_FAL) && !defined(QBOOT_FACTORY_FAL_PART_NAME)
+#error "QBOOT_FACTORY_FAL_PART_NAME must be defined when QBOOT_FACTORY_STORE_FAL is enabled."
+#endif
+#if defined(QBOOT_FACTORY_STORE_FS) && !defined(QBOOT_FACTORY_FILE_PATH)
+#error "QBOOT_FACTORY_FILE_PATH must be defined when QBOOT_FACTORY_STORE_FS is enabled."
+#endif
+#if defined(QBOOT_FACTORY_STORE_CUSTOM) && !defined(QBOOT_FACTORY_FLASH_ADDR)
+#error "QBOOT_FACTORY_FLASH_ADDR must be defined when QBOOT_FACTORY_STORE_CUSTOM is enabled."
+#endif
+#if defined(QBOOT_FACTORY_STORE_CUSTOM) && !defined(QBOOT_FACTORY_FLASH_LEN)
+#error "QBOOT_FACTORY_FLASH_LEN must be defined when QBOOT_FACTORY_STORE_CUSTOM is enabled."
+#endif
+
+#if defined(QBOOT_USING_HPATCHLITE) && defined(QBOOT_HPATCH_USE_FLASH_SWAP) && !defined(QBOOT_HPATCH_SWAP_PART_NAME)
+#error "QBOOT_HPATCH_SWAP_PART_NAME must be defined when HPatchLite flash swap is enabled."
 #endif
 
 #ifdef QBOOT_USING_AES
@@ -108,7 +151,7 @@
 #define QBOOT_PRODUCT_NAME "Qboot test device"
 #endif
 #ifndef QBOOT_PRODUCT_VER
-#define QBOOT_PRODUCT_VER "v1.00 2020.07.27"
+#define QBOOT_PRODUCT_VER "v1.10 2026.01.01"
 #endif
 #ifndef QBOOT_PRODUCT_MCU
 #define QBOOT_PRODUCT_MCU "stm32l4r5zi"

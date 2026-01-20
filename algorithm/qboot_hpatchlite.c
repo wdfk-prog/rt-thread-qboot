@@ -518,7 +518,8 @@ int qbt_hpatchlite_release_from_part(void *patch_part, void *old_part, const cha
 #if defined(QBOOT_HPATCH_USE_FLASH_SWAP)
     LOG_I("HPatchLite: Using FLASH swap strategy.");
     rt_uint32_t swap_part_size = 0;
-    if (!qbt_target_open(QBOOT_HPATCH_SWAP_PART_NAME, &instance.swap_part, &swap_part_size))
+    qbt_target_id_t swap_id = qbt_name_to_id(QBOOT_HPATCH_SWAP_PART_NAME);
+    if (swap_id >= QBOOT_TARGET_COUNT || !qbt_target_open(swap_id, &instance.swap_part, &swap_part_size, QBT_OPEN_WRITE | QBT_OPEN_CREATE))
     {
         LOG_E("Swap partition '%s' open fail.", QBOOT_HPATCH_SWAP_PART_NAME);
         return -1;

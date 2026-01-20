@@ -21,19 +21,25 @@
 #define DBG_LVL DBG_INFO
 #include <rtdbg.h>
 /**
- * @brief Open FAL partition by name.
+ * @brief Open FAL partition by target id.
  *
- * @param handle   Output partition handle.
- * @param path     Partition name.
+ * @param id      Target identifier.
+ * @param handle  Output partition handle.
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
-static rt_err_t qbt_fal_open(void **handle, const char *path)
+static rt_err_t qbt_fal_open(qbt_target_id_t id, void **handle, int flags)
 {
-    fal_partition_t part = (fal_partition_t)fal_partition_find(path);
+    RT_UNUSED(flags);
+    const qboot_store_desc_t *desc = qbt_target_desc(id);
+    if (desc == RT_NULL)
+    {
+        return -RT_ERROR;
+    }
+    fal_partition_t part = (fal_partition_t)fal_partition_find(desc->store_name);
     if (part == RT_NULL)
     {
-        LOG_E("FAL open partition %s fail.", path);
+        LOG_E("FAL open partition %s fail.", desc->store_name);
         return -RT_ERROR;
     }
     *handle = part;
@@ -122,11 +128,6 @@ static rt_err_t qbt_fal_write(void *handle, rt_uint32_t off, const void *buf, rt
  */
 static rt_err_t qbt_fal_size(void *handle, rt_uint32_t *out_size)
 {
-    if (out_size == RT_NULL)
-    {
-        LOG_E("FAL size fail, out_size null");
-        return -RT_ERROR;
-    }
     *out_size = ((fal_partition_t)handle)->len;
     return RT_EOK;
 }
@@ -148,18 +149,7 @@ static rt_err_t qbt_fal_ioctl(void *handle, int cmd, void *arg)
     {
     case QBOOT_IO_CMD_GET_ERASE_ALIGN:
     {
-        if (arg == RT_NULL)
-        {
-            LOG_E("FAL ioctl fail, arg null");
-            return -RT_ERROR;
-        }
-        const struct fal_flash_dev *flash_dev = fal_flash_device_find(part->flash_name);
-        if (flash_dev == RT_NULL)
-        {
-            LOG_E("FAL ioctl fail, flash dev not found");
-            return -RT_ERROR;
-        }
-        *(rt_uint32_t *)arg = flash_dev->blk_size;
+        *(rt_uint32_t *)arg = fal_flash_device_find(part->flash_name)->blk_size;
         return RT_EOK;
     }
     default:
@@ -202,6 +192,13 @@ static rt_err_t qbt_fal_sign_write(void *handle, const fw_info_t *fw_info)
     return RT_EOK;
 }
 
+static rt_err_t qbt_fal_sign_clear(void *handle, const fw_info_t *fw_info)
+{
+    RT_UNUSED(handle);
+    RT_UNUSED(fw_info);
+    return RT_EOK;
+}
+
 static const qboot_io_ops_t g_qboot_io_fal = {
     .open = qbt_fal_open,
     .close = qbt_fal_close,
@@ -215,34 +212,17 @@ static const qboot_io_ops_t g_qboot_io_fal = {
 static const qboot_header_parser_ops_t g_qboot_header_parser_fal = {
     .sign_read = qbt_fal_sign_read,
     .sign_write = qbt_fal_sign_write,
+    .sign_clear = qbt_fal_sign_clear,
 };
 
-/**
- * @brief Register FAL-backed header parser and release target ops.
- *
- * @return RT_EOK on success, negative error code otherwise.
- */
-rt_err_t qboot_register_storage_ops(void)
+const qboot_io_ops_t *qbt_fal_io_ops(void)
 {
-    if (fal_init() <= 0)
-    {
-        LOG_E("Qboot initialize fal fail.");
-        return -RT_ERROR;
-    }
+    return &g_qboot_io_fal;
+}
 
-    rt_err_t rst = qboot_register_header_io_ops(&g_qboot_io_fal);
-    if (rst != RT_EOK)
-    {
-        LOG_E("Register header IO ops fail: %d", rst);
-        return rst;
-    }
-    rst = qboot_register_header_parser_ops(&g_qboot_header_parser_fal);
-    if (rst != RT_EOK)
-    {
-        LOG_E("Register header parser ops fail: %d", rst);
-        return rst;
-    }
-    return RT_EOK;
+const qboot_header_parser_ops_t *qbt_fal_parser_ops(void)
+{
+    return &g_qboot_header_parser_fal;
 }
 
 #endif /* QBOOT_PKG_SOURCE_FAL */

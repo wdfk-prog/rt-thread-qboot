@@ -15,7 +15,31 @@
 #ifndef __QBOOT_TYPES_H__
 #define __QBOOT_TYPES_H__
 
+#include "qboot_cfg.h"
 #include <rtthread.h>
+
+/**
+ * @brief Backend enable flags and count.
+ */
+#if defined(QBOOT_PKG_SOURCE_FAL)
+#define QBT_BACKEND_FAL_ENABLED 1
+#else
+#define QBT_BACKEND_FAL_ENABLED 0
+#endif
+
+#if defined(QBOOT_PKG_SOURCE_FS)
+#define QBT_BACKEND_FS_ENABLED 1
+#else
+#define QBT_BACKEND_FS_ENABLED 0
+#endif
+
+#if defined(QBOOT_PKG_SOURCE_CUSTOM)
+#define QBT_BACKEND_CUSTOM_ENABLED 1
+#else
+#define QBT_BACKEND_CUSTOM_ENABLED 0
+#endif
+
+#define QBT_BACKEND_COUNT (QBT_BACKEND_FAL_ENABLED + QBT_BACKEND_FS_ENABLED + QBT_BACKEND_CUSTOM_ENABLED)
 
 /**
  * @brief Firmware package header shared between boot and application.
@@ -26,7 +50,7 @@ typedef struct
     rt_uint16_t algo;           /**< Compress/encrypt algorithm bits. */
     rt_uint16_t algo2;          /**< Secondary algorithm flags (e.g. verify). */
     rt_uint32_t time_stamp;     /**< Build timestamp. */
-    rt_uint8_t part_name[16];   /**< Target partition name. */
+    rt_uint8_t part_name[16];   /**< Target partition/file name. */
     rt_uint8_t fw_ver[24];      /**< Firmware version string. */
     rt_uint8_t prod_code[24];   /**< Product code string. */
     rt_uint32_t pkg_crc;        /**< CRC32 of the package body. */
@@ -35,6 +59,52 @@ typedef struct
     rt_uint32_t pkg_size;       /**< Package size (excluding header). */
     rt_uint32_t hdr_crc;        /**< CRC32 of this header (excluding hdr_crc field). */
 } fw_info_t;
+
+/**
+ * @brief Target list for application/factory/download roles.
+ *
+ * Each entry maps a target ID to a logical role name used in headers/logs.
+ * Backend storage names (FAL partition/file path/custom region) are filled
+ * separately in qboot_store_desc_t::store_name.
+ */
+#define QBT_TARGET_LIST(X)                \
+    X(APP, QBOOT_APP_PART_NAME)           \
+    X(DOWNLOAD, QBOOT_DOWNLOAD_PART_NAME) \
+    X(FACTORY, QBOOT_FACTORY_PART_NAME)
+
+/**
+ * @brief Target identifiers derived from QBT_TARGET_LIST.
+ *
+ * Use these IDs to index g_descs and open targets without string compares.
+ */
+typedef enum
+{
+#define QBOOT_TARGET_ENUM(id, name) QBOOT_TARGET_##id,
+    QBT_TARGET_LIST(QBOOT_TARGET_ENUM)
+#undef QBOOT_TARGET_ENUM
+    QBOOT_TARGET_COUNT
+} qbt_target_id_t;
+
+/**
+ * @brief Target descriptor used by storage backends.
+ */
+typedef enum
+{
+    QBT_STORE_BACKEND_FAL = 0,
+    QBT_STORE_BACKEND_FS,
+    QBT_STORE_BACKEND_CUSTOM,
+    QBT_STORE_BACKEND_COUNT,
+} qbt_store_backend_t;
+
+typedef struct
+{
+    qbt_target_id_t id;          /**< Target id (APP/DOWNLOAD/FACTORY). */
+    const char *role_name;       /**< Logical role name used in headers/logs. */
+    const char *store_name;      /**< Backend store identifier (partition/path). */
+    rt_uint32_t flash_addr;      /**< Base address for CUSTOM backend. */
+    rt_uint32_t flash_len;       /**< Length in bytes for CUSTOM backend. */
+    qbt_store_backend_t backend; /**< Backend selector (FAL/FS/CUSTOM). */
+} qboot_store_desc_t;
 
 /**
  * @brief IO control commands for qboot IO backends.
@@ -46,8 +116,9 @@ typedef struct
  */
 typedef struct
 {
-    rt_err_t (*open)(void **handle,               /**< [out] Output handle for the opened target. */
-                     const char *path);           /**< Target identifier (partition name/path). */
+    rt_err_t (*open)(qbt_target_id_t id,          /**< Target identifier (APP/DOWNLOAD/FACTORY). */
+                     void **handle,              /**< [out] Output handle for the opened target. */
+                     int flags);                 /**< Open flags (QBT_OPEN_*). */
     rt_err_t (*close)(void *handle);              /**< Handle to close. */
     rt_err_t (*read)(void *handle,                /**< Handle to read from. */
                      rt_uint32_t off,             /**< Byte offset to read. */
@@ -68,6 +139,13 @@ typedef struct
 } qboot_io_ops_t;
 
 /**
+ * @brief Open flags for storage backends.
+ */
+#define QBT_OPEN_READ   0x01
+#define QBT_OPEN_WRITE  0x02
+#define QBT_OPEN_CREATE 0x04
+
+/**
  * @brief Header parser and package source operations. must be non-NULL
  */
 typedef struct
@@ -76,6 +154,8 @@ typedef struct
                           rt_bool_t *released,          /**< [out] RT_TRUE when released sign is present. */
                           const fw_info_t *fw_info);    /**< Firmware header context. */
     rt_err_t (*sign_write)(void *handle,                /**< Handle to write to. */
+                           const fw_info_t *fw_info);   /**< Firmware header context. */
+    rt_err_t (*sign_clear)(void *handle,                /**< Handle to clear sign from. */
                            const fw_info_t *fw_info);   /**< Firmware header context. */
 } qboot_header_parser_ops_t;
 
@@ -93,12 +173,19 @@ rt_err_t qboot_register_storage_ops(void);
 rt_err_t qboot_register_header_parser_ops(const qboot_header_parser_ops_t *ops);
 rt_err_t qboot_register_header_io_ops(const qboot_io_ops_t *ops);
 rt_err_t qboot_register_update(const qboot_update_ops_t *ops);
+
 rt_bool_t qbt_fw_info_read(void *handle, rt_uint32_t part_len, fw_info_t *fw_info, rt_bool_t from_tail);
 rt_bool_t qbt_fw_info_write(void *handle, rt_uint32_t part_len, fw_info_t *fw_info, rt_bool_t to_tail);
 rt_bool_t qbt_release_sign_check(void *handle, const char *name, fw_info_t *fw_info);
 rt_bool_t qbt_release_sign_write(void *handle, const char *name, fw_info_t *fw_info);
-rt_bool_t qbt_target_open(const char *name, void **handle, rt_uint32_t *out_size);
+rt_bool_t qbt_release_sign_clear(void *handle, const char *name, fw_info_t *fw_info);
+
+rt_bool_t qbt_target_open(qbt_target_id_t id, void **handle, rt_uint32_t *out_size, int flags);
 void qbt_target_close(void *handle);
+const qboot_store_desc_t *qbt_target_desc(qbt_target_id_t id);
+qbt_target_id_t qbt_name_to_id(const char *name);
+
+rt_bool_t qbt_ops_custom_init(void);
 
 extern const qboot_io_ops_t *_header_io_ops;
 
