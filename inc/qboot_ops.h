@@ -174,6 +174,11 @@ rt_err_t qboot_register_header_parser_ops(const qboot_header_parser_ops_t *ops);
 rt_err_t qboot_register_header_io_ops(const qboot_io_ops_t *ops);
 rt_err_t qboot_register_update(const qboot_update_ops_t *ops);
 
+/**
+ * @brief Feed watchdog (weak hook).
+ */
+void qbt_wdt_feed(void);
+
 rt_bool_t qbt_fw_info_read(void *handle, rt_uint32_t part_len, fw_info_t *fw_info, rt_bool_t from_tail);
 rt_bool_t qbt_fw_info_write(void *handle, rt_uint32_t part_len, fw_info_t *fw_info, rt_bool_t to_tail);
 rt_bool_t qbt_release_sign_check(void *handle, const char *name, fw_info_t *fw_info);

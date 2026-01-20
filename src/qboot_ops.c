@@ -387,6 +387,17 @@ rt_weak rt_bool_t qbt_ops_custom_init(void)
 }
 
 /**
+ * @brief Feed watchdog (weak hook).
+ */
+rt_weak void qbt_wdt_feed(void)
+{
+#ifdef PKG_USING_SYSWATCH
+    extern void syswatch_wdt_feed(void);
+    syswatch_wdt_feed();
+#endif /* PKG_USING_SYSWATCH */
+}
+
+/**
  * @brief Register storage ops based on enabled backends.
  */
 rt_err_t qboot_register_storage_ops(void)

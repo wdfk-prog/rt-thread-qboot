@@ -76,6 +76,26 @@ static rt_bool_t qbt_fw_info_check(fw_info_t *fw_info)
     return (crc32_cal((rt_uint8_t *)fw_info, (sizeof(fw_info_t) - sizeof(rt_uint32_t))) == fw_info->hdr_crc);
 }
 
+/**
+ * @brief Erase target region and feed watchdog before/after.
+ *
+ * @note The implementation of the "erase" operation might be blocking and the 
+ * waiting time could be quite long. Therefore, it is necessary to feed the dog
+ * before and after the operation.
+ * @param handle Target handle.
+ * @param off    Byte offset to erase.
+ * @param len    Bytes to erase.
+ *
+ * @return RT_EOK on success, negative error code otherwise.
+ */
+static rt_err_t qbt_erase_with_feed(void *handle, rt_uint32_t off, rt_uint32_t len)
+{
+    qbt_wdt_feed();
+    rt_err_t rst = _header_io_ops->erase(handle, off, len);
+    qbt_wdt_feed();
+    return rst;
+}
+
 static rt_bool_t qbt_fw_crc_check(void *handle, const char *name, rt_uint32_t addr, rt_uint32_t size, rt_uint32_t crc)
 {
     rt_uint32_t pos = 0;
@@ -213,7 +233,7 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
     }
 #endif
     rt_kprintf("Start erase partition %s ...\n", dst_name);
-    if ((_header_io_ops->erase(dst_handle, 0, fw_info->raw_size) != RT_EOK) || (_header_io_ops->erase(dst_handle, dst_size - sizeof(fw_info_t), sizeof(fw_info_t)) != RT_EOK))
+    if ((qbt_erase_with_feed(dst_handle, 0, fw_info->raw_size) != RT_EOK) || (qbt_erase_with_feed(dst_handle, dst_size - sizeof(fw_info_t), sizeof(fw_info_t)) != RT_EOK))
     {
         qbt_fw_algo_deinit(&algo_ops);
         LOG_E("Qboot release firmware fail. erase %s error.", dst_name);
@@ -398,6 +418,15 @@ __WEAK void qbt_jump_to_app(void)
 #else
 extern void qbt_jump_to_app(void);
 #endif
+
+/**
+ * @brief Feed watchdog and jump to application.
+ */
+static void qbt_jump_to_app_with_feed(void)
+{
+    qbt_wdt_feed();
+    qbt_jump_to_app();
+}
 
 #ifdef QBOOT_USING_STATUS_LED
 static void qbt_status_led_init(void)
@@ -769,7 +798,7 @@ static void qbt_thread_entry(void *params)
     {
         if (qbt_app_resume_from(QBOOT_TARGET_FACTORY))
         {
-            qbt_jump_to_app();
+            qbt_jump_to_app_with_feed();
         }
     }
 #endif
@@ -783,19 +812,19 @@ static void qbt_thread_entry(void *params)
 
     const qboot_store_desc_t *download_desc = qbt_target_desc(QBOOT_TARGET_DOWNLOAD);
     qbt_release_from_part(QBOOT_TARGET_DOWNLOAD, RT_TRUE);
-    qbt_jump_to_app();
+    qbt_jump_to_app_with_feed();
 
     LOG_I("Try resume application from %s", download_desc->role_name);
     if (qbt_app_resume_from(QBOOT_TARGET_DOWNLOAD))
     {
-        qbt_jump_to_app();
+        qbt_jump_to_app_with_feed();
     }
 
     const qboot_store_desc_t *factory_desc = qbt_target_desc(QBOOT_TARGET_FACTORY);
     LOG_I("Try resume application from %s", factory_desc->role_name);
     if (qbt_app_resume_from(QBOOT_TARGET_FACTORY))
     {
-        qbt_jump_to_app();
+        qbt_jump_to_app_with_feed();
     }
 
 #ifdef QBOOT_USING_SHELL
@@ -837,7 +866,7 @@ static rt_bool_t qbt_fw_clone(void *dst_handle, const char *dst_name, void *src_
     rt_uint32_t pos = 0;
 
     rt_kprintf("Erasing %s partition ... \n", dst_name);
-    if (_header_io_ops->erase(dst_handle, 0, fw_pkg_size) != RT_EOK)
+    if (qbt_erase_with_feed(dst_handle, 0, fw_pkg_size) != RT_EOK)
     {
         LOG_E("Qboot clone firmware fail. erase %s error.", dst_name);
         return (RT_FALSE);
@@ -877,12 +906,12 @@ static void qbt_fw_info_show(qbt_target_id_t part_id)
 
     if (desc == RT_NULL)
     {
-        rt_kprintf("The target id %d is not exist.", part_id);
+        rt_kprintf("The target id %d is not exist.\n", part_id);
         return;
     }
     if (!qbt_target_open(part_id, &handle, &part_size, QBT_OPEN_READ))
     {
-        rt_kprintf("The %s partition is not exist.", desc->role_name);
+        rt_kprintf("The %s partition is not exist.\n", desc->role_name);
         return;
     }
 
@@ -912,9 +941,9 @@ static void qbt_fw_info_show(qbt_target_id_t part_id)
 static rt_bool_t qbt_fw_delete(void *handle, const char *name, rt_uint32_t part_size)
 {
     rt_kprintf("Erasing %s partition ... \n", name);
-    if (_header_io_ops->erase(handle, 0, part_size) != RT_EOK)
+    if (qbt_erase_with_feed(handle, 0, part_size) != RT_EOK)
     {
-        LOG_E("Qboot delete firmware fail. erase %s error.", name);
+        rt_kprintf("Qboot delete firmware fail. erase %s error.\n", name);
         return (RT_FALSE);
     }
 
@@ -1110,7 +1139,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
 
     if (rt_strcmp(argv[1], "jump") == 0)
     {
-        qbt_jump_to_app();
+        qbt_jump_to_app_with_feed();
         return;
     }
 
