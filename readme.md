@@ -69,7 +69,7 @@ Quick bootloader 遵循 LGPLv2.1 许可，详见 `LICENSE` 文件。
 - 目标角色与存储分离：`QBT_TARGET_LIST` 生成 `qbt_target_id_t` 与角色名映射；`fw_info.part_name` 仅和角色名比较，实际打开的存储由 `g_descs.store_name` 决定。
 - 固件处理流程：读取 `fw_info` -> 校验包体/签名 -> 选择算法上下文。
 - 常规包释放：走 `qbt_fw_stream_process()` 完成解密+解压+写入/CRC。
-- HPatchLite 包：命中 `QBOOT_ALGO_CMPRS_HPATCHLITE` 时走差分流程，使用 RAM/FLASH 缓冲原地更新。
+- HPatchLite 包：命中 `QBOOT_ALGO_CMPRS_HPATCHLITE` 时走差分流程；RAM/FLASH 统一用 swap 后端，`ram_buf` 在主流程统一分配（RAM 缓冲或 flash-to-flash copy buffer）。
 - 完成后写回尾部头信息，并进行可选校验与标记。
 
 ## 2. 使用
@@ -124,13 +124,16 @@ Quick bootloader 遵循 LGPLv2.1 许可，详见 `LICENSE` 文件。
 | QBOOT_USING_HPATCHLITE | 使用 hpatchlite 差分升级 |
 | QBOOT_HPATCH_PATCH_CACHE_SIZE | HPatchLite patch 缓存大小 |
 | QBOOT_HPATCH_DECOMPRESS_CACHE_SIZE | HPatchLite 解压缓存大小 |
-| QBOOT_HPATCH_USE_FLASH_SWAP | HPatchLite 使用 flash swap 缓冲 |
+| QBOOT_HPATCH_USE_STORAGE_SWAP | HPatchLite 使用 flash swap 缓冲 |
 | QBOOT_HPATCH_USE_RAM_BUFFER | HPatchLite 使用 RAM 缓冲 |
 | QBOOT_HPATCH_SWAP_STORE_FAL | swap 使用 FAL |
 | QBOOT_HPATCH_SWAP_STORE_CUSTOM | swap 使用自定义 flash |
+| QBOOT_HPATCH_SWAP_STORE_FS | swap 使用文件系统 |
 | QBOOT_HPATCH_SWAP_PART_NAME | swap FAL 分区名 |
 | QBOOT_HPATCH_SWAP_FLASH_ADDR | swap 自定义 flash 地址 |
 | QBOOT_HPATCH_SWAP_FLASH_LEN | swap 自定义 flash 长度 |
+| QBOOT_HPATCH_SWAP_FILE_PATH | swap 文件路径 |
+| QBOOT_HPATCH_SWAP_FILE_SIZE | swap 文件大小 |
 | QBOOT_HPATCH_SWAP_OFFSET | swap 偏移 |
 | QBOOT_HPATCH_COPY_BUFFER_SIZE | flash-to-flash 拷贝缓冲 |
 | QBOOT_HPATCH_RAM_BUFFER_SIZE | RAM 缓冲大小 |

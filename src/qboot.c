@@ -59,26 +59,6 @@ static rt_bool_t qbt_fw_info_check(fw_info_t *fw_info)
     return (crc32_cal((rt_uint8_t *)fw_info, (sizeof(fw_info_t) - sizeof(rt_uint32_t))) == fw_info->hdr_crc);
 }
 
-/**
- * @brief Erase target region and feed watchdog before/after.
- *
- * @note The implementation of the "erase" operation might be blocking and the 
- * waiting time could be quite long. Therefore, it is necessary to feed the dog
- * before and after the operation.
- * @param handle Target handle.
- * @param off    Byte offset to erase.
- * @param len    Bytes to erase.
- *
- * @return RT_EOK on success, negative error code otherwise.
- */
-static rt_err_t qbt_erase_with_feed(void *handle, rt_uint32_t off, rt_uint32_t len)
-{
-    qbt_wdt_feed();
-    rt_err_t rst = _header_io_ops->erase(handle, off, len);
-    qbt_wdt_feed();
-    return rst;
-}
-
 static rt_bool_t qbt_fw_crc_check(void *handle, const char *name, rt_uint32_t addr, rt_uint32_t size, rt_uint32_t crc)
 {
     rt_uint32_t pos = 0;

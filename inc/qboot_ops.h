@@ -61,16 +61,24 @@ typedef struct
 } fw_info_t;
 
 /**
- * @brief Target list for application/factory/download roles.
+ * @brief Target list for application/factory/download roles (optional SWAP).
  *
  * Each entry maps a target ID to a logical role name used in headers/logs.
  * Backend storage names (FAL partition/file path/custom region) are filled
  * separately in qboot_store_desc_t::store_name.
  */
+#if defined(QBOOT_USING_HPATCHLITE) && defined(QBOOT_HPATCH_USE_STORAGE_SWAP)
+#define QBT_TARGET_LIST(X)                \
+    X(APP, QBOOT_APP_PART_NAME)           \
+    X(DOWNLOAD, QBOOT_DOWNLOAD_PART_NAME) \
+    X(FACTORY, QBOOT_FACTORY_PART_NAME)   \
+    X(SWAP, QBOOT_HPATCH_SWAP_PART_NAME)
+#else
 #define QBT_TARGET_LIST(X)                \
     X(APP, QBOOT_APP_PART_NAME)           \
     X(DOWNLOAD, QBOOT_DOWNLOAD_PART_NAME) \
     X(FACTORY, QBOOT_FACTORY_PART_NAME)
+#endif
 
 /**
  * @brief Target identifiers derived from QBT_TARGET_LIST.
@@ -191,6 +199,7 @@ const qboot_store_desc_t *qbt_target_desc(qbt_target_id_t id);
 qbt_target_id_t qbt_name_to_id(const char *name);
 
 rt_bool_t qbt_ops_custom_init(void);
+rt_err_t qbt_erase_with_feed(void *handle, rt_uint32_t off, rt_uint32_t len);
 
 extern const qboot_io_ops_t *_header_io_ops;
 

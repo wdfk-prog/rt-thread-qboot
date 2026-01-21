@@ -303,15 +303,15 @@ if PKG_USING_QBOOT
                     A larger size can reduce the number of I/O operations. 4096 is a common value.
             choice
                 prompt "HPatchLite In-Place Update Strategy"
-                default QBOOT_HPATCH_USE_FLASH_SWAP
+                default QBOOT_HPATCH_USE_STORAGE_SWAP
                 help
                     Select the buffer strategy for in-place firmware updates.
                     - FLASH SWAP: Uses a dedicated flash partition as a buffer. Slower but saves RAM.
                     - RAM BUFFER: Uses RAM as a buffer. Faster but consumes significant RAM.
 
-                config QBOOT_HPATCH_USE_FLASH_SWAP
-                    bool "Use a FLASH partition as swap buffer"
-                    depends on QBOOT_PKG_SOURCE_FAL || QBOOT_PKG_SOURCE_CUSTOM
+                config QBOOT_HPATCH_USE_STORAGE_SWAP
+                    bool "Use a storage medium as swap buffer"
+                    depends on QBOOT_PKG_SOURCE_FAL || QBOOT_PKG_SOURCE_CUSTOM || QBOOT_PKG_SOURCE_FS
                     help
                         Use a flash swap region via FAL or custom backend.
 
@@ -319,12 +319,13 @@ if PKG_USING_QBOOT
                     bool "Use a RAM buffer (Faster, consumes RAM)"
             endchoice
 
-            if QBOOT_HPATCH_USE_FLASH_SWAP
+            if QBOOT_HPATCH_USE_STORAGE_SWAP
                 choice
                     prompt "HPatchLite swap backend"
-                    depends on QBOOT_PKG_SOURCE_FAL || QBOOT_PKG_SOURCE_CUSTOM
+                    depends on QBOOT_PKG_SOURCE_FAL || QBOOT_PKG_SOURCE_CUSTOM || QBOOT_PKG_SOURCE_FS
                     default QBOOT_HPATCH_SWAP_STORE_FAL if QBOOT_PKG_SOURCE_FAL
                     default QBOOT_HPATCH_SWAP_STORE_CUSTOM if !QBOOT_PKG_SOURCE_FAL && QBOOT_PKG_SOURCE_CUSTOM
+                    default QBOOT_HPATCH_SWAP_STORE_FS if !QBOOT_PKG_SOURCE_FAL && !QBOOT_PKG_SOURCE_CUSTOM && QBOOT_PKG_SOURCE_FS
                     help
                         Select backend for the swap buffer.
 
@@ -339,6 +340,12 @@ if PKG_USING_QBOOT
                         depends on QBOOT_PKG_SOURCE_CUSTOM
                         help
                             Use a custom flash region as the swap buffer.
+
+                    config QBOOT_HPATCH_SWAP_STORE_FS
+                        bool "Filesystem file"
+                        depends on QBOOT_PKG_SOURCE_FS
+                        help
+                            Use a filesystem file as the swap buffer.
                 endchoice
 
                 if QBOOT_HPATCH_SWAP_STORE_FAL
@@ -355,6 +362,19 @@ if PKG_USING_QBOOT
                     config QBOOT_HPATCH_SWAP_FLASH_LEN
                         hex "Swap flash length for HPatchLite"
                         default 0x00000000
+                endif
+
+                if QBOOT_HPATCH_SWAP_STORE_FS
+                    config QBOOT_HPATCH_SWAP_FILE_PATH
+                        string "Swap file path for HPatchLite"
+                        default "/hpatch.swap"
+
+                    config QBOOT_HPATCH_SWAP_FILE_SIZE
+                        int "Swap file size for HPatchLite"
+                        default 524288
+                        help
+                            Size of the swap file used as buffer when filesystem backend is selected.
+                            Must be >= the erase alignment size of the target (app) partition.
                 endif
 
                 config QBOOT_HPATCH_SWAP_OFFSET

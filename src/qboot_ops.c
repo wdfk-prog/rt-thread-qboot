@@ -83,6 +83,27 @@ const qboot_update_ops_t *_update_ops = RT_NULL;
 #error "FACTORY storage backend must be selected."
 #endif
 
+#if defined(QBOOT_USING_HPATCHLITE) && defined(QBOOT_HPATCH_USE_STORAGE_SWAP)
+#if defined(QBOOT_HPATCH_SWAP_STORE_FAL)
+#define QBT_SWAP_BACKEND    QBT_STORE_BACKEND_FAL
+#define QBT_SWAP_STORE_NAME QBOOT_HPATCH_SWAP_PART_NAME
+#define QBT_SWAP_FLASH_ADDR 0u
+#define QBT_SWAP_FLASH_LEN  0u
+#elif defined(QBOOT_HPATCH_SWAP_STORE_CUSTOM)
+#define QBT_SWAP_BACKEND    QBT_STORE_BACKEND_CUSTOM
+#define QBT_SWAP_STORE_NAME QBOOT_HPATCH_SWAP_PART_NAME
+#define QBT_SWAP_FLASH_ADDR QBOOT_HPATCH_SWAP_FLASH_ADDR
+#define QBT_SWAP_FLASH_LEN  QBOOT_HPATCH_SWAP_FLASH_LEN
+#elif defined(QBOOT_HPATCH_SWAP_STORE_FS)
+#define QBT_SWAP_BACKEND    QBT_STORE_BACKEND_FS
+#define QBT_SWAP_STORE_NAME QBOOT_HPATCH_SWAP_FILE_PATH
+#define QBT_SWAP_FLASH_ADDR 0u
+#define QBT_SWAP_FLASH_LEN  0u
+#else
+#error "HPatchLite swap backend must be selected."
+#endif
+#endif
+
 static const qboot_store_desc_t g_descs[QBOOT_TARGET_COUNT] = {
 #define QBOOT_TARGET_DESC_INIT(id, name) \
     { QBOOT_TARGET_##id, name, QBT_##id##_STORE_NAME, QBT_##id##_FLASH_ADDR, QBT_##id##_FLASH_LEN, QBT_##id##_BACKEND },
@@ -312,10 +333,10 @@ rt_bool_t qbt_release_sign_clear(void *handle, const char *name, fw_info_t *fw_i
  */
 qbt_target_id_t qbt_name_to_id(const char *name)
 {
-#define QBOOT_TARGET_MATCH(id, role)     \
-    if (rt_strcmp(name, role) == 0) \
-    {                               \
-        return QBOOT_TARGET_##id;        \
+#define QBOOT_TARGET_MATCH(id, role) \
+    if (rt_strcmp(name, role) == 0)  \
+    {                                \
+        return QBOOT_TARGET_##id;    \
     }
     QBT_TARGET_LIST(QBOOT_TARGET_MATCH)
 #undef QBOOT_TARGET_MATCH
@@ -398,6 +419,26 @@ rt_weak void qbt_wdt_feed(void)
 }
 
 /**
+ * @brief Erase target region and feed watchdog before/after.
+ *
+ * @note The implementation of the "erase" operation might be blocking and the 
+ * waiting time could be quite long. Therefore, it is necessary to feed the dog
+ * before and after the operation.
+ * @param handle Target handle.
+ * @param off    Byte offset to erase.
+ * @param len    Bytes to erase.
+ *
+ * @return RT_EOK on success, negative error code otherwise.
+ */
+rt_err_t qbt_erase_with_feed(void *handle, rt_uint32_t off, rt_uint32_t len)
+{
+    qbt_wdt_feed();
+    rt_err_t rst = _header_io_ops->erase(handle, off, len);
+    qbt_wdt_feed();
+    return rst;
+}
+
+/**
  * @brief Register storage ops based on enabled backends.
  */
 rt_err_t qboot_register_storage_ops(void)
@@ -428,7 +469,7 @@ rt_err_t qboot_register_storage_ops(void)
         return -RT_ERROR;
     }
 #endif
-    if(qbt_ops_custom_init() == RT_FALSE)
+    if (qbt_ops_custom_init() == RT_FALSE)
     {
         LOG_E("Qboot initialize custom ops fail.");
     }

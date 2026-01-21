@@ -101,9 +101,12 @@
 
 /* The character name is used for fw_info.part_name matching and log output, 
  * and should remain stable to avoid compatibility issues. */
-#define QBOOT_APP_PART_NAME      "app"
-#define QBOOT_DOWNLOAD_PART_NAME "download"
-#define QBOOT_FACTORY_PART_NAME  "factory"
+#define QBOOT_APP_PART_NAME         "app"
+#define QBOOT_DOWNLOAD_PART_NAME    "download"
+#define QBOOT_FACTORY_PART_NAME     "factory"
+#if defined(QBOOT_USING_HPATCHLITE)
+#define QBOOT_HPATCH_SWAP_PART_NAME "swap"
+#endif /* QBOOT_USING_HPATCHLITE */
 
 #if defined(QBOOT_APP_STORE_FAL) && !defined(QBOOT_APP_FAL_PART_NAME)
 #error "QBOOT_APP_FAL_PART_NAME must be defined when QBOOT_APP_STORE_FAL is enabled."
@@ -150,8 +153,19 @@
 #error "QBOOT_FACTORY_FLASH_LEN must be defined when QBOOT_FACTORY_STORE_CUSTOM is enabled."
 #endif
 
-#if defined(QBOOT_USING_HPATCHLITE) && defined(QBOOT_HPATCH_USE_FLASH_SWAP) && !defined(QBOOT_HPATCH_SWAP_PART_NAME)
-#error "QBOOT_HPATCH_SWAP_PART_NAME must be defined when HPatchLite flash swap is enabled."
+#if defined(QBOOT_USING_HPATCHLITE) && defined(QBOOT_HPATCH_USE_STORAGE_SWAP)
+#if defined(QBOOT_HPATCH_SWAP_STORE_FAL) && !defined(QBOOT_HPATCH_SWAP_PART_NAME)
+#error "QBOOT_HPATCH_SWAP_PART_NAME must be defined when HPatchLite swap uses FAL."
+#endif
+#if defined(QBOOT_HPATCH_SWAP_STORE_CUSTOM) && !defined(QBOOT_HPATCH_SWAP_FLASH_LEN)
+#error "QBOOT_HPATCH_SWAP_FLASH_LEN must be defined when HPatchLite swap uses custom flash."
+#endif
+#if defined(QBOOT_HPATCH_SWAP_STORE_FS) && !defined(QBOOT_HPATCH_SWAP_FILE_PATH)
+#error "QBOOT_HPATCH_SWAP_FILE_PATH must be defined when HPatchLite swap uses filesystem."
+#endif
+#if defined(QBOOT_HPATCH_SWAP_STORE_FS) && !defined(QBOOT_HPATCH_SWAP_FILE_SIZE)
+#error "QBOOT_HPATCH_SWAP_FILE_SIZE must be defined when HPatchLite swap uses filesystem."
+#endif
 #endif
 
 #ifdef QBOOT_USING_AES

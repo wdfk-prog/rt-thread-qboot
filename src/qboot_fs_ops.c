@@ -113,19 +113,32 @@ static rt_err_t qbt_fs_read(void *handle, rt_uint32_t off, void *buf, rt_uint32_
 }
 
 /**
- * @brief Erase is a no-op for filesystem backend.
+ * @brief Erase filesystem target.
  *
  * @param handle Encoded target id.
- * @param off    Byte offset.
- * @param len    Bytes to erase (unused).
+ * @param off    Byte offset (ignored for filesystem).
+ * @param len    Bytes to erase (ignored for filesystem).
  *
- * @return RT_EOK always.
+ * @return RT_EOK on success, negative error code otherwise.
  */
 static rt_err_t qbt_fs_erase(void *handle, rt_uint32_t off, rt_uint32_t len)
 {
     RT_UNUSED(handle);
     RT_UNUSED(off);
     RT_UNUSED(len);
+
+#if defined(QBOOT_USING_HPATCHLITE) && defined(QBOOT_HPATCH_USE_STORAGE_SWAP) && defined(QBOOT_HPATCH_SWAP_STORE_FS)
+    int id = (int)((uintptr_t)handle) - 1;
+    int fd = g_fs_fds[id] - 1;
+    if (id == QBOOT_TARGET_SWAP)
+    {
+        if (ftruncate(fd, (off_t)QBOOT_HPATCH_SWAP_FILE_SIZE) != 0)
+        {
+            return -RT_ERROR;
+        }
+        return RT_EOK;
+    }
+#endif
     return RT_EOK;
 }
 
@@ -170,6 +183,13 @@ static rt_err_t qbt_fs_size(void *handle, rt_uint32_t *out_size)
     off_t cur = 0;
     off_t end = 0;
 
+#if defined(QBOOT_USING_HPATCHLITE) && defined(QBOOT_HPATCH_USE_STORAGE_SWAP) && defined(QBOOT_HPATCH_SWAP_STORE_FS)
+    if (id == QBOOT_TARGET_SWAP)
+    {
+        *out_size = (rt_uint32_t)QBOOT_HPATCH_SWAP_FILE_SIZE;
+        return RT_EOK;
+    }
+#endif
     cur = lseek(fd, 0, SEEK_CUR);
     end = lseek(fd, 0, SEEK_END);
     if (cur >= 0)
