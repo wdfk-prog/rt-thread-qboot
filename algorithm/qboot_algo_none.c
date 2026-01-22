@@ -90,7 +90,7 @@ static const qboot_cmprs_ops_t qbt_algo_none_cmprs_ops = {
 };
 
 /** AES crypto ops for Qboot. */
-static const qboot_crypto_ops_t qbt_algo_aes_crypt_ops = {
+static const qboot_crypto_ops_t qbt_algo_none_crypt_ops = {
     .crypto_name = "NONE",
     .crypto_id = QBOOT_ALGO_CRYPT_NONE,
     .init = RT_NULL,
@@ -107,7 +107,7 @@ rt_err_t qbt_algo_none_register(void)
 {
     if(qboot_cmprs_register(&qbt_algo_none_cmprs_ops) != RT_EOK)
         return -RT_ERROR;
-    if(qboot_crypto_register(&qbt_algo_aes_crypt_ops) != RT_EOK)
+    if(qboot_crypto_register(&qbt_algo_none_crypt_ops) != RT_EOK)
         return -RT_ERROR;
     return RT_EOK;
 }

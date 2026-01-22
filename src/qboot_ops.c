@@ -24,7 +24,6 @@
 
 const qboot_header_parser_ops_t *_header_parser_ops = RT_NULL;
 const qboot_io_ops_t *_header_io_ops = RT_NULL;
-const qboot_update_ops_t *_update_ops = RT_NULL;
 
 #if defined(QBOOT_APP_STORE_FAL)
 #define QBT_APP_BACKEND    QBT_STORE_BACKEND_FAL
@@ -153,22 +152,6 @@ static rt_err_t qbt_register_ops(const qboot_io_ops_t *io_ops, const qboot_heade
 }
 
 /**
- * @brief Default jump decision; always allow.
- *
- * @return RT_TRUE when jump to application is allowed.
- */
-static rt_bool_t qboot_default_allow_jump(void)
-{
-    return RT_TRUE;
-}
-
-const qboot_update_ops_t g_qboot_update_default = {
-    RT_NULL,
-    qboot_default_allow_jump,
-    RT_NULL,
-};
-
-/**
  * @brief Register header parser/package source operations.
  *
  * @param ops       Operation table; required fields must be non-NULL.
@@ -199,24 +182,6 @@ rt_err_t qboot_register_header_io_ops(const qboot_io_ops_t *ops)
         return -RT_ERROR;
     }
     _header_io_ops = ops;
-    return RT_EOK;
-}
-
-/**
- * @brief Register update callbacks.
- *
- * @param ops Operation table; required fields must be non-NULL.
- *
- * @return RT_EOK on success.
- */
-rt_err_t qboot_register_update(const qboot_update_ops_t *ops)
-{
-    if (ops == RT_NULL || ops->allow_jump == RT_NULL)
-    {
-        return -RT_ERROR;
-    }
-
-    _update_ops = ops;
     return RT_EOK;
 }
 
@@ -274,7 +239,7 @@ rt_bool_t qbt_fw_info_write(void *handle, rt_uint32_t part_len, fw_info_t *fw_in
  *
  * @return RT_TRUE when released sign is present, RT_FALSE otherwise.
  */
-rt_bool_t qbt_release_sign_check(void *handle, const char *name, fw_info_t *fw_info)
+rt_weak rt_bool_t qbt_release_sign_check(void *handle, const char *name, fw_info_t *fw_info)
 {
     rt_bool_t released = RT_FALSE;
     rt_err_t rst = _header_parser_ops->sign_read(handle, &released, fw_info);
@@ -416,6 +381,22 @@ rt_weak void qbt_wdt_feed(void)
     extern void syswatch_wdt_feed(void);
     syswatch_wdt_feed();
 #endif /* PKG_USING_SYSWATCH */
+}
+
+/**< Return true to enter update flow. */
+rt_weak rt_bool_t qboot_should_enter_update(void)
+{
+    return RT_TRUE;
+}
+
+rt_weak rt_int32_t qboot_user_src_read_pos(void)
+{
+    return 0;
+}
+
+rt_weak void qboot_notify_update_result(rt_bool_t success)
+{
+
 }
 
 /**

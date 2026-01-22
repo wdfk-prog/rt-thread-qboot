@@ -54,6 +54,10 @@ static rt_err_t qbt_fs_open(qbt_target_id_t id, void **handle, int flags)
     {
         open_flags |= O_CREAT;
     }
+    if (flags & QBT_OPEN_TRUNC)
+    {
+        open_flags |= O_TRUNC;
+    }
     fd = open(desc->store_name, open_flags, 0);
     if (fd < 0)
     {

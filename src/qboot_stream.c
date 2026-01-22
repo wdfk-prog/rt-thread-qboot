@@ -154,7 +154,8 @@ rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_
                                 qbt_stream_proc_t proc, void *proc_ctx)
 {
     /* Track package read position, raw output position, and buffered input length. */
-    rt_uint32_t src_read_pos = sizeof(fw_info_t);
+    rt_uint32_t src_read_pos = sizeof(fw_info_t) + qboot_user_src_read_pos();
+    rt_uint32_t pkg_size = cfg->fw_info->pkg_size + sizeof(fw_info_t) + qboot_user_src_read_pos();
     rt_uint32_t raw_pos = 0;
     rt_uint32_t cmprs_len = 0;
 
@@ -162,7 +163,7 @@ rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_
     while (raw_pos < cfg->fw_info->raw_size)
     {
         /* Limit read length to remaining package bytes. */
-        int remain_len = (cfg->fw_info->pkg_size + sizeof(fw_info_t) - src_read_pos);
+        int remain_len = pkg_size - src_read_pos;
         if (remain_len > 0)
         {
             rt_uint32_t read_len = QBOOT_CMPRS_READ_SIZE;

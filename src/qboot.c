@@ -203,7 +203,7 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
         return (RT_FALSE);
     }
 
-    rt_kprintf("Start release firmware to %s ...     ", dst_name);
+    rt_kprintf("Start release firmware to %s ...     \n", dst_name);
     qbt_stream_cfg_t stream_cfg = {
         .src_handle = src_handle,
         .dst_handle = dst_handle,
@@ -239,7 +239,7 @@ done:
     return (RT_TRUE);
 }
 
-static rt_bool_t qbt_dest_part_verify(void *handle, rt_uint32_t part_len, const char *name)
+rt_weak rt_bool_t qbt_dest_part_verify(void *handle, rt_uint32_t part_len, const char *name)
 {
     if (!qbt_fw_info_read(handle, part_len, &fw_info, RT_TRUE))
     {
@@ -269,26 +269,23 @@ static rt_bool_t qbt_dest_part_verify(void *handle, rt_uint32_t part_len, const 
     return (RT_TRUE);
 }
 
-static rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char *name, fw_info_t *fw_info, rt_bool_t output_log)
+rt_weak rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char *name, fw_info_t *fw_info)
 {
     if (!qbt_fw_info_read(fw_handle, part_len, fw_info, RT_FALSE))
     {
-        if (output_log)
-            LOG_E("Qboot firmware check fail. partition \"%s\" read fail.", name);
+        LOG_E("Qboot firmware check fail. partition \"%s\" read fail.", name);
         return (RT_FALSE);
     }
 
     if (!qbt_fw_info_check(fw_info))
     {
-        if (output_log)
-            LOG_E("Qboot firmware check fail. partition \"%s\" infomation check fail.", name);
+        LOG_E("Qboot firmware check fail. partition \"%s\" infomation check fail.", name);
         return (RT_FALSE);
     }
 
     if (!qbt_fw_crc_check(fw_handle, name, sizeof(fw_info_t), fw_info->pkg_size, fw_info->pkg_crc))
     {
-        if (output_log)
-            LOG_E("Qboot firmware check fail. partition \"%s\" body check fail.", name);
+        LOG_E("Qboot firmware check fail. partition \"%s\" body check fail.", name);
         return (RT_FALSE);
     }
 
@@ -303,17 +300,14 @@ static rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char 
         {
             if (!qbt_app_crc_check(fw_handle, name, fw_info))
             {
-                if (output_log)
-                    LOG_E("Qboot firmware check fail. partition \"%s\" app check fail.", name);
+                LOG_E("Qboot firmware check fail. partition \"%s\" app check fail.", name);
                 return (RT_FALSE);
             }
         }
     }
 #endif
 
-    if (output_log)
-        LOG_D("Qboot partition \"%s\" firmware check success.", name);
-
+    LOG_D("Qboot partition \"%s\" firmware check success.", name);
     return (RT_TRUE);
 }
 
@@ -629,7 +623,7 @@ static rt_bool_t qbt_app_resume_from(qbt_target_id_t src_id)
         return (RT_FALSE);
     }
 
-    if (!qbt_fw_check(src_handle, src_size, src_desc->role_name, &fw_info, RT_TRUE))
+    if (!qbt_fw_check(src_handle, src_size, src_desc->role_name, &fw_info))
     {
         goto exit;
     }
@@ -680,7 +674,7 @@ static rt_bool_t qbt_release_from_part(qbt_target_id_t src_id, rt_bool_t check_s
         return (RT_FALSE);
     }
 
-    if (!qbt_fw_check(src_handle, src_size, src_desc->role_name, &fw_info, RT_TRUE))
+    if (!qbt_fw_check(src_handle, src_size, src_desc->role_name, &fw_info))
     {
         goto exit;
     }
@@ -780,6 +774,15 @@ static void qbt_thread_entry(void *params)
     }
 #endif
 
+    /* 
+     * The user may need to carry out the download process.
+     * Wait until the download is completed and then proceed with the update
+     * process.
+     * Note: The qboot module does not provide a blocking mechanism.
+     * need to implement delay queries or blocking waits internally.
+     */
+    while (!qboot_should_enter_update());
+
     const qboot_store_desc_t *download_desc = qbt_target_desc(QBOOT_TARGET_DOWNLOAD);
     qbt_release_from_part(QBOOT_TARGET_DOWNLOAD, RT_TRUE);
     qbt_jump_to_app_with_feed();
@@ -797,6 +800,7 @@ static void qbt_thread_entry(void *params)
         qbt_jump_to_app_with_feed();
     }
 
+    qboot_notify_update_result(RT_FALSE);
 #ifdef QBOOT_USING_SHELL
     if (qbt_startup_shell(RT_FALSE))
     {
@@ -885,7 +889,7 @@ static void qbt_fw_info_show(qbt_target_id_t part_id)
         return;
     }
 
-    if (!qbt_fw_check(handle, part_size, desc->role_name, &fw_info, RT_FALSE))
+    if (!qbt_fw_check(handle, part_size, desc->role_name, &fw_info))
     {
         qbt_target_close(handle);
         return;
@@ -1004,7 +1008,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
             return;
         }
 
-        if (!qbt_fw_check(src_handle, src_size, src, &fw_info, RT_TRUE))
+        if (!qbt_fw_check(src_handle, src_size, src, &fw_info))
         {
             rt_kprintf("Soure %s partition firmware error.\n", src);
             qbt_target_close(src_handle);
@@ -1094,7 +1098,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
             return;
         }
 
-        if (!qbt_fw_check(handle, part_size, part_name, &fw_info, RT_FALSE))
+        if (!qbt_fw_check(handle, part_size, part_name, &fw_info))
         {
             rt_kprintf("%s partition without firmware.\n", part_name);
             qbt_target_close(handle);

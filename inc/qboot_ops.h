@@ -152,6 +152,7 @@ typedef struct
 #define QBT_OPEN_READ   0x01
 #define QBT_OPEN_WRITE  0x02
 #define QBT_OPEN_CREATE 0x04
+#define QBT_OPEN_TRUNC  0x08
 
 /**
  * @brief Header parser and package source operations. must be non-NULL
@@ -167,20 +168,9 @@ typedef struct
                            const fw_info_t *fw_info);   /**< Firmware header context. */
 } qboot_header_parser_ops_t;
 
-/**
- * @brief User-provided hook to control when boot jumps to application.
- */
-typedef struct
-{
-    void (*init)(void);                                 /**< Optional: initialize gate state. */
-    rt_bool_t (*allow_jump)(void);                      /**< Return true to allow jump; can block/poll inside. */
-    void (*notify_update_result)(rt_bool_t success);    /**< Result flag: RT_TRUE on success, RT_FALSE on failure. */
-} qboot_update_ops_t;
-
 rt_err_t qboot_register_storage_ops(void);
 rt_err_t qboot_register_header_parser_ops(const qboot_header_parser_ops_t *ops);
 rt_err_t qboot_register_header_io_ops(const qboot_io_ops_t *ops);
-rt_err_t qboot_register_update(const qboot_update_ops_t *ops);
 
 /**
  * @brief Feed watchdog (weak hook).
@@ -197,9 +187,14 @@ rt_bool_t qbt_target_open(qbt_target_id_t id, void **handle, rt_uint32_t *out_si
 void qbt_target_close(void *handle);
 const qboot_store_desc_t *qbt_target_desc(qbt_target_id_t id);
 qbt_target_id_t qbt_name_to_id(const char *name);
-
-rt_bool_t qbt_ops_custom_init(void);
 rt_err_t qbt_erase_with_feed(void *handle, rt_uint32_t off, rt_uint32_t len);
+
+/* weak function */
+rt_bool_t qboot_should_enter_update(void);
+void qbt_wdt_feed(void);
+rt_bool_t qbt_ops_custom_init(void);
+rt_int32_t qboot_user_src_read_pos(void);
+void qboot_notify_update_result(rt_bool_t success);
 
 extern const qboot_io_ops_t *_header_io_ops;
 
