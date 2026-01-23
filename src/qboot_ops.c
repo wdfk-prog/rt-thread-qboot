@@ -197,13 +197,13 @@ rt_err_t qboot_register_header_io_ops(const qboot_io_ops_t *ops)
  */
 rt_bool_t qbt_fw_info_read(void *handle, rt_uint32_t part_len, fw_info_t *fw_info, rt_bool_t from_tail)
 {
-    if (from_tail && part_len < sizeof(fw_info_t))
+    if (from_tail && part_len < qboot_src_read_pos())
     {
         LOG_E("Qboot read firmware info fail. part size %u < hdr size.", (unsigned int)part_len);
         return RT_FALSE;
     }
-    rt_uint32_t addr = from_tail ? (part_len - sizeof(fw_info_t)) : 0;
-    if (_header_io_ops->read(handle, addr, (rt_uint8_t *)fw_info, sizeof(fw_info_t)) != RT_EOK)
+    rt_uint32_t addr = from_tail ? (part_len - qboot_src_read_pos()) : 0;
+    if (_header_io_ops->read(handle, addr, (rt_uint8_t *)fw_info, qboot_src_read_pos()) != RT_EOK)
     {
         return (RT_FALSE);
     }
@@ -222,8 +222,8 @@ rt_bool_t qbt_fw_info_read(void *handle, rt_uint32_t part_len, fw_info_t *fw_inf
  */
 rt_bool_t qbt_fw_info_write(void *handle, rt_uint32_t part_len, fw_info_t *fw_info, rt_bool_t to_tail)
 {
-    rt_uint32_t addr = to_tail ? (part_len - sizeof(fw_info_t)) : 0;
-    if (_header_io_ops->write(handle, addr, (rt_uint8_t *)fw_info, sizeof(fw_info_t)) != RT_EOK)
+    rt_uint32_t addr = to_tail ? (part_len - qboot_src_read_pos()) : 0;
+    if (_header_io_ops->write(handle, addr, (rt_uint8_t *)fw_info, qboot_src_read_pos()) != RT_EOK)
     {
         return (RT_FALSE);
     }
@@ -383,20 +383,35 @@ rt_weak void qbt_wdt_feed(void)
 #endif /* PKG_USING_SYSWATCH */
 }
 
-/**< Return true to enter update flow. */
+/**
+ * @brief  Should enter update mode?
+ * @note   This is a weak hook, override in backend implementations.
+ * @retval RT_TRUE when update mode should be entered.
+ */
 rt_weak rt_bool_t qboot_should_enter_update(void)
 {
     return RT_TRUE;
 }
 
-rt_weak rt_int32_t qboot_user_src_read_pos(void)
+/**
+ * @brief  Get source read position.
+ * @note   This is a weak hook, override in backend implementations.
+ * @retval Source read position.
+ */
+rt_weak rt_int32_t qboot_src_read_pos(void)
 {
-    return 0;
+    return sizeof(fw_info_t);
 }
 
+/**
+ * @brief  Notify update result.
+ * @note   This is a weak hook, override in backend implementations.
+ * @param  success: RT_TRUE when update success, RT_FALSE otherwise.
+ * @retval None
+ */
 rt_weak void qboot_notify_update_result(rt_bool_t success)
 {
-
+    RT_UNUSED(success);
 }
 
 /**
@@ -421,6 +436,7 @@ rt_err_t qbt_erase_with_feed(void *handle, rt_uint32_t off, rt_uint32_t len)
 
 /**
  * @brief Register storage ops based on enabled backends.
+ * @return RT_EOK on success, negative error code otherwise.
  */
 rt_err_t qboot_register_storage_ops(void)
 {

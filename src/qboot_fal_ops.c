@@ -168,7 +168,7 @@ static rt_err_t qbt_fal_ioctl(void *handle, int cmd, void *arg)
 static rt_err_t qbt_fal_sign_read(void *handle, rt_bool_t *released, const fw_info_t *fw_info)
 {
     fal_partition_t part = (fal_partition_t)handle;
-    rt_uint32_t pos = (((sizeof(fw_info_t) + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
+    rt_uint32_t pos = (((qboot_src_read_pos() + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
     rt_uint32_t release_sign = 0;
     if (fal_partition_read(part, pos, (rt_uint8_t *)&release_sign, sizeof(rt_uint32_t)) < 0)
     {
@@ -183,7 +183,7 @@ static rt_err_t qbt_fal_sign_write(void *handle, const fw_info_t *fw_info)
 {
     fal_partition_t part = (fal_partition_t)handle;
     rt_uint32_t release_sign = QBOOT_RELEASE_SIGN_WORD;
-    rt_uint32_t pos = (((sizeof(fw_info_t) + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
+    rt_uint32_t pos = (((qboot_src_read_pos() + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
     if (fal_partition_write(part, pos, (rt_uint8_t *)&release_sign, sizeof(rt_uint32_t)) < 0)
     {
         LOG_E("FAL sign write fail at pos=%u.", (unsigned int)pos);

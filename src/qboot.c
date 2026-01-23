@@ -20,6 +20,7 @@
  */
 
 #include <qboot.h>
+#include "qboot_update_mgr.h"
 
 #ifdef QBOOT_USING_SHELL
 #include "shell.h"
@@ -56,7 +57,7 @@ static rt_bool_t qbt_fw_info_check(fw_info_t *fw_info)
         return (RT_FALSE);
     }
 
-    return (crc32_cal((rt_uint8_t *)fw_info, (sizeof(fw_info_t) - sizeof(rt_uint32_t))) == fw_info->hdr_crc);
+    return (crc32_cal((rt_uint8_t *)fw_info, (qboot_src_read_pos() - sizeof(rt_uint32_t))) == fw_info->hdr_crc);
 }
 
 static rt_bool_t qbt_fw_crc_check(void *handle, const char *name, rt_uint32_t addr, rt_uint32_t size, rt_uint32_t crc)
@@ -185,7 +186,7 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
     if (algo_ops.cmprs_ops->cmprs_id == QBOOT_ALGO_CMPRS_HPATCHLITE)
     {
         extern int qbt_hpatchlite_release_from_part(void *patch_part, void *old_part, const char *patch_name, const char *old_name, int patch_file_len, int newer_file_len, int patch_file_offset);
-        if (qbt_hpatchlite_release_from_part(src_handle, dst_handle, src_name, dst_name, fw_info->pkg_size, fw_info->raw_size, sizeof(fw_info_t)) == RT_TRUE)
+        if (qbt_hpatchlite_release_from_part(src_handle, dst_handle, src_name, dst_name, fw_info->pkg_size, fw_info->raw_size, qboot_src_read_pos()) == RT_TRUE)
         {
             goto done;
         }
@@ -196,7 +197,7 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
     }
 #endif
     rt_kprintf("Start erase partition %s ...\n", dst_name);
-    if ((qbt_erase_with_feed(dst_handle, 0, fw_info->raw_size) != RT_EOK) || (qbt_erase_with_feed(dst_handle, dst_size - sizeof(fw_info_t), sizeof(fw_info_t)) != RT_EOK))
+    if ((qbt_erase_with_feed(dst_handle, 0, fw_info->raw_size) != RT_EOK) || (qbt_erase_with_feed(dst_handle, dst_size - qboot_src_read_pos(), qboot_src_read_pos()) != RT_EOK))
     {
         qbt_fw_algo_deinit(&algo_ops);
         LOG_E("Qboot release firmware fail. erase %s error.", dst_name);
@@ -283,7 +284,7 @@ rt_weak rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char
         return (RT_FALSE);
     }
 
-    if (!qbt_fw_crc_check(fw_handle, name, sizeof(fw_info_t), fw_info->pkg_size, fw_info->pkg_crc))
+    if (!qbt_fw_crc_check(fw_handle, name, qboot_src_read_pos(), fw_info->pkg_size, fw_info->pkg_crc))
     {
         LOG_E("Qboot firmware check fail. partition \"%s\" body check fail.", name);
         return (RT_FALSE);
@@ -1015,7 +1016,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
             qbt_target_close(dst_handle);
             return;
         }
-        if (qbt_fw_clone(dst_handle, dst, src_handle, src, sizeof(fw_info_t) + fw_info.pkg_size))
+        if (qbt_fw_clone(dst_handle, dst, src_handle, src, qboot_src_read_pos() + fw_info.pkg_size))
         {
             rt_kprintf("Clone firmware success from %s to %s.\n", src, dst);
         }

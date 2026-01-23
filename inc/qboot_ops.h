@@ -193,7 +193,7 @@ rt_err_t qbt_erase_with_feed(void *handle, rt_uint32_t off, rt_uint32_t len);
 rt_bool_t qboot_should_enter_update(void);
 void qbt_wdt_feed(void);
 rt_bool_t qbt_ops_custom_init(void);
-rt_int32_t qboot_user_src_read_pos(void);
+rt_int32_t qboot_src_read_pos(void);
 void qboot_notify_update_result(rt_bool_t success);
 
 extern const qboot_io_ops_t *_header_io_ops;

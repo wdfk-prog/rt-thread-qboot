@@ -17,7 +17,7 @@
  * 2025-09-26 1.1     wdfk-prog     Refactored to support both RAM and FLASH buffer strategies.
  * 2025-09-27 1.2     wdfk-prog     Refined with Kconfig integration, ULOG, Doxygen, and bug fixes.
  * 2025-09-29 1.4     wdfk-prog     Completed RAM buffer strategy based on user's unified logic.
- * 2026-01-21 1.5     wdfk-prog     
+ * 2026-01-21 1.5     wdfk-prog     Unify the logic of SWAP operations.
  */
 #include <qboot.h>
 

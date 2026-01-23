@@ -154,8 +154,8 @@ rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_
                                 qbt_stream_proc_t proc, void *proc_ctx)
 {
     /* Track package read position, raw output position, and buffered input length. */
-    rt_uint32_t src_read_pos = sizeof(fw_info_t) + qboot_user_src_read_pos();
-    rt_uint32_t pkg_size = cfg->fw_info->pkg_size + sizeof(fw_info_t) + qboot_user_src_read_pos();
+    rt_uint32_t src_read_pos =  qboot_src_read_pos();
+    rt_uint32_t pkg_size = cfg->fw_info->pkg_size + qboot_src_read_pos();
     rt_uint32_t raw_pos = 0;
     rt_uint32_t cmprs_len = 0;
 
@@ -197,7 +197,7 @@ rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_
         /* Enforce strict raw output cap based on remaining expected size. */
         qbt_stream_ctx_t cmprs_ctx = {
             .total = cfg->fw_info->pkg_size,
-            .consumed = (rt_uint32_t)(src_read_pos - sizeof(fw_info_t)) - cmprs_len,
+            .consumed = (rt_uint32_t)(src_read_pos - qboot_src_read_pos()) - cmprs_len,
             .raw_remaining = cfg->fw_info->raw_size - raw_pos,
             .purpose = purpose,
         };
