@@ -24,15 +24,24 @@ qboot
 │   │   qboot_gzip.h                  // gzip解压模块头文件
 │   │   qboot_hpatchlite.h            // hpatchlite解压模块头文件
 │   └───qboot_quicklz.h     	      // quicklz解压模块头文件
-├───src                               // 源码目录
-│   │   qboot.c                       // 主模块
-│   │   qboot_aes.c                   // aes解密模块
-│   │   qboot_fastlz.c                // fastlz解压模块
-│   │   qboot_gzip.c                  // gzip解压模块
-│   │   qboot_hpatchlite.c            // hpatchlite解压模块
-│   └───qboot_quicklz                 // quicklz解压模块
+├── src/                              // 源码目录
+│   ├── qboot.c                       // 主流程/调度
+│   └── qboot_fal_ops.c               // FAL后端
+├── algorithm/                        // 压缩/解密等算法实现
+│   │   qboot_aes.c                   // AES 解密模块
+│   │   qboot_fastlz.c                // fastlz 解压模块
+│   │   qboot_gzip.c                  // gzip 解压模块
+│   │   qboot_hpatchlite.c            // hpatchlite 差分模块
+│   └───qboot_quicklz                 // quicklz 解压模块
+├── platform/                         // MCU/平台适配
+│   ├── qboot_at32.c                  // AT32 系列移植
+│   ├── qboot_gd32.c                  // GD32 系列移植
+│   ├── qboot_qboot_hc32f460.c        // HC32F460 平台移植
+│   ├── qboot_qboot_n32.c             // N32 系列移植
+│   └── qboot_qboot_stm32.c           // STM32 系列移植
 ├───tools                             // 工具目录
-│   └───QBootPackager_V1.00.zip       // 升级包打包器
+│   │   package_tool.py               // 差分包头生成脚本
+│   └───QBootPackager_V1.00.zip       // 固件打包器
 │   license                           // 软件包许可证
 │   readme.md                         // 软件包使用说明
 └───SConscript                        // RT-Thread 默认的构建脚本

@@ -47,7 +47,7 @@
 QBoot需要一个带有标准头部信息（`.rbl`格式）的升级包。我们需要使用配套的Python脚本将上一步生成的 `patch.bin` 进行封装。
 
 1.  **获取脚本**:
-    该脚本通常位于 `bl_lib/qboot/tools/package_tool.py`。
+    该脚本通常位于 `qboot/tools/package_tool.py`。
     脚本参考了 [RT_ota_packager_python](https://github.com/sunkr1995/RT_ota_packager_python) 的设计。
 
 2.  **执行打包命令**:
