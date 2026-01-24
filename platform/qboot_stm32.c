@@ -164,11 +164,11 @@ rt_weak void qbt_jump_to_app(void)
 
     rt_kprintf("Jump to application running ... \n");
     rt_thread_mdelay(200);
-    
+
     __disable_irq();
     HAL_DeInit();
     HAL_RCC_DeInit();
-    
+
     SysTick->CTRL = 0;
     SysTick->LOAD = 0;
     SysTick->VAL = 0;
@@ -178,12 +178,12 @@ rt_weak void qbt_jump_to_app(void)
         HAL_NVIC_DisableIRQ(i);
         HAL_NVIC_ClearPendingIRQ(i);
     }
-    
+
     __set_CONTROL(0);
     __set_MSP(stk_addr);
-    
+
     app_func();//Jump to application running
-    
+
     LOG_E("Qboot jump to application fail.");
 }
 #endif

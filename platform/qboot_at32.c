@@ -79,7 +79,7 @@ static void qbt_reset_periph(void)
 #endif
 }
 
-rt_weak void qbt_jump_to_app(void)
+void qbt_jump_to_app(void)
 {
     typedef void (*app_func_t)(void);
     rt_uint32_t app_addr = QBOOT_APP_ADDR;

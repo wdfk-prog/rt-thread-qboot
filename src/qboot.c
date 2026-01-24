@@ -256,6 +256,7 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
     }
     rt_kprintf("\n");
 
+#ifdef QBOOT_USING_HPATCHLITE
 done:
 #endif
     qbt_fw_algo_deinit(&algo_ops);
