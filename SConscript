@@ -2,8 +2,20 @@ from building import *
 
 cwd = GetCurrentDir()
 path = [cwd+'/inc']
-src  = Glob('src/*.c')
-src  += Glob('platform/*.c')
+src = [
+    'src/qboot.c',
+    'src/qboot_algo.c',
+    'src/qboot_custom_ops.c',
+    'src/qboot_fal_ops.c',
+    'src/qboot_fs_ops.c',
+    'src/qboot_mux_ops.c',
+    'src/qboot_ops.c',
+    'src/qboot_stream.c',
+]
+if GetDepend('QBOOT_USING_UPDATE_MGR'):
+    src += ['src/qboot_update.c']
+
+src += Glob('platform/*.c')
 src += ['algorithm/qboot_none.c']
 
 if GetDepend('QBOOT_USING_AES'):

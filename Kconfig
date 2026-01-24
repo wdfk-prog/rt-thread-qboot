@@ -424,6 +424,26 @@ if PKG_USING_QBOOT
         select PKG_USING_YMODEM_OTA
         default y
 
+    config QBOOT_USING_UPDATE_MGR
+        bool "use update manager to handle download flow"
+        default n
+        help
+            Let qboot manage download wait/timeout and fallback behavior.
+
+    if QBOOT_USING_UPDATE_MGR
+        config QBOOT_POLL_DELAY_MS
+            int "update manager poll delay (ms)"
+            default 20
+
+        config QBT_UPDATE_MGR_PROGRESS_ENABLE
+            bool "enable update manager progress log"
+            default y
+
+        config QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
+            bool "use update manager download/sign helper"
+            default y
+    endif
+
     config QBOOT_USING_PRODUCT_INFO
         bool "using product infomation print"
         default y

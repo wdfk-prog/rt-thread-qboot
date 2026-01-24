@@ -201,4 +201,8 @@
 #define QBOOT_USING_COMPRESSION
 #endif
 
+#ifndef QBOOT_POLL_DELAY_MS
+#define QBOOT_POLL_DELAY_MS 20
+#endif
+
 #endif

@@ -71,6 +71,11 @@ static rt_err_t qbt_fal_close(void *handle)
  */
 static rt_err_t qbt_fal_read(void *handle, rt_uint32_t off, void *buf, rt_uint32_t len)
 {
+    /* 0 bytes is a no-op. */
+    if(len == 0)
+    {
+        return RT_EOK;
+    }
     if (fal_partition_read((fal_partition_t)handle, off, buf, len) < 0)
     {
         LOG_E("FAL read fail, off=%u len=%u", off, len);
@@ -90,6 +95,11 @@ static rt_err_t qbt_fal_read(void *handle, rt_uint32_t off, void *buf, rt_uint32
  */
 static rt_err_t qbt_fal_erase(void *handle, rt_uint32_t off, rt_uint32_t len)
 {
+    /* 0 bytes is a no-op. */
+    if(len == 0)
+    {
+        return RT_EOK;
+    }
     if (fal_partition_erase((fal_partition_t)handle, off, len) < 0)
     {
         LOG_E("FAL erase fail, off=%u len=%u", off, len);
@@ -110,6 +120,11 @@ static rt_err_t qbt_fal_erase(void *handle, rt_uint32_t off, rt_uint32_t len)
  */
 static rt_err_t qbt_fal_write(void *handle, rt_uint32_t off, const void *buf, rt_uint32_t len)
 {
+    /* 0 bytes is a no-op. */
+    if(len == 0)
+    {
+        return RT_EOK;
+    }
     if (fal_partition_write((fal_partition_t)handle, off, buf, len) < 0)
     {
         LOG_E("FAL write fail, off=%u len=%u", off, len);
