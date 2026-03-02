@@ -485,6 +485,13 @@ void qbt_update_mgr_poll(rt_uint32_t poll_delay_ms)
                 }
             }
 #ifdef QBT_UPDATE_MGR_PROGRESS_ENABLE
+#ifdef QBT_UPDATE_MGR_PROGRESS_PRINT_ENABLE
+            /*
+             * Optional progress console output for download observation.
+             * Synchronous rt_kprintf may affect real-time behavior if
+             * RT_USING_THREADSAFE_PRINTF is not enabled or logs are not
+             * handled by asynchronous ULog.
+             */
             rt_tick_t print_gap = rt_tick_from_millisecond(500);
             if ((now - s_dl_last_print) >= print_gap)
             {
@@ -503,6 +510,7 @@ void qbt_update_mgr_poll(rt_uint32_t poll_delay_ms)
                 }
                 s_dl_last_print = now;
             }
+#endif /* QBT_UPDATE_MGR_PROGRESS_PRINT_ENABLE */
 #endif // QBT_UPDATE_MGR_PROGRESS_ENABLE
         }
         rt_thread_mdelay(poll_delay_ms);

@@ -438,6 +438,18 @@ if PKG_USING_QBOOT
         config QBT_UPDATE_MGR_PROGRESS_ENABLE
             bool "enable update manager progress log"
             default y
+            help
+                Enable update manager progress statistics.
+
+        config QBT_UPDATE_MGR_PROGRESS_PRINT_ENABLE
+            bool "enable update manager progress rt_kprintf output"
+            depends on QBT_UPDATE_MGR_PROGRESS_ENABLE
+            default n
+            help
+                Control rt_kprintf output for update progress display.
+                Enabling this may impact real-time performance when
+                RT_USING_THREADSAFE_PRINTF is disabled or when logging
+                is not using asynchronous ULog.
 
         config QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
             bool "use update manager download/sign helper"
