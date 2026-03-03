@@ -31,8 +31,8 @@
 - 启动时根据 `get_reason()` 决定：
   - `QBT_UPD_REASON_NONE/DONE`：若 APP 有效 -> READY，否则 WAIT。
   - `QBT_UPD_REASON_REQ/IN_PROGRESS`：进入 WAIT。
-- WAIT 超时：APP 有效则 READY，否则调用 `try_recover()`，成功则 READY，失败继续等待。
-- RECV 空闲超时：APP 有效则 READY，否则调用 `try_recover()`，成功则 READY，失败回 WAIT。
+- WAIT 超时：APP 有效则 READY，否则尝试 `try_recover()`（每个下载会话只探测一次），成功则 READY，失败继续等待。
+- RECV 空闲超时：APP 有效则 READY，否则尝试 `try_recover()`（每个下载会话只探测一次），成功则 READY，失败回 WAIT。
 
 ## 5. download helper 行为（QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER）
 
@@ -47,6 +47,8 @@
 
 - 当 APP 无效且超时，update_mgr 调用 `try_recover()`。
 - 回调返回 `RT_TRUE` 表示 DOWNLOAD/FACTORY 可用，允许进入 READY；返回 `RT_FALSE` 则继续等待。
+- 一次性探测按“下载会话”生效：同一会话内只调用一次，避免反复探测刷屏。
+- 进入新的下载会话（`on_start` 进入 RECV）后，会重置探测机会。
 - 可直接使用 `qbt_update_mgr_try_recover()`（helper 内置），或在 bootloader 中自定义检查策略。
 
 ## 7. 示例（f407_boot/UserSrc/bootloader.c）

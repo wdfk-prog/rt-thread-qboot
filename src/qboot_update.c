@@ -37,6 +37,8 @@ static rt_uint32_t s_wait_ms = QBT_UPDATE_WAIT_MS_DEFAULT;
 static rt_uint32_t s_idle_ms = QBT_UPDATE_IDLE_MS_DEFAULT;
 /** @brief One-shot flag to release qboot wait loop. */
 static rt_bool_t s_ready_flag = RT_FALSE;
+/** @brief One-shot recover probe gate for current download session. */
+static rt_bool_t s_recover_probe_used = RT_FALSE;
 static const char *const s_state_names[] = {
     "IDLE",
     "WAIT_DOWNLOAD",
@@ -315,6 +317,31 @@ static void qbt_update_mgr_set_state(qbt_upd_state_t state)
 }
 
 /**
+ * @brief Reset recover probe gate for a new download session.
+ *
+ * @return None.
+ */
+static void qbt_update_mgr_reset_recover_probe(void)
+{
+    s_recover_probe_used = RT_FALSE;
+}
+
+/**
+ * @brief Try recovery at most once in current download session.
+ *
+ * @return RT_TRUE on recover success, RT_FALSE otherwise.
+ */
+static rt_bool_t qbt_update_mgr_try_recover_once(void)
+{
+    if (s_recover_probe_used)
+    {
+        return RT_FALSE;
+    }
+    s_recover_probe_used = RT_TRUE;
+    return s_ops->try_recover();
+}
+
+/**
  * @brief Get current update state.
  *
  * @return Current update state.
@@ -358,6 +385,8 @@ void qbt_update_mgr_on_request(void)
  */
 void qbt_update_mgr_on_start(void)
 {
+    /* New download session begins: allow one recover probe in this session. */
+    qbt_update_mgr_reset_recover_probe();
     s_ops->enter_download();
     /* Enter active receive mode and start idle timeout tracking. */
     qbt_update_mgr_set_state(QBT_UPD_STATE_RECV);
@@ -447,7 +476,7 @@ void qbt_update_mgr_poll(rt_uint32_t poll_delay_ms)
                 }
                 else
                 {
-                    if (s_ops->try_recover())
+                    if (qbt_update_mgr_try_recover_once())
                     {
                         s_ops->set_reason(QBT_UPD_REASON_NONE);
                         qbt_update_mgr_ready();
@@ -473,7 +502,7 @@ void qbt_update_mgr_poll(rt_uint32_t poll_delay_ms)
                 }
                 else
                 {
-                    if (s_ops->try_recover())
+                    if (qbt_update_mgr_try_recover_once())
                     {
                         s_ops->set_reason(QBT_UPD_REASON_NONE);
                         qbt_update_mgr_ready();
@@ -485,7 +514,6 @@ void qbt_update_mgr_poll(rt_uint32_t poll_delay_ms)
                     }
                 }
             }
-#ifdef QBT_UPDATE_MGR_PROGRESS_ENABLE
 #ifdef QBT_UPDATE_MGR_PROGRESS_PRINT_ENABLE
             /*
              * Optional progress console output for download observation.
@@ -512,7 +540,6 @@ void qbt_update_mgr_poll(rt_uint32_t poll_delay_ms)
                 s_dl_last_print = now;
             }
 #endif /* QBT_UPDATE_MGR_PROGRESS_PRINT_ENABLE */
-#endif // QBT_UPDATE_MGR_PROGRESS_ENABLE
         }
         rt_thread_mdelay(poll_delay_ms);
     }
@@ -549,6 +576,7 @@ void qbt_update_mgr_register(const qbt_update_ops_t *ops, rt_uint32_t wait_ms, r
 {
     s_ops = ops;
     s_ready_flag = RT_FALSE;
+    qbt_update_mgr_reset_recover_probe();
     s_wait_ms = wait_ms;
     s_idle_ms = idle_ms;
     rt_uint32_t reason = s_ops->get_reason();
