@@ -98,9 +98,43 @@ static qbt_update_download_ctx_t s_dl = {0};
  */
 rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char *name, fw_info_t *fw_info)
 {
-    if (s_dl.ok == RT_FALSE)
+    rt_bool_t allow = RT_FALSE;
+    RT_UNUSED(fw_handle);
+
+    if (name == RT_NULL)
+    {
+        LOG_D("fw_check reject: null part name.");
+        return RT_FALSE;
+    }
+
+    if (rt_strcmp(name, QBOOT_DOWNLOAD_PART_NAME) == 0)
+    {
+        allow = s_dl.ok;
+    }
+    else if (rt_strcmp(name, QBOOT_FACTORY_PART_NAME) == 0)
+    {
+        allow = RT_TRUE;
+    }
+    else if (rt_strcmp(name, QBOOT_APP_PART_NAME) == 0)
+    {
+        LOG_D("fw_check app reject in helper mode.");
+        return RT_FALSE;
+    }
+    else
+    {
+        LOG_D("fw_check reject unsupported part: %s", name);
+        return RT_FALSE;
+    }
+
+    LOG_D("fw_check part=%s allow=%d", name, allow);
+    if (allow == RT_FALSE)
     {
         return RT_FALSE;
+    }
+
+    if (fw_info == RT_NULL)
+    {
+        return RT_TRUE;
     }
 
     fw_info->algo = 0;
@@ -171,7 +205,9 @@ rt_bool_t qbt_update_mgr_download_begin(void)
     {
         return RT_FALSE;
     }
+    /* Start a new session with download validity cleared. */
     qbt_update_mgr_download_cleanup();
+    qbt_update_mgr_set_download_ok(RT_FALSE);
     if (!qbt_target_open(QBOOT_TARGET_DOWNLOAD, &s_dl.handle, &s_dl.size, QBT_OPEN_WRITE | QBT_OPEN_CREATE | QBT_OPEN_TRUNC))
     {
         return RT_FALSE;
@@ -225,7 +261,6 @@ rt_bool_t qbt_update_mgr_try_recover(void)
     rt_uint32_t part_size = 0;
     rt_bool_t ok = RT_FALSE;
 
-    qbt_update_mgr_set_download_ok(RT_TRUE);
     if (qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size, QBT_OPEN_READ))
     {
         if (qbt_fw_check(handle, part_size, QBOOT_DOWNLOAD_PART_NAME, RT_NULL))
