@@ -127,22 +127,22 @@ static rt_err_t qbt_fs_read(void *handle, rt_uint32_t off, void *buf, rt_uint32_
  */
 static rt_err_t qbt_fs_erase(void *handle, rt_uint32_t off, rt_uint32_t len)
 {
-    RT_UNUSED(handle);
     RT_UNUSED(off);
     RT_UNUSED(len);
-
-#if defined(QBOOT_USING_HPATCHLITE) && defined(QBOOT_HPATCH_USE_STORAGE_SWAP) && defined(QBOOT_HPATCH_SWAP_STORE_FS)
     int id = (int)((uintptr_t)handle) - 1;
     int fd = g_fs_fds[id] - 1;
+
+    off_t offset = 0;
+#if defined(QBOOT_USING_HPATCHLITE) && defined(QBOOT_HPATCH_USE_STORAGE_SWAP) && defined(QBOOT_HPATCH_SWAP_STORE_FS)
     if (id == QBOOT_TARGET_SWAP)
     {
-        if (ftruncate(fd, (off_t)QBOOT_HPATCH_SWAP_FILE_SIZE) != 0)
-        {
-            return -RT_ERROR;
-        }
-        return RT_EOK;
+        offset = (off_t)QBOOT_HPATCH_SWAP_FILE_SIZE;
     }
 #endif
+    if (ftruncate(fd, offset) != 0)
+    {
+        return -RT_ERROR;
+    }
     return RT_EOK;
 }
 

@@ -106,16 +106,6 @@ rt_int32_t qboot_src_read_pos(void)
  *
  * @return None.
  */
-static void qbt_update_mgr_set_download_ok(rt_bool_t ok)
-{
-    s_download_ok = ok;
-}
-
-/**
- * @brief Close and reset download handle.
- *
- * @return None.
- */
 static void qbt_update_mgr_download_cleanup(void)
 {
     if (s_download_handle != RT_NULL)
@@ -123,6 +113,17 @@ static void qbt_update_mgr_download_cleanup(void)
         qbt_target_close(s_download_handle);
         s_download_handle = RT_NULL;
     }
+}
+
+/**
+ * @brief Close and reset download handle.
+ *
+ * @return None.
+ */
+static void qbt_update_mgr_set_download_ok(rt_bool_t ok)
+{
+    s_download_ok = ok;
+    qbt_update_mgr_download_cleanup();
 }
 
 /**
@@ -138,7 +139,7 @@ rt_bool_t qbt_update_mgr_download_begin(void)
         return RT_FALSE;
     }
     qbt_update_mgr_download_cleanup();
-    if (!qbt_target_open(QBOOT_TARGET_DOWNLOAD, &s_download_handle, &s_download_size, QBT_OPEN_WRITE | QBT_OPEN_CREATE))
+    if (!qbt_target_open(QBOOT_TARGET_DOWNLOAD, &s_download_handle, &s_download_size, QBT_OPEN_WRITE | QBT_OPEN_CREATE | QBT_OPEN_TRUNC))
     {
         return RT_FALSE;
     }
