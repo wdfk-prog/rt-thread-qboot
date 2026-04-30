@@ -16,9 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Use v5.2.0 because later RT-Thread v5.2.x STM32 BSPs may
-  # require Env package fetching before SCons can build in CI.
-  RTTHREAD_REF: v5.2.0
+  RTTHREAD_REF: master
+  RTTHREAD_ENV_REF: master
   STM32_BSP: bsp/stm32/stm32f407-atk-explorer
   CRCLIB_REF: master
   TINYCRYPT_REF: master
@@ -173,6 +172,7 @@ jobs:
             libnewlib-arm-none-eabi \
             git \
             python3 \
+            python3-pip \
             rsync \
             scons
           arm-none-eabi-gcc --version
@@ -180,7 +180,10 @@ jobs:
 
       - name: Prepare shared RT-Thread STM32F407 BSP
         shell: bash
-        run: bash .github/ci/qboot/prepare-stm32f407-base.sh
+        run: |
+          set -o pipefail
+          mkdir -p _ci/profile-logs
+          bash .github/ci/qboot/prepare-stm32f407-base.sh 2>&1 | tee _ci/profile-logs/prepare-stm32f407-base.log
 
       - name: Build qboot profiles
         shell: bash
@@ -192,4 +195,4 @@ jobs:
         with:
           name: stm32f407-build-logs
           path: _ci/profile-logs/*.log
-          if-no-files-found: error
+          if-no-files-found: warn

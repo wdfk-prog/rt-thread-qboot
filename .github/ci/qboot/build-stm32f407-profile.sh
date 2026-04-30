@@ -62,28 +62,13 @@ profile_needs_fal_cfg() {
   esac
 }
 
-integrate_packages() {
-  export CI_QBOOT_PACKAGES="$packages_to_link"
-  export CI_PROFILE_BSP_DIR="$bsp_dir"
-
-  python3 -S - <<'PY'
-import os
-from pathlib import Path
-
-bsp_sconscript = Path(os.environ['CI_PROFILE_BSP_DIR']) / 'SConscript'
-text = bsp_sconscript.read_text(encoding='utf-8')
-marker = "Return('objs')"
-packages = os.environ['CI_QBOOT_PACKAGES'].split()
-insert_lines = ["", "# CI-only package integration for qboot compile verification."]
-for package in packages:
-    insert_lines.append(f"objs = objs + SConscript('packages/{package}/SConscript')")
-insertion = "\n".join(insert_lines) + "\n"
-if marker not in text:
-    raise SystemExit(f'{bsp_sconscript}: missing {marker}')
-if 'packages/qboot/SConscript' not in text:
-    text = text.replace(marker, insertion + '\n' + marker)
-bsp_sconscript.write_text(text, encoding='utf-8')
-PY
+verify_packages() {
+  for package in $packages_to_link; do
+    if [ ! -f "$bsp_dir/packages/$package/SConscript" ]; then
+      echo "missing package SConscript: $bsp_dir/packages/$package/SConscript" >&2
+      exit 1
+    fi
+  done
 }
 
 clean_qboot_profile_macros() {
@@ -111,6 +96,14 @@ clean_qboot_profile_macros() {
   sed -i '/^#define[[:space:]]\+RT_USING_DFS$/d' "$rtconfig"
   sed -i '/^#define[[:space:]]\+DFS_/d' "$rtconfig"
   sed -i '/^#define[[:space:]]\+RT_USING_DFS_/d' "$rtconfig"
+  sed -i '/^#define[[:space:]]\+RT_USING_POSIX_POLL$/d' "$rtconfig"
+  sed -i '/^#define[[:space:]]\+RT_USING_POSIX_SELECT$/d' "$rtconfig"
+  sed -i '/^#define[[:space:]]\+RT_USING_POSIX_SOCKET$/d' "$rtconfig"
+  sed -i '/^#define[[:space:]]\+RT_USING_SAL$/d' "$rtconfig"
+  sed -i '/^#define[[:space:]]\+RT_USING_NETDEV$/d' "$rtconfig"
+  sed -i '/^#define[[:space:]]\+RT_USING_LWIP/d' "$rtconfig"
+  sed -i '/^#define[[:space:]]\+RT_LWIP_/d' "$rtconfig"
+  sed -i '/^#define[[:space:]]\+LWIP_/d' "$rtconfig"
   sed -i '/^#define[[:space:]]\+RT_USING_MSH$/d' "$rtconfig"
   sed -i '/^#define[[:space:]]\+RT_USING_FINSH$/d' "$rtconfig"
   sed -i '/^#define[[:space:]]\+FINSH_/d' "$rtconfig"
@@ -140,7 +133,7 @@ if profile_needs_fal_cfg; then
   cp .github/ci/qboot/fal_cfg.h "$bsp_dir/applications/fal_cfg.h"
 fi
 
-integrate_packages
+verify_packages
 
 rtconfig="$bsp_dir/rtconfig.h"
 clean_qboot_profile_macros "$rtconfig"
