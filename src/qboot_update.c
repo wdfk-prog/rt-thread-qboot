@@ -19,6 +19,9 @@
 #include <rtdbg.h>
 
 /** @brief Default wait window before falling back to app (ms). */
+#ifndef QBOOT_SHELL_KEY_CHK_TMO
+#define QBOOT_SHELL_KEY_CHK_TMO 1
+#endif /* QBOOT_SHELL_KEY_CHK_TMO */
 #define QBT_UPDATE_WAIT_MS_DEFAULT (QBOOT_SHELL_KEY_CHK_TMO * 1000)
 /** @brief Default idle timeout during download before treating as interruption (ms). */
 #define QBT_UPDATE_IDLE_MS_DEFAULT 30000u

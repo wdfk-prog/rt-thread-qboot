@@ -5,13 +5,18 @@ path = [cwd+'/inc']
 src = [
     'src/qboot.c',
     'src/qboot_algo.c',
-    'src/qboot_custom_ops.c',
-    'src/qboot_fal_ops.c',
-    'src/qboot_fs_ops.c',
     'src/qboot_mux_ops.c',
     'src/qboot_ops.c',
     'src/qboot_stream.c',
 ]
+
+if GetDepend('QBOOT_PKG_SOURCE_CUSTOM'):
+    src += ['src/qboot_custom_ops.c']
+if GetDepend('QBOOT_PKG_SOURCE_FAL'):
+    src += ['src/qboot_fal_ops.c']
+if GetDepend('QBOOT_PKG_SOURCE_FS'):
+    src += ['src/qboot_fs_ops.c']
+
 if GetDepend('QBOOT_USING_UPDATE_MGR'):
     src += ['src/qboot_update.c']
 
@@ -28,7 +33,7 @@ if GetDepend('QBOOT_USING_FASTLZ'):
     src += ['algorithm/qboot_fastlz.c']
 if GetDepend('QBOOT_USING_HPATCHLITE'):
     src += ['algorithm/qboot_hpatchlite.c']
- 
+
 group = DefineGroup('qboot', src, depend = ['PKG_USING_QBOOT'], CPPPATH = path)
 
 Return('group')

@@ -13,10 +13,10 @@
  * 2026-01-07 1.0     wdfk-prog   first version
  */
 #include <qboot.h>
-#include <fal.h>
 
 #ifdef QBOOT_PKG_SOURCE_FAL
 
+#include <fal.h>
 #define DBG_TAG "qb_fal"
 #define DBG_LVL DBG_INFO
 #include <rtdbg.h>

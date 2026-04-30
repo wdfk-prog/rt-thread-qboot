@@ -225,8 +225,9 @@ static rt_err_t qbt_fs_ioctl(void *handle, int cmd, void *arg)
     return -RT_ENOSYS;
 }
 
+#if defined(QBOOT_DOWNLOAD_STORE_FS)
 /**
- * @brief Read release sign marker from filesystem.
+ * @brief Read release sign marker from filesystem download storage.
  *
  * @param handle   Encoded target id (unused).
  * @param released Output flag, RT_TRUE when marker exists.
@@ -253,7 +254,7 @@ static rt_err_t qbt_fs_sign_read(void *handle, rt_bool_t *released, const fw_inf
 }
 
 /**
- * @brief Write release sign marker to filesystem.
+ * @brief Write release sign marker to filesystem download storage.
  *
  * @param handle  Encoded target id (unused).
  * @param fw_info Firmware header context (unused).
@@ -277,7 +278,7 @@ static rt_err_t qbt_fs_sign_write(void *handle, const fw_info_t *fw_info)
 }
 
 /**
- * @brief Clear release sign marker from filesystem.
+ * @brief Clear release sign marker from filesystem download storage.
  *
  * @param handle  Encoded target id (unused).
  * @param fw_info Firmware header context (unused).
@@ -291,6 +292,54 @@ static rt_err_t qbt_fs_sign_clear(void *handle, const fw_info_t *fw_info)
     unlink(QBOOT_DOWNLOAD_SIGN_FILE_PATH);
     return RT_EOK;
 }
+#else
+/**
+ * @brief Reject filesystem sign checks when download storage is not filesystem.
+ *
+ * @param handle   Encoded target id (unused).
+ * @param released Output flag, always RT_FALSE for unsupported storage.
+ * @param fw_info  Firmware header context (unused).
+ *
+ * @return -RT_ENOSYS because this parser is not valid for release signs.
+ */
+static rt_err_t qbt_fs_sign_read(void *handle, rt_bool_t *released, const fw_info_t *fw_info)
+{
+    RT_UNUSED(handle);
+    RT_UNUSED(fw_info);
+    *released = RT_FALSE;
+    return -RT_ENOSYS;
+}
+
+/**
+ * @brief Reject filesystem sign writes when download storage is not filesystem.
+ *
+ * @param handle  Encoded target id (unused).
+ * @param fw_info Firmware header context (unused).
+ *
+ * @return -RT_ENOSYS because this parser is not valid for release signs.
+ */
+static rt_err_t qbt_fs_sign_write(void *handle, const fw_info_t *fw_info)
+{
+    RT_UNUSED(handle);
+    RT_UNUSED(fw_info);
+    return -RT_ENOSYS;
+}
+
+/**
+ * @brief Reject filesystem sign clears when download storage is not filesystem.
+ *
+ * @param handle  Encoded target id (unused).
+ * @param fw_info Firmware header context (unused).
+ *
+ * @return -RT_ENOSYS because this parser is not valid for release signs.
+ */
+static rt_err_t qbt_fs_sign_clear(void *handle, const fw_info_t *fw_info)
+{
+    RT_UNUSED(handle);
+    RT_UNUSED(fw_info);
+    return -RT_ENOSYS;
+}
+#endif /* defined(QBOOT_DOWNLOAD_STORE_FS) */
 
 static const qboot_io_ops_t g_qboot_io_fs = {
     .open = qbt_fs_open,

@@ -36,6 +36,9 @@ static void qbt_fw_info_show(qbt_target_id_t part_id);
 static rt_bool_t qbt_fw_delete(void *handle, const char *name, rt_uint32_t part_size);
 static void qbt_shell_cmd(rt_uint8_t argc, char **argv);
 #endif
+#ifdef QBOOT_USING_FACTORY_KEY
+#include <rtdevice.h>
+#endif /* QBOOT_USING_FACTORY_KEY */
 #ifdef QBOOT_USING_STATUS_LED
 #include <qled.h>
 #endif
