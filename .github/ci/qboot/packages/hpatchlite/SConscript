@@ -1,0 +1,9 @@
+from building import *
+
+cwd = GetCurrentDir()
+src = ['hpatch_impl.c']
+path = [cwd]
+
+group = DefineGroup('hpatchlite', src, depend = ['PKG_USING_HPATCHLITE'], CPPPATH = path)
+
+Return('group')

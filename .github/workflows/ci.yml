@@ -21,6 +21,11 @@ env:
   RTTHREAD_REF: v5.2.0
   STM32_BSP: bsp/stm32/stm32f407-atk-explorer
   CRCLIB_REF: master
+  TINYCRYPT_REF: master
+  ZLIB_REF: master
+  QUICKLZ_REF: master
+  FASTLZ_REF: master
+  QLED_REF: master
 
 jobs:
   package-check:
@@ -41,10 +46,34 @@ jobs:
           test -d src
           test -d algorithm
           test -d platform
+          test -f .github/ci/qboot/profile-list.txt
+          test -d .github/ci/qboot/profiles
+          test -f .github/ci/qboot/prepare-stm32f407-base.sh
+          test -f .github/ci/qboot/build-stm32f407-profile.sh
+          test -f .github/ci/qboot/build-stm32f407-profiles.sh
 
       - name: Check SConscript syntax
         shell: bash
         run: python3 -S -m py_compile SConscript
+
+      - name: Check CI helper syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for script in .github/ci/qboot/*.sh; do
+            bash -n "$script"
+          done
+
+      - name: Check profile fragments
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r profile; do
+            case "$profile" in
+              ''|'#'*) continue ;;
+            esac
+            test -f ".github/ci/qboot/profiles/$profile.h"
+          done < .github/ci/qboot/profile-list.txt
 
       - name: Check Kconfig block balance
         shell: bash
@@ -125,21 +154,10 @@ jobs:
           if-no-files-found: error
 
   build-stm32f407:
-    name: Build ${{ matrix.profile }}
+    name: Build STM32F407 qboot profiles
     runs-on: ubuntu-latest
     needs:
       - package-check
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - profile: stm32f407-custom-backend
-            backend: custom
-          - profile: stm32f407-fal-backend
-            backend: fal
-          - profile: stm32f407-fs-backend
-            backend: fs
 
     steps:
       - name: Checkout qboot package
@@ -160,267 +178,18 @@ jobs:
           arm-none-eabi-gcc --version
           scons --version
 
-      - name: Prepare RT-Thread STM32F407 BSP
+      - name: Prepare shared RT-Thread STM32F407 BSP
         shell: bash
-        run: |
-          set -euo pipefail
+        run: bash .github/ci/qboot/prepare-stm32f407-base.sh
 
-          git clone --depth 1 --branch "$RTTHREAD_REF" \
-            https://github.com/RT-Thread/rt-thread.git _ci/rt-thread
-
-          bsp_dir="_ci/rt-thread/$STM32_BSP"
-          test -f "$bsp_dir/SConstruct"
-          test -f "$bsp_dir/rtconfig.h"
-
-          mkdir -p "$bsp_dir/packages/qboot"
-          rsync -a --delete \
-            --exclude='.git' \
-            --exclude='.github' \
-            --exclude='_ci' \
-            ./ "$bsp_dir/packages/qboot/"
-
-          git clone --depth 1 --branch "$CRCLIB_REF" \
-            https://github.com/qiyongzhong0/crclib.git \
-            "$bsp_dir/packages/crclib"
-
-          python3 -S - <<'PY'
-          from pathlib import Path
-
-          bsp_sconscript = Path('_ci/rt-thread') / '${{ env.STM32_BSP }}' / 'SConscript'
-          text = bsp_sconscript.read_text(encoding='utf-8')
-          marker = "Return('objs')"
-          insertion = """
-
-          # CI-only package integration for qboot compile verification.
-          objs = objs + SConscript('packages/crclib/SConscript')
-          objs = objs + SConscript('packages/qboot/SConscript')
-          """
-          if marker not in text:
-              raise SystemExit(f'{bsp_sconscript}: missing {marker}')
-          if 'packages/qboot/SConscript' not in text:
-              text = text.replace(marker, insertion + '\n' + marker)
-          bsp_sconscript.write_text(text, encoding='utf-8')
-
-          qboot_sconscript = Path('_ci/rt-thread') / '${{ env.STM32_BSP }}' / 'packages/qboot/SConscript'
-          text = qboot_sconscript.read_text(encoding='utf-8')
-          include_path = "path = [cwd+'/inc']"
-          crclib_path = "path = [cwd+'/inc']\nif GetDepend('PKG_USING_CRCLIB'):\n    path += [cwd+'/../crclib/inc']"
-          if "cwd+'/../crclib/inc'" not in text:
-              if include_path not in text:
-                  raise SystemExit(f'{qboot_sconscript}: missing qboot include path block')
-              text = text.replace(include_path, crclib_path, 1)
-          old = """src = [
-              'src/qboot.c',
-              'src/qboot_algo.c',
-              'src/qboot_custom_ops.c',
-              'src/qboot_fal_ops.c',
-              'src/qboot_fs_ops.c',
-              'src/qboot_mux_ops.c',
-              'src/qboot_ops.c',
-              'src/qboot_stream.c',
-          ]
-          if GetDepend('QBOOT_USING_UPDATE_MGR'):
-          """
-          new = """src = [
-              'src/qboot.c',
-              'src/qboot_algo.c',
-              'src/qboot_mux_ops.c',
-              'src/qboot_ops.c',
-              'src/qboot_stream.c',
-          ]
-
-          if GetDepend('QBOOT_PKG_SOURCE_CUSTOM'):
-              src += ['src/qboot_custom_ops.c']
-          if GetDepend('QBOOT_PKG_SOURCE_FAL'):
-              src += ['src/qboot_fal_ops.c']
-          if GetDepend('QBOOT_PKG_SOURCE_FS'):
-              src += ['src/qboot_fs_ops.c']
-          if GetDepend('QBOOT_USING_UPDATE_MGR'):
-          """
-          if old in text:
-              text = text.replace(old, new)
-          if "'src/qboot_fal_ops.c'," in text or "'src/qboot_fs_ops.c'," in text:
-              raise SystemExit(f'{qboot_sconscript}: backend sources are still unconditional')
-          qboot_sconscript.write_text(text, encoding='utf-8')
-          PY
-
-          rtconfig="$bsp_dir/rtconfig.h"
-
-          sed -i '/^#define[[:space:]]\+PKG_USING_QBOOT$/d' "$rtconfig"
-          sed -i '/^#define[[:space:]]\+PKG_USING_CRCLIB$/d' "$rtconfig"
-          sed -i '/^#define[[:space:]]\+CRCLIB_USING_CRC32$/d' "$rtconfig"
-          sed -i '/^#define[[:space:]]\+CRC32_USING_CONST_TABLE$/d' "$rtconfig"
-          sed -i '/^#define[[:space:]]\+CRC32_POLY_/d' "$rtconfig"
-          sed -i '/^#define[[:space:]]\+CRC32_POLY[[:space:]]/d' "$rtconfig"
-          sed -i '/^#define[[:space:]]\+QBOOT_PKG_SOURCE_/d' "$rtconfig"
-          sed -i '/^#define[[:space:]]\+QBOOT_.*_STORE_/d' "$rtconfig"
-          sed -i '/^#define[[:space:]]\+QBOOT_.*_FLASH_/d' "$rtconfig"
-          sed -i '/^#define[[:space:]]\+QBOOT_.*_FAL_PART_NAME/d' "$rtconfig"
-          sed -i '/^#define[[:space:]]\+QBOOT_.*_FILE_PATH/d' "$rtconfig"
-          sed -i '/^#define[[:space:]]\+QBOOT_FLASH_ERASE_ALIGN/d' "$rtconfig"
-
-          cat >> "$rtconfig" <<'EOF_COMMON'
-
-          /* CI-only common qboot compile profile for stm32f407-atk-explorer. */
-          #define PKG_USING_CRCLIB
-          #define CRCLIB_USING_CRC32
-          #define CRC32_USING_CONST_TABLE
-          #define CRC32_POLY_EDB88320
-          #define CRC32_POLY             3988292384U
-          #define PKG_USING_QBOOT
-          EOF_COMMON
-
-          case "${{ matrix.backend }}" in
-            custom)
-              cat >> "$rtconfig" <<'EOF_CUSTOM'
-
-          /* CI-only CUSTOM backend profile. */
-          #define QBOOT_PKG_SOURCE_CUSTOM
-          #define QBOOT_APP_STORE_CUSTOM
-          #define QBOOT_APP_FLASH_ADDR       0x08040000
-          #define QBOOT_APP_FLASH_LEN        0x00040000
-          #define QBOOT_DOWNLOAD_STORE_CUSTOM
-          #define QBOOT_DOWNLOAD_FLASH_ADDR  0x08080000
-          #define QBOOT_DOWNLOAD_FLASH_LEN   0x00040000
-          #define QBOOT_FACTORY_STORE_CUSTOM
-          #define QBOOT_FACTORY_FLASH_ADDR   0x080C0000
-          #define QBOOT_FACTORY_FLASH_LEN    0x00020000
-          #define QBOOT_FLASH_ERASE_ALIGN    4096
-          EOF_CUSTOM
-              ;;
-            fal)
-              mkdir -p "$bsp_dir/applications"
-              cat > "$bsp_dir/applications/fal_cfg.h" <<'EOF_FAL_CFG'
-          /*
-           * Copyright (c) 2006-2021, RT-Thread Development Team
-           *
-           * SPDX-License-Identifier: Apache-2.0
-           *
-           * Change Logs:
-           * Date           Author            Notes
-           * 2026-04-30     wdfk-prog         add qboot CI partitions
-           */
-
-          #ifndef _FAL_CFG_H_
-          #define _FAL_CFG_H_
-
-          #include <rtthread.h>
-          #include <board.h>
-
-          #define FLASH_SIZE_GRANULARITY_16K   (4 * 16 * 1024)
-          #define FLASH_SIZE_GRANULARITY_64K   (64 * 1024)
-          #define FLASH_SIZE_GRANULARITY_128K  (7 * 128 * 1024)
-
-          #define STM32_FLASH_START_ADRESS_16K  STM32_FLASH_START_ADRESS
-          #define STM32_FLASH_START_ADRESS_64K  \
-              (STM32_FLASH_START_ADRESS_16K + FLASH_SIZE_GRANULARITY_16K)
-          #define STM32_FLASH_START_ADRESS_128K \
-              (STM32_FLASH_START_ADRESS_64K + FLASH_SIZE_GRANULARITY_64K)
-
-          extern const struct fal_flash_dev stm32_onchip_flash_16k;
-          extern const struct fal_flash_dev stm32_onchip_flash_64k;
-          extern const struct fal_flash_dev stm32_onchip_flash_128k;
-
-          #define FAL_FLASH_DEV_TABLE                   \
-          {                                             \
-              &stm32_onchip_flash_16k,                  \
-              &stm32_onchip_flash_64k,                  \
-              &stm32_onchip_flash_128k,                 \
-          }
-
-          #ifdef FAL_PART_HAS_TABLE_CFG
-          #define QBOOT_FAL_PART(_name, _offset, _len)  \
-              {                                         \
-                  FAL_PART_MAGIC_WORD,                  \
-                  _name,                                \
-                  "onchip_flash_128k",                 \
-                  _offset,                              \
-                  _len,                                 \
-                  0                                     \
-              }
-
-          #define FAL_PART_TABLE                        \
-          {                                             \
-              QBOOT_FAL_PART("app", 0x00000000, 0x00040000),      \
-              QBOOT_FAL_PART("download", 0x00040000, 0x00040000), \
-              QBOOT_FAL_PART("factory", 0x00080000, 0x00020000),  \
-          }
-          #endif /* FAL_PART_HAS_TABLE_CFG */
-          #endif /* _FAL_CFG_H_ */
-          EOF_FAL_CFG
-
-              cat >> "$rtconfig" <<'EOF_FAL'
-
-          /* CI-only FAL backend profile. */
-          #define RT_USING_FAL
-          #define FAL_PART_HAS_TABLE_CFG
-          #define FAL_DEV_NAME_MAX       24
-          #define FAL_DEV_BLK_MAX        6
-          #define BSP_USING_ON_CHIP_FLASH
-          #define QBOOT_PKG_SOURCE_FAL
-          #define QBOOT_APP_STORE_FAL
-          #define QBOOT_APP_FAL_PART_NAME        "app"
-          #define QBOOT_DOWNLOAD_STORE_FAL
-          #define QBOOT_DOWNLOAD_FAL_PART_NAME   "download"
-          #define QBOOT_FACTORY_STORE_FAL
-          #define QBOOT_FACTORY_FAL_PART_NAME    "factory"
-          EOF_FAL
-              ;;
-            fs)
-              cat >> "$rtconfig" <<'EOF_FS'
-
-          /* CI-only filesystem backend profile. */
-          #define RT_USING_DFS
-          #define DFS_USING_POSIX
-          #define DFS_USING_WORKDIR
-          #define DFS_FD_MAX               16
-          #define RT_USING_DFS_V1
-          #define DFS_FILESYSTEMS_MAX      4
-          #define DFS_FILESYSTEM_TYPES_MAX 4
-          #define RT_USING_DFS_DEVFS
-          #define RT_USING_DFS_ROMFS
-          #define QBOOT_PKG_SOURCE_FS
-          #define QBOOT_APP_STORE_FS
-          #define QBOOT_APP_FILE_PATH             "/app.rbl"
-          #define QBOOT_APP_SIGN_FILE_PATH        "/app.rbl.sign"
-          #define QBOOT_DOWNLOAD_STORE_FS
-          #define QBOOT_DOWNLOAD_FILE_PATH        "/download.rbl"
-          #define QBOOT_DOWNLOAD_SIGN_FILE_PATH   "/download.rbl.sign"
-          #define QBOOT_FACTORY_STORE_FS
-          #define QBOOT_FACTORY_FILE_PATH         "/factory.rbl"
-          EOF_FS
-              ;;
-            *)
-              echo "unsupported backend: ${{ matrix.backend }}" >&2
-              exit 1
-              ;;
-          esac
-
-          echo "Configured qboot backend: ${{ matrix.backend }}"
-          grep -E '^(#define[[:space:]]+(QBOOT|PKG_USING|CRCLIB|CRC32|RT_USING_FAL|RT_USING_DFS|DFS_|FAL_|BSP_USING_ON_CHIP_FLASH))' \
-            "$rtconfig" || true
-
-      - name: Build STM32F407 BSP with qboot
+      - name: Build qboot profiles
         shell: bash
-        run: |
-          set -euo pipefail
+        run: bash .github/ci/qboot/build-stm32f407-profiles.sh
 
-          export RTT_CC=gcc
-          export RTT_EXEC_PATH=/usr/bin
-          export RTT_ROOT="$GITHUB_WORKSPACE/_ci/rt-thread"
-
-          cd "$RTT_ROOT/$STM32_BSP"
-          scons -j2
-
-      - name: Verify build outputs
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          bsp_dir="_ci/rt-thread/$STM32_BSP"
-          elf_file="$bsp_dir/rt-thread.elf"
-          bin_file="$bsp_dir/rtthread.bin"
-
-          test -f "$elf_file"
-          test -f "$bin_file"
-          arm-none-eabi-size "$elf_file"
+      - name: Upload STM32F407 build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stm32f407-build-logs
+          path: _ci/profile-logs/*.log
+          if-no-files-found: error

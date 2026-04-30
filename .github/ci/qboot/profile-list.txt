@@ -1,0 +1,11 @@
+stm32f407-custom-backend
+stm32f407-fal-backend
+stm32f407-fs-backend
+stm32f407-custom-update-mgr
+stm32f407-custom-algo-basic
+stm32f407-hpatch-custom-swap
+stm32f407-hpatch-ram-buffer
+stm32f407-mixed-app-fal-download-fs
+stm32f407-hpatch-fal-swap
+stm32f407-hpatch-fs-swap
+stm32f407-custom-ui-features

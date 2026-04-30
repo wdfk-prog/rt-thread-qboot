@@ -1,0 +1,42 @@
+/* CI-only shell, LED, factory key, and product metadata profile. */
+#define QBOOT_PKG_SOURCE_CUSTOM
+#define QBOOT_APP_STORE_CUSTOM
+#define QBOOT_APP_FLASH_ADDR       0x08040000
+#define QBOOT_APP_FLASH_LEN        0x00040000
+#define QBOOT_DOWNLOAD_STORE_CUSTOM
+#define QBOOT_DOWNLOAD_FLASH_ADDR  0x08080000
+#define QBOOT_DOWNLOAD_FLASH_LEN   0x00040000
+#define QBOOT_FACTORY_STORE_CUSTOM
+#define QBOOT_FACTORY_FLASH_ADDR   0x080C0000
+#define QBOOT_FACTORY_FLASH_LEN    0x00020000
+#define QBOOT_FLASH_ERASE_ALIGN    4096
+#define RT_USING_FINSH
+#define RT_USING_MSH
+#define FINSH_USING_MSH
+#define FINSH_THREAD_NAME          "tshell"
+#define FINSH_THREAD_PRIORITY      5
+#define FINSH_THREAD_STACK_SIZE    4096
+#define FINSH_USING_SYMTAB
+#define FINSH_CMD_SIZE             80
+#define FINSH_ARG_MAX              10
+#define PKG_USING_QLED
+#define QLED_TOTAL                 5
+#define QLED_TIME_UNIT_MS          10
+#define QLED_THREAD_NAME           "qled"
+#define QLED_THREAD_STACK_SIZE     512
+#define QLED_THREAD_PRIO           3
+#define QBOOT_USING_SHELL
+#define QBOOT_SHELL_KEY_CHK_TMO    1
+#define QBOOT_USING_STATUS_LED
+#define QBOOT_STATUS_LED_PIN       35
+#define QBOOT_STATUS_LED_LEVEL     0
+#define QBOOT_USING_FACTORY_KEY
+#define QBOOT_FACTORY_KEY_PIN      0
+#define QBOOT_FACTORY_KEY_LEVEL    0
+#define QBOOT_FACTORY_KEY_CHK_TMO  1
+#define QBOOT_USING_PRODUCT_INFO
+#define QBOOT_PRODUCT_NAME         "Qboot CI device"
+#define QBOOT_PRODUCT_VER          "ci"
+#define QBOOT_PRODUCT_MCU          "stm32f407"
+#define QBOOT_USING_PRODUCT_CODE
+#define QBOOT_PRODUCT_CODE         "00010203040506070809"
