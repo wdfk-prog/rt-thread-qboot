@@ -2,7 +2,7 @@
  * @file qboot.c
  * @brief 
  * @author qiyongzhong
- * @version 1.0
+ * @version 1.8
  * @date 2026-01-15
  * 
  * @copyright Copyright (c) 2026  
@@ -17,6 +17,7 @@
  * 2020-09-22     qiyongzhong       add erase firmware function, update version to v1.04
  * 2020-10-05     qiyongzhong       fix to support stm32h7xx, update version to v1.05
  * 2026-01-15     wdfk-prog         split to qboot.c
+ * 2026-04-30     wdfk-prog         avoid continuing after closed shell or init failure
  */
 
 #include <qboot.h>
@@ -561,7 +562,7 @@ static void qbt_close_sys_shell(void)
 static void qbt_open_sys_shell(void)
 {
     rt_thread_t thread = rt_thread_find(FINSH_THREAD_NAME);
-    if (thread == NULL)
+    if (thread == NULL || RT_SCHED_CTX(thread).stat == RT_THREAD_CLOSE)
     {
 #ifdef QBOOT_USING_STATUS_LED
         qled_set_blink(QBOOT_STATUS_LED_PIN, 50, 950);

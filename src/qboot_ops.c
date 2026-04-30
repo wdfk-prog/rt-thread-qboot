@@ -469,6 +469,7 @@ rt_err_t qboot_register_storage_ops(void)
     if (qbt_ops_custom_init() == RT_FALSE)
     {
         LOG_E("Qboot initialize custom ops fail.");
+        return -RT_ERROR;
     }
     return qbt_register_ops(qbt_mux_io_ops(), qbt_mux_parser_ops());
 #endif
