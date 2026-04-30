@@ -50,6 +50,8 @@ jobs:
           test -f .github/ci/qboot/prepare-stm32f407-base.sh
           test -f .github/ci/qboot/build-stm32f407-profile.sh
           test -f .github/ci/qboot/build-stm32f407-profiles.sh
+          test -f tools/package_tool.py
+          test -f tests/test_package_tool.py
 
       - name: Check SConscript syntax
         shell: bash
@@ -62,6 +64,22 @@ jobs:
           for script in .github/ci/qboot/*.sh; do
             bash -n "$script"
           done
+
+      - name: Check package tool syntax
+        shell: bash
+        run: python3 -S -m py_compile tools/package_tool.py tests/test_package_tool.py
+
+      - name: Test package tool matrix
+        shell: bash
+        run: python3 -S tests/test_package_tool.py
+
+      - name: Upload package tool test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-tool-test-artifacts
+          path: _ci/package-tool-test
+          if-no-files-found: error
 
       - name: Check profile fragments
         shell: bash

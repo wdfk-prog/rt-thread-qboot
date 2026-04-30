@@ -137,7 +137,8 @@ def main():
     parser.add_argument("--raw", required=True, help="Raw firmware (required)")
     parser.add_argument("-o", "--output", required=True, help="Output RBL file")
     parser.add_argument("--crypt", default="none", help="Crypt algo: none, xor, aes")
-    parser.add_argument("--cmprs", default="none", help="Compress algo: none, gzip, quicklz, fastlz, hpatchlite")
+    parser.add_argument("--cmprs", default="none",
+                        help="Compress algo: none, gzip, quicklz, fastlz, hpatchlite")
     parser.add_argument("--algo2", default="crc", help="Verify algo2: none, crc")
     parser.add_argument("--part", default="app", help="Partition name")
     parser.add_argument("--version", default="v1.00", help="Firmware version")
