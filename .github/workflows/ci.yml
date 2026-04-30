@@ -1,0 +1,284 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Use v5.2.0 because later RT-Thread v5.2.x STM32 BSPs may
+  # require Env package fetching before SCons can build in CI.
+  RTTHREAD_REF: v5.2.0
+  STM32_BSP: bsp/stm32/stm32f407-atk-explorer
+  CRCLIB_REF: master
+
+jobs:
+  package-check:
+    name: Package metadata and script checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check required package files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f Kconfig
+          test -f SConscript
+          test -d inc
+          test -d src
+          test -d algorithm
+          test -d platform
+
+      - name: Check SConscript syntax
+        shell: bash
+        run: python3 -S -m py_compile SConscript
+
+      - name: Check Kconfig block balance
+        shell: bash
+        run: |
+          python3 -S - <<'PY'
+          from pathlib import Path
+
+          stack = []
+          pairs = {
+              'if': 'endif',
+              'menu': 'endmenu',
+              'choice': 'endchoice',
+          }
+          closers = {value: key for key, value in pairs.items()}
+
+          for lineno, raw in enumerate(Path('Kconfig').read_text(encoding='utf-8').splitlines(), 1):
+              line = raw.strip()
+              if not line or line.startswith('#'):
+                  continue
+              keyword = line.split()[0]
+              if keyword in pairs:
+                  stack.append((keyword, lineno))
+              elif keyword in closers:
+                  if not stack:
+                      raise SystemExit(f'Kconfig:{lineno}: unmatched {keyword}')
+                  opener, opener_lineno = stack.pop()
+                  if opener != closers[keyword]:
+                      raise SystemExit(
+                          f'Kconfig:{lineno}: {keyword} closes {opener} from line {opener_lineno}'
+                      )
+
+          if stack:
+              opener, opener_lineno = stack[-1]
+              raise SystemExit(f'Kconfig:{opener_lineno}: unclosed {opener}')
+          PY
+
+  cppcheck-report:
+    name: Static analysis with cppcheck
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install cppcheck
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck
+        shell: bash
+        run: |
+          set +e
+          cppcheck \
+            --enable=warning,style,performance,portability \
+            --inconclusive \
+            --std=c11 \
+            --force \
+            --quiet \
+            --suppress=missingInclude \
+            --suppress=missingIncludeSystem \
+            -Iinc \
+            -Ialgorithm \
+            -Iplatform \
+            src algorithm platform \
+            2> >(tee cppcheck.txt >&2)
+          status=$?
+          test -f cppcheck.txt || touch cppcheck.txt
+          exit "$status"
+
+      - name: Upload cppcheck report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cppcheck-report
+          path: cppcheck.txt
+          if-no-files-found: error
+
+  build-stm32f407:
+    name: Build on RT-Thread STM32F407 ATK Explorer BSP
+    runs-on: ubuntu-latest
+    needs:
+      - package-check
+
+    steps:
+      - name: Checkout qboot package
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-arm-none-eabi \
+            binutils-arm-none-eabi \
+            libnewlib-arm-none-eabi \
+            git \
+            python3 \
+            rsync \
+            scons
+          arm-none-eabi-gcc --version
+          scons --version
+
+      - name: Prepare RT-Thread STM32F407 BSP
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git clone --depth 1 --branch "$RTTHREAD_REF" \
+            https://github.com/RT-Thread/rt-thread.git _ci/rt-thread
+
+          bsp_dir="_ci/rt-thread/$STM32_BSP"
+          test -f "$bsp_dir/SConstruct"
+          test -f "$bsp_dir/rtconfig.h"
+
+          mkdir -p "$bsp_dir/packages/qboot"
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='_ci' \
+            ./ "$bsp_dir/packages/qboot/"
+
+          git clone --depth 1 --branch "$CRCLIB_REF" \
+            https://github.com/qiyongzhong0/crclib.git \
+            "$bsp_dir/packages/crclib"
+
+          python3 -S - <<'PY'
+          from pathlib import Path
+
+          bsp_sconscript = Path('_ci/rt-thread') / '${{ env.STM32_BSP }}' / 'SConscript'
+          text = bsp_sconscript.read_text(encoding='utf-8')
+          marker = "Return('objs')"
+          insertion = """
+
+          # CI-only package integration for qboot compile verification.
+          objs = objs + SConscript('packages/crclib/SConscript')
+          objs = objs + SConscript('packages/qboot/SConscript')
+          """
+          if marker not in text:
+              raise SystemExit(f'{bsp_sconscript}: missing {marker}')
+          if 'packages/qboot/SConscript' not in text:
+              text = text.replace(marker, insertion + '\n' + marker)
+          bsp_sconscript.write_text(text, encoding='utf-8')
+
+          qboot_sconscript = Path('_ci/rt-thread') / '${{ env.STM32_BSP }}' / 'packages/qboot/SConscript'
+          text = qboot_sconscript.read_text(encoding='utf-8')
+          include_path = "path = [cwd+'/inc']"
+          crclib_path = "path = [cwd+'/inc']\nif GetDepend('PKG_USING_CRCLIB'):\n    path += [cwd+'/../crclib/inc']"
+          if "cwd+'/../crclib/inc'" not in text:
+              if include_path not in text:
+                  raise SystemExit(f'{qboot_sconscript}: missing qboot include path block')
+              text = text.replace(include_path, crclib_path, 1)
+          old = """src = [
+              'src/qboot.c',
+              'src/qboot_algo.c',
+              'src/qboot_custom_ops.c',
+              'src/qboot_fal_ops.c',
+              'src/qboot_fs_ops.c',
+              'src/qboot_mux_ops.c',
+              'src/qboot_ops.c',
+              'src/qboot_stream.c',
+          ]
+          if GetDepend('QBOOT_USING_UPDATE_MGR'):
+          """
+          new = """src = [
+              'src/qboot.c',
+              'src/qboot_algo.c',
+              'src/qboot_mux_ops.c',
+              'src/qboot_ops.c',
+              'src/qboot_stream.c',
+          ]
+
+          if GetDepend('QBOOT_PKG_SOURCE_CUSTOM'):
+              src += ['src/qboot_custom_ops.c']
+          if GetDepend('QBOOT_PKG_SOURCE_FAL'):
+              src += ['src/qboot_fal_ops.c']
+          if GetDepend('QBOOT_PKG_SOURCE_FS'):
+              src += ['src/qboot_fs_ops.c']
+          if GetDepend('QBOOT_USING_UPDATE_MGR'):
+          """
+          if old in text:
+              text = text.replace(old, new)
+          if "'src/qboot_fal_ops.c'," in text or "'src/qboot_fs_ops.c'," in text:
+              raise SystemExit(f'{qboot_sconscript}: backend sources are still unconditional')
+          qboot_sconscript.write_text(text, encoding='utf-8')
+          PY
+
+          sed -i '/^#define[[:space:]]\+QBOOT_PKG_SOURCE_FAL$/d' "$bsp_dir/rtconfig.h"
+          sed -i '/^#define[[:space:]]\+QBOOT_PKG_SOURCE_FS$/d' "$bsp_dir/rtconfig.h"
+
+          cat >> "$bsp_dir/rtconfig.h" <<'EOF_RTCONFIG'
+
+          /* CI-only qboot compile profile for stm32f407-atk-explorer. */
+          #define PKG_USING_CRCLIB
+          #define CRCLIB_USING_CRC32
+          #define CRC32_USING_CONST_TABLE
+          #define CRC32_POLY_EDB88320
+          #define CRC32_POLY             3988292384U
+          #define PKG_USING_QBOOT
+          #define QBOOT_PKG_SOURCE_CUSTOM
+          #define QBOOT_APP_STORE_CUSTOM
+          #define QBOOT_APP_FLASH_ADDR       0x08040000
+          #define QBOOT_APP_FLASH_LEN        0x00040000
+          #define QBOOT_DOWNLOAD_STORE_CUSTOM
+          #define QBOOT_DOWNLOAD_FLASH_ADDR  0x08080000
+          #define QBOOT_DOWNLOAD_FLASH_LEN   0x00040000
+          #define QBOOT_FACTORY_STORE_CUSTOM
+          #define QBOOT_FACTORY_FLASH_ADDR   0x080C0000
+          #define QBOOT_FACTORY_FLASH_LEN    0x00020000
+          #define QBOOT_FLASH_ERASE_ALIGN    4096
+          EOF_RTCONFIG
+
+      - name: Build STM32F407 BSP with qboot
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export RTT_CC=gcc
+          export RTT_EXEC_PATH=/usr/bin
+          export RTT_ROOT="$GITHUB_WORKSPACE/_ci/rt-thread"
+
+          cd "$RTT_ROOT/$STM32_BSP"
+          scons -j2
+
+      - name: Verify build outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          bsp_dir="_ci/rt-thread/$STM32_BSP"
+          elf_file="$bsp_dir/rt-thread.elf"
+          bin_file="$bsp_dir/rtthread.bin"
+
+          test -f "$elf_file"
+          test -f "$bin_file"
+          arm-none-eabi-size "$elf_file"
