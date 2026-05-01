@@ -129,7 +129,21 @@ python tools/package_tool.py   --pkg app_fastlz.bin   --raw app.bin   -o app_fas
 python tools/package_tool.py   --pkg patch.bin   --raw new.bin   -o patch.rbl   --crypt none   --cmprs hpatchlite   --part app   --version v1.00   --product 00010203040506070809
 ```
 
-## 6. 如何选择工具
+
+## 6. GitHub Pages 网页打包工具
+
+GitHub Pages 站点中同时发布了一个浏览器版 RBL 打包工具：
+
+- 网页入口：[QBoot RBL Packager](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html)
+- 语言：页面顶部可在中文和 English 之间切换
+- 执行模型：通过 Pyodide 在浏览器本地执行
+- 文件处理：上传的文件只在浏览器内读取，不会发送到服务器
+
+网页端刻意保持和 `tools/package_tool.py` 相同的打包语义：生成 RBL header，然后追加你选择的包体文件。无压缩/无加密打包时，包体文件通常与原始固件相同。页面里选择的 `gzip`、`quicklz`、`fastlz`、`hpatchlite`、`xor` 或 `aes` 会写入 RBL header 的算法字段，但网页端不会实际对包体执行压缩或加密。
+
+CI 会用全部 `--crypt`、`--cmprs`、`--algo2` 组合对比 `docs/package-tool/package_tool_web.py` 与 `tools/package_tool.py` 的输出。对比对象是生成后的 `.rbl` 完整字节流，因此本地命令行工具与浏览器端核心会按照同一个可观察包格式做一致性校验。
+
+## 7. 如何选择工具
 
 ### 推荐优先级
 1. **`package_tool.py`**：推荐作为主线方案
@@ -141,7 +155,7 @@ python tools/package_tool.py   --pkg patch.bin   --raw new.bin   -o patch.rbl   
 - 需要快速人工打包验证：可考虑 GUI 打包器
 - 已有 Windows 产线脚本依赖上游工具：可沿用 ZIP 中的可执行程序
 
-## 7. 和文档其他页面的关系
+## 8. 和文档其他页面的关系
 
 - 想先跑通主链路：看 [快速开始](quick-start.md)
 - 想理解算法与后端组合：看 [配置指南](configuration.md)

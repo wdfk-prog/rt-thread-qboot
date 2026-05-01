@@ -39,6 +39,17 @@ jobs:
           doxygen Doxyfile
           touch build/doxygen/html/.nojekyll
 
+      - name: Add package tool web page
+        run: |
+          set -euo pipefail
+          mkdir -p build/doxygen/html/package-tool
+          cp -a docs/package-tool/. build/doxygen/html/package-tool/
+          test -f build/doxygen/html/package-tool/index.html
+          test -f build/doxygen/html/package-tool/app.js
+          test -f build/doxygen/html/package-tool/package_tool_web.py
+          grep -q 'data-lang="zh-CN"' build/doxygen/html/package-tool/index.html
+          grep -q 'data-lang="en"' build/doxygen/html/package-tool/index.html
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:

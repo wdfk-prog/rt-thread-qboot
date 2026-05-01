@@ -12,10 +12,12 @@ This page explains what each document in the current tree is for, so you can nav
 ### Upgrade workflow work
 1. [Upgrade Reception Workflow](update-manager.md)
 2. [Tools and Packaging](tools.md)
+3. [QBoot RBL Packager](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html)
 
 ### Differential update work
 1. [HPatchLite Differential OTA](differential-ota-hpatchlite.md)
 2. [Tools and Packaging](tools.md)
+3. [QBoot RBL Packager](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html)
 
 ### Minimal trimmed setup
 1. [Minimal Configuration Example](minimal-bootloader.md)
@@ -38,7 +40,10 @@ Explains how to enable and integrate reception windows, state handling, timeout 
 Explains patch generation, device-side processing strategies, swap or RAM buffer planning, and first-integration debugging points.
 
 ### [Tools and Packaging](tools.md)
-Explains the role of each entry in `tools/`, with a focus on the input, output, arguments, and typical usage of `package_tool.py`.
+Explains the role of each entry in `tools/`, with a focus on the input, output, arguments, typical usage of `package_tool.py`, and the GitHub Pages web packager.
+
+### [QBoot RBL Packager](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html)
+Browser-based bilingual packager for generating `.rbl` files locally from raw firmware and the package body appended after the RBL header.
 
 ### [Minimal Configuration Example](minimal-bootloader.md)
 Shows how to trim the configuration to a minimal goal while keeping a working reception, release, and jump path.

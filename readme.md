@@ -6,6 +6,8 @@ QBoot is a configurable bootloader component framework for embedded products. It
 
 Project site: https://wdfk-prog.space/rt-thread-qboot/
 
+Web tool: [QBoot RBL Packager](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html)
+
 ## Overview
 
 - Supports **FAL / filesystem / CUSTOM** storage backends
@@ -28,6 +30,7 @@ See the detailed [Overview](docs/en/overview.md).
 - [Upgrade Reception Workflow](docs/en/update-manager.md)
 - [HPatchLite Differential OTA](docs/en/differential-ota-hpatchlite.md)
 - [Tools and Packaging](docs/en/tools.md)
+- [QBoot RBL Packager Web Tool](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html)
 
 ### Practical guide
 - [Minimal Configuration Example](docs/en/minimal-bootloader.md)
@@ -43,8 +46,9 @@ See the detailed [Overview](docs/en/overview.md).
 1. Read the [Overview](docs/en/overview.md)
 2. Use the [Quick Start](docs/en/quick-start.md) to bring up the smallest working flow
 3. Use the [Configuration Guide](docs/en/configuration.md) to choose backend, algorithm, and workflow options
-4. Read the [Upgrade Reception Workflow](docs/en/update-manager.md) only when you need a managed upgrade state machine
-5. Read [HPatchLite Differential OTA](docs/en/differential-ota-hpatchlite.md) only when diff update is required
+4. Use the [QBoot RBL Packager Web Tool](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html) or `tools/package_tool.py` to generate `.rbl` files
+5. Read the [Upgrade Reception Workflow](docs/en/update-manager.md) only when you need a managed upgrade state machine
+6. Read [HPatchLite Differential OTA](docs/en/differential-ota-hpatchlite.md) only when diff update is required
 
 ## Authors and contact
 

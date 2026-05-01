@@ -12,10 +12,12 @@
 ### 需要升级流程
 1. [升级接收流程框架](update-manager.md)
 2. [工具与打包说明](tools.md)
+3. [QBoot RBL Packager](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html)
 
 ### 需要差分升级
 1. [HPatchLite 差分升级](differential-ota-hpatchlite.md)
 2. [工具与打包说明](tools.md)
+3. [QBoot RBL Packager](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html)
 
 ### 需要最小化裁剪示例
 1. [最小化配置示例](minimal-bootloader.md)
@@ -38,7 +40,10 @@
 说明差分包生成、设备侧处理策略、swap 或 RAM buffer 规划，以及首次接入时的调试重点。
 
 ### [工具与打包说明](tools.md)
-说明 `tools/` 目录中各工具的定位，重点解释 `package_tool.py` 的输入输出、参数和典型用法。
+说明 `tools/` 目录中各工具的定位，重点解释 `package_tool.py` 的输入输出、参数、典型用法以及 GitHub Pages 网页打包工具。
+
+### [QBoot RBL Packager](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html)
+浏览器版双语打包页面，用于从原始固件和要追加到 RBL header 后的包体文件在本地生成 `.rbl` 文件。
 
 ### [最小化配置示例](minimal-bootloader.md)
 说明如何按最小目标裁剪配置，并保留一套可工作的接收、释放与跳转链路。

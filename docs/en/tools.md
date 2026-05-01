@@ -22,7 +22,7 @@ The two ZIP files can be treated as upstream bundled Windows packaging utilities
 ## 2. Role of each tool
 
 ### 2.1 `package_tool.py`
-Packages an **already prepared package body** into an RBL package that QBoot can parse.
+Packages a **package body that will be appended after the RBL header** into an RBL package that QBoot can parse.
 
 It writes an RBL header in front of the payload. The header includes:
 
@@ -60,7 +60,7 @@ If you want, I can later unpack that ZIP and add a separate page with a more det
 ## 3. Input and output model of `package_tool.py`
 
 ### Input
-- `--pkg`: prepared package body
+- `--pkg`: package body appended after the RBL header
 - `--raw`: raw firmware image
 - `--output`: output RBL file
 - `--crypt`: encryption algorithm
@@ -129,7 +129,21 @@ For differential update:
 python tools/package_tool.py   --pkg patch.bin   --raw new.bin   -o patch.rbl   --crypt none   --cmprs hpatchlite   --part app   --version v1.00   --product 00010203040506070809
 ```
 
-## 6. How to choose a tool
+
+## 6. Web packager on GitHub Pages
+
+The GitHub Pages site also publishes a browser-based RBL packager:
+
+- Web entry: [QBoot RBL Packager](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html)
+- Languages: Chinese and English, switchable from the page header
+- Execution model: local browser execution through Pyodide
+- File handling: uploaded files stay in the browser and are not sent to a server
+
+The web page intentionally reuses the same packaging semantics as `tools/package_tool.py`: it builds the RBL header and appends the selected package body. For `none`/`none` packaging, the package body is usually the same file as the raw firmware. The selected `gzip`, `quicklz`, `fastlz`, `hpatchlite`, `xor`, or `aes` values are recorded in the RBL header algorithm fields. They do not perform package-body compression or encryption in the web page.
+
+CI keeps the web page and local Python tool aligned by comparing `docs/package-tool/package_tool_web.py` against `tools/package_tool.py` across all supported `--crypt`, `--cmprs`, and `--algo2` combinations. The comparison is byte-for-byte on the generated `.rbl` output, so the local command-line tool and browser-side core are checked against the same observable package format.
+
+## 7. How to choose a tool
 
 ### Recommended order
 1. **`package_tool.py`** as the mainline choice
@@ -141,7 +155,7 @@ python tools/package_tool.py   --pkg patch.bin   --raw new.bin   -o patch.rbl   
 - Need a fast manual packaging tool on Windows: use the GUI packager
 - Already have a Windows production flow based on upstream tools: keep using the ZIP-packed executable toolchain
 
-## 7. Related documents
+## 8. Related documents
 
 - For the main bring-up path, read [Quick Start](quick-start.md)
 - For backend and algorithm combinations, read [Configuration Guide](configuration.md)

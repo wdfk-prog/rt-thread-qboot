@@ -52,6 +52,11 @@ jobs:
           test -f .github/ci/qboot/build-stm32f407-profiles.sh
           test -f tools/package_tool.py
           test -f tests/test_package_tool.py
+          test -f tests/test_package_tool_web.py
+          test -f docs/package-tool/index.html
+          test -f docs/package-tool/app.js
+          test -f docs/package-tool/style.css
+          test -f docs/package-tool/package_tool_web.py
 
       - name: Check SConscript syntax
         shell: bash
@@ -67,18 +72,34 @@ jobs:
 
       - name: Check package tool syntax
         shell: bash
-        run: python3 -S -m py_compile tools/package_tool.py tests/test_package_tool.py
+        run: |
+          python3 -S -m py_compile \
+            tools/package_tool.py \
+            docs/package-tool/package_tool_web.py \
+            tests/test_package_tool.py \
+            tests/test_package_tool_web.py
+
+      - name: Check package tool web JavaScript syntax
+        shell: bash
+        run: |
+          node -e "new Function(require('fs').readFileSync('docs/package-tool/app.js', 'utf8'))"
 
       - name: Test package tool matrix
         shell: bash
         run: python3 -S tests/test_package_tool.py
+
+      - name: Test package tool web page
+        shell: bash
+        run: python3 -S tests/test_package_tool_web.py
 
       - name: Upload package tool test artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: package-tool-test-artifacts
-          path: _ci/package-tool-test
+          path: |
+            _ci/package-tool-test
+            _ci/package-tool-web-test
           if-no-files-found: error
 
       - name: Check profile fragments

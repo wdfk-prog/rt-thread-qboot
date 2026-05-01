@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QBoot RBL Packager</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div class="topbar">
+        <p class="eyebrow" data-i18n="eyebrow">QBoot Web Tool</p>
+        <div class="language-switch" role="group" aria-label="Language switch">
+          <button id="lang-zh" class="lang-button" type="button" data-lang="zh-CN">中文</button>
+          <button id="lang-en" class="lang-button" type="button" data-lang="en">English</button>
+        </div>
+      </div>
+      <h1 data-i18n="title">RBL 打包工具</h1>
+      <p data-i18n="subtitle">
+        上传原始固件和要写入 RBL 的包体文件，在浏览器本地生成 .rbl 文件并下载。文件不会上传到服务器。
+      </p>
+    </header>
+
+    <section class="notice" aria-label="tool scope">
+      <strong data-i18n="noticeTitle">语义说明：</strong>
+      <span data-i18n="noticeBody">
+        当前工具复现 tools/package_tool.py 的行为：生成 RBL header 并追加你选择的包体文件。无压缩/无加密时，包体文件通常与原始固件相同；选择 gzip、quicklz、aes 等算法时，请先用对应工具生成处理后的包体文件。
+      </span>
+    </section>
+
+    <form id="packager-form" class="card">
+      <div class="grid two">
+        <label>
+          <span data-i18n="rawFirmware">Raw firmware</span>
+          <small class="field-help" data-i18n="rawFirmwareHint">用于写入 raw_crc 和 raw_size 的原始固件。</small>
+          <input id="raw-file" class="file-input" type="file" required>
+          <div class="file-control">
+            <button class="file-button" type="button" data-file-trigger="raw-file" data-i18n="chooseFile">选择文件</button>
+            <span id="raw-file-name" class="file-name" data-file-name="raw-file" data-i18n="noFileSelected">未选择任何文件</span>
+          </div>
+        </label>
+        <label>
+          <span data-i18n="pkgBody">要写入 RBL 的包体</span>
+          <small class="field-help" data-i18n="pkgBodyHint">最终会直接追加到 RBL header 后面的包体文件。</small>
+          <input id="pkg-file" class="file-input" type="file" required>
+          <div class="file-control">
+            <button class="file-button" type="button" data-file-trigger="pkg-file" data-i18n="chooseFile">选择文件</button>
+            <span id="pkg-file-name" class="file-name" data-file-name="pkg-file" data-i18n="noFileSelected">未选择任何文件</span>
+          </div>
+        </label>
+      </div>
+
+      <div class="grid three">
+        <label>
+          <span data-i18n="crypt">Crypt</span>
+          <select id="crypt">
+            <option value="none">none</option>
+            <option value="xor">xor</option>
+            <option value="aes">aes</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="compress">Compress</span>
+          <select id="cmprs">
+            <option value="none">none</option>
+            <option value="gzip">gzip</option>
+            <option value="quicklz">quicklz</option>
+            <option value="fastlz">fastlz</option>
+            <option value="hpatchlite">hpatchlite</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="algo2">Verify algo2</span>
+          <select id="algo2">
+            <option value="crc">crc</option>
+            <option value="none">none</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="grid three">
+        <label>
+          <span data-i18n="part">Partition name</span>
+          <input id="part" type="text" value="app" maxlength="16" required>
+        </label>
+        <label>
+          <span data-i18n="version">Firmware version</span>
+          <input id="version" type="text" value="v1.00" maxlength="24" required>
+        </label>
+        <label>
+          <span data-i18n="product">Product code</span>
+          <input id="product" type="text" value="00010203040506070809" maxlength="24" required>
+        </label>
+      </div>
+
+      <div class="grid two">
+        <label>
+          <span data-i18n="outputName">Output file name</span>
+          <input id="output-name" type="text" value="qboot-package.rbl" required>
+        </label>
+        <div class="actions">
+          <button id="build-button" type="submit" disabled data-i18n="buttonLoading">加载工具中...</button>
+        </div>
+      </div>
+    </form>
+
+    <section class="card result" aria-live="polite">
+      <h2 data-i18n="statusTitle">状态</h2>
+      <pre id="status" data-i18n="statusLoading">正在加载 Pyodide...</pre>
+    </section>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

@@ -32,6 +32,12 @@ This site combines:
 - [工作流程说明](zh/reference/workflow.md)
 - [命令参考](zh/reference/command-reference.md)
 
+## Web Tools
+
+- [QBoot RBL Packager](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html) - browser-based `.rbl` packager with Chinese/English language switching.
+
+The web packager runs locally in the browser, mirrors `tools/package_tool.py` header-generation semantics, and is copied into the GitHub Pages output during the Pages workflow.
+
 ## API Entry Points
 
 - [Data Structures](annotated.html)

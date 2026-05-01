@@ -9,7 +9,6 @@ import os
 from pathlib import Path
 import shutil
 import struct
-import subprocess
 import sys
 import time
 from types import SimpleNamespace
@@ -58,17 +57,20 @@ def load_package_tool():
     return module
 
 
-def run_help() -> subprocess.CompletedProcess:
-    """Run the package_tool.py help path through the real CLI."""
-    return subprocess.run(
-        [sys.executable, "-S", str(TOOL), "--help"],
-        cwd=str(REPO_ROOT),
-        check=True,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        timeout=10,
-    )
+def run_help(module) -> str:
+    """Run the package_tool.py help path through its real argparse entrypoint."""
+    stream = io.StringIO()
+    old_argv = sys.argv[:]
+    try:
+        sys.argv = [str(TOOL), "--help"]
+        with contextlib.redirect_stdout(stream):
+            try:
+                module.main()
+            except SystemExit as exc:
+                assert exc.code == 0, f"expected help exit 0, got {exc.code}"
+    finally:
+        sys.argv = old_argv
+    return stream.getvalue()
 
 
 def parse_header(data: bytes) -> dict:
@@ -154,10 +156,9 @@ def write_inputs() -> tuple[Path, Path, bytes, bytes]:
     return raw_path, pkg_path, raw, pkg
 
 
-def check_help() -> None:
+def check_help(module) -> None:
     """Verify the CLI help path and advertised options."""
-    result = run_help()
-    help_text = result.stdout
+    help_text = run_help(module)
     for token in (
         "RBL header packager",
         "--pkg",
@@ -300,7 +301,7 @@ def main() -> int:
 
     module = load_package_tool()
     raw_path, pkg_path, raw, pkg = write_inputs()
-    check_help()
+    check_help(module)
     check_default_package(module, raw_path, pkg_path, raw, pkg)
     check_algorithm_matrix(module, raw_path, pkg_path, raw, pkg)
     check_error_paths(module, raw_path, pkg_path)
