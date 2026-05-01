@@ -1,0 +1,58 @@
+name: Package Tool Web Checks
+
+on:
+  push:
+    branches:
+      - main
+      - "feature/**"
+    paths:
+      - "docs/package-tool/**"
+      - "tests/test_package_tool_web.py"
+      - "tools/package_tool.py"
+      - ".github/workflows/package-tool-web.yml"
+  pull_request:
+    paths:
+      - "docs/package-tool/**"
+      - "tests/test_package_tool_web.py"
+      - "tools/package_tool.py"
+      - ".github/workflows/package-tool-web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: package-tool-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-transform-checks:
+    name: Browser transform and static page checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check Python syntax
+        shell: bash
+        run: |
+          python3 -S -m py_compile \
+            docs/package-tool/package_tool_web.py \
+            tests/test_package_tool_web.py
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: node --check docs/package-tool/app.js
+
+      - name: Run package tool web regression tests
+        shell: bash
+        run: python3 -S tests/test_package_tool_web.py
+
+      - name: Upload web test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-tool-web-test-artifacts
+          path: _ci/package-tool-web-test
+          if-no-files-found: error

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>QBoot RBL Packager</title>
+  <title>QBoot RBL Packager / Unpacker</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -16,21 +16,38 @@
           <button id="lang-en" class="lang-button" type="button" data-lang="en">English</button>
         </div>
       </div>
-      <h1 data-i18n="title">RBL 打包工具</h1>
+      <h1 data-i18n="title">RBL 打包/解包工具</h1>
       <p data-i18n="subtitle">
-        上传原始固件和要写入 RBL 的包体文件，在浏览器本地生成 .rbl 文件并下载。文件不会上传到服务器。
+        在浏览器本地执行 RBL header 生成、gzip 压缩/解压、AES-CBC 加密/解密和固件还原。文件不会上传到服务器。
       </p>
     </header>
 
     <section class="notice" aria-label="tool scope">
       <strong data-i18n="noticeTitle">语义说明：</strong>
       <span data-i18n="noticeBody">
-        当前工具复现 tools/package_tool.py 的行为：生成 RBL header 并追加你选择的包体文件。无压缩/无加密时，包体文件通常与原始固件相同；选择 gzip、quicklz、aes 等算法时，请先用对应工具生成处理后的包体文件。
+        自动打包模式会按 QBoot 释放链路的反向顺序处理：先压缩，再加密。解包模式会先校验 RBL header 和包体 CRC，再按 header 中算法字段执行解密和解压。
       </span>
     </section>
 
     <form id="packager-form" class="card">
       <div class="grid two">
+        <label>
+          <span data-i18n="operation">Operation</span>
+          <select id="operation">
+            <option value="pack-auto" data-i18n="operationPackAuto">自动处理原始固件并打包</option>
+            <option value="pack-manual" data-i18n="operationPackManual">手动包体打包</option>
+            <option value="unpack" data-i18n="operationUnpack">解包并还原固件</option>
+            <option value="patch-pack" data-i18n="operationPatchPack">生成 HPatchLite 差分包</option>
+            <option value="patch-unpack" data-i18n="operationPatchUnpack">应用 HPatchLite 差分包并还原固件</option>
+          </select>
+        </label>
+        <label>
+          <span data-i18n="outputName">Output file name</span>
+          <input id="output-name" type="text" value="qboot-package.rbl" required>
+        </label>
+      </div>
+
+      <div class="grid two" data-mode-section="pack-auto pack-manual patch-pack">
         <label>
           <span data-i18n="rawFirmware">Raw firmware</span>
           <small class="field-help" data-i18n="rawFirmwareHint">用于写入 raw_crc 和 raw_size 的原始固件。</small>
@@ -40,10 +57,10 @@
             <span id="raw-file-name" class="file-name" data-file-name="raw-file" data-i18n="noFileSelected">未选择任何文件</span>
           </div>
         </label>
-        <label>
-          <span data-i18n="pkgBody">要写入 RBL 的包体</span>
-          <small class="field-help" data-i18n="pkgBodyHint">最终会直接追加到 RBL header 后面的包体文件。</small>
-          <input id="pkg-file" class="file-input" type="file" required>
+        <label data-mode-section="pack-manual">
+          <span data-i18n="pkgBody">Package body to append</span>
+          <small class="field-help" data-i18n="pkgBodyHint">仅手动包体打包需要。该文件会直接追加到 RBL header 后面。</small>
+          <input id="pkg-file" class="file-input" type="file">
           <div class="file-control">
             <button class="file-button" type="button" data-file-trigger="pkg-file" data-i18n="chooseFile">选择文件</button>
             <span id="pkg-file-name" class="file-name" data-file-name="pkg-file" data-i18n="noFileSelected">未选择任何文件</span>
@@ -51,7 +68,45 @@
         </label>
       </div>
 
-      <div class="grid three">
+
+
+      <div class="grid two" data-mode-section="patch-pack patch-unpack">
+        <label>
+          <span data-i18n="oldFirmware">Old firmware</span>
+          <small class="field-help" data-i18n="oldFirmwareHint">差分模式需要。生成差分包时作为旧固件；应用差分包时作为还原基线。</small>
+          <input id="old-file" class="file-input" type="file">
+          <div class="file-control">
+            <button class="file-button" type="button" data-file-trigger="old-file" data-i18n="chooseFile">选择文件</button>
+            <span id="old-file-name" class="file-name" data-file-name="old-file" data-i18n="noFileSelected">未选择任何文件</span>
+          </div>
+        </label>
+      </div>
+
+
+      <div class="grid two" data-mode-section="patch-pack">
+        <label>
+          <span data-i18n="hpatchCompress">HPatchLite patch compression</span>
+          <small class="field-help" data-i18n="hpatchCompressHint">差分包体可选择不压缩，或使用 HPatchLite 自带的 _CompressPlugin_tuz；这里不是 RBL 外层 gzip/zlib。</small>
+          <select id="hpatch-compress">
+            <option value="none">none</option>
+            <option value="tuz">_CompressPlugin_tuz</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="grid two" data-mode-section="unpack patch-unpack">
+        <label>
+          <span data-i18n="rblPackage">RBL package</span>
+          <small class="field-help" data-i18n="rblPackageHint">解包模式需要。工具会校验 header、包体 CRC，并在支持的算法范围内还原原始固件。</small>
+          <input id="rbl-file" class="file-input" type="file">
+          <div class="file-control">
+            <button class="file-button" type="button" data-file-trigger="rbl-file" data-i18n="chooseFile">选择文件</button>
+            <span id="rbl-file-name" class="file-name" data-file-name="rbl-file" data-i18n="noFileSelected">未选择任何文件</span>
+          </div>
+        </label>
+      </div>
+
+      <div class="grid three" data-pack-only="true">
         <label>
           <span data-i18n="crypt">Crypt</span>
           <select id="crypt">
@@ -60,7 +115,7 @@
             <option value="aes">aes</option>
           </select>
         </label>
-        <label>
+        <label data-compress-field="true">
           <span data-i18n="compress">Compress</span>
           <select id="cmprs">
             <option value="none">none</option>
@@ -79,7 +134,20 @@
         </label>
       </div>
 
-      <div class="grid three">
+      <div class="grid two" data-aes-only="true">
+        <label>
+          <span data-i18n="aesKey">AES key</span>
+          <small class="field-help" data-i18n="aesKeyHint">默认与 QBOOT_AES_KEY 一致；支持普通文本或 hex: 前缀，必须为 32 字节。</small>
+          <input id="aes-key" type="text" value="0123456789ABCDEF0123456789ABCDEF">
+        </label>
+        <label>
+          <span data-i18n="aesIv">AES IV</span>
+          <small class="field-help" data-i18n="aesIvHint">默认与 QBOOT_AES_IV 一致；支持普通文本或 hex: 前缀，必须为 16 字节。AES 不做 padding，输入长度必须 16 字节对齐。</small>
+          <input id="aes-iv" type="text" value="0123456789ABCDEF">
+        </label>
+      </div>
+
+      <div class="grid three" data-pack-only="true">
         <label>
           <span data-i18n="part">Partition name</span>
           <input id="part" type="text" value="app" maxlength="16" required>
@@ -94,14 +162,8 @@
         </label>
       </div>
 
-      <div class="grid two">
-        <label>
-          <span data-i18n="outputName">Output file name</span>
-          <input id="output-name" type="text" value="qboot-package.rbl" required>
-        </label>
-        <div class="actions">
-          <button id="build-button" type="submit" disabled data-i18n="buttonLoading">加载工具中...</button>
-        </div>
+      <div class="actions">
+        <button id="build-button" type="submit" disabled data-i18n="buttonLoading">加载工具中...</button>
       </div>
     </form>
 

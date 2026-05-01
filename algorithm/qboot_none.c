@@ -1,13 +1,12 @@
 /**
- * @file qboot_algo_none.c
- * @brief 
- * @author wdfk-prog ()
+ * @file qboot_none.c
+ * @brief NONE compression and crypto algorithm adapters.
+ * @author wdfk-prog
  * @version 1.0
  * @date 2026-01-12
- * 
- * @copyright Copyright (c) 2026  
- * 
- * @note :
+ *
+ * @copyright Copyright (c) 2026
+ *
  * @par Change Log:
  * Date       Version Author      Description
  * 2026-01-12 1.0     wdfk-prog   first version
@@ -21,10 +20,8 @@
  * no copy is performed.
  *
  * @param buf Input/output buffers.
- * @param ctx Decompression stream context (unused for NONE).
- * @param buf Input/output buffers.
  * @param out [out] Stream results.
- * @param ctx Decompression stream context.
+ * @param ctx Decompression stream context (unused for NONE).
  *
  * @return RT_EOK on success, -RT_ENOSPC when more input is needed, or -RT_ERROR on failure.
  */

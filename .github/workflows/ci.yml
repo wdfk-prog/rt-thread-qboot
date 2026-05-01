@@ -81,8 +81,7 @@ jobs:
 
       - name: Check package tool web JavaScript syntax
         shell: bash
-        run: |
-          node -e "new Function(require('fs').readFileSync('docs/package-tool/app.js', 'utf8'))"
+        run: node --check docs/package-tool/app.js
 
       - name: Test package tool matrix
         shell: bash

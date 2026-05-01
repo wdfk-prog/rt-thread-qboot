@@ -174,7 +174,6 @@ rt_int32_t qboot_src_read_pos(void)
 /**
  * @brief Close and reset download handle.
  *
- * @return None.
  */
 static void qbt_update_mgr_download_cleanup(void)
 {
@@ -188,7 +187,6 @@ static void qbt_update_mgr_download_cleanup(void)
 /**
  * @brief Close and reset download handle.
  *
- * @return None.
  */
 static void qbt_update_mgr_set_download_ok(rt_bool_t ok)
 {
@@ -295,7 +293,6 @@ static rt_uint32_t s_dl_last_percent = 0;
 /**
  * @brief Reset progress counters and print throttling.
  *
- * @return None.
  */
 void qbt_update_reset_progress(void)
 {
@@ -308,7 +305,6 @@ void qbt_update_reset_progress(void)
  * @brief Set total bytes for progress percentage.
  *
  * @param total_bytes Total expected bytes.
- * @return None.
  */
 void qbt_update_mgr_set_total(rt_uint32_t total_bytes)
 {
@@ -319,7 +315,6 @@ void qbt_update_mgr_set_total(rt_uint32_t total_bytes)
  * @brief Accumulate received byte count.
  *
  * @param bytes Received bytes for this chunk.
- * @return None.
  */
 void qbt_update_mgr_on_data_len(rt_uint32_t bytes)
 {
@@ -330,7 +325,6 @@ void qbt_update_mgr_on_data_len(rt_uint32_t bytes)
  * @brief Stub when progress is disabled.
  *
  * @param total_bytes Total expected bytes.
- * @return None.
  */
 void qbt_update_mgr_set_total(rt_uint32_t total_bytes)
 {
@@ -341,7 +335,6 @@ void qbt_update_mgr_set_total(rt_uint32_t total_bytes)
  * @brief Stub when progress is disabled.
  *
  * @param bytes Received bytes for this chunk.
- * @return None.
  */
 void qbt_update_mgr_on_data_len(rt_uint32_t bytes)
 {
@@ -352,7 +345,6 @@ void qbt_update_mgr_on_data_len(rt_uint32_t bytes)
  * @brief Update state and refresh timestamps for timeout tracking.
  *
  * @param state New update state.
- * @return None.
  */
 static void qbt_update_mgr_set_state(qbt_upd_state_t state)
 {
@@ -380,7 +372,7 @@ static void qbt_update_mgr_set_state(qbt_upd_state_t state)
         {
             rt_kprintf("\n");
         }
-#endif // QBT_UPDATE_MGR_PROGRESS_ENABLE
+#endif /* QBT_UPDATE_MGR_PROGRESS_ENABLE */
         LOG_I("Update state: %s -> %s", prev_name, curr_name);
     }
 }
@@ -388,7 +380,6 @@ static void qbt_update_mgr_set_state(qbt_upd_state_t state)
 /**
  * @brief Reset recover probe gate for a new download session.
  *
- * @return None.
  */
 static void qbt_update_mgr_reset_recover_probe(void)
 {
@@ -423,7 +414,6 @@ qbt_upd_state_t qbt_update_mgr_get_state(void)
 /**
  * @brief Notify bootloader that it's safe to jump to app.
  *
- * @return None.
  */
 static void qbt_update_mgr_ready(void)
 {
@@ -438,7 +428,6 @@ static void qbt_update_mgr_ready(void)
 /**
  * @brief Handle update request event.
  *
- * @return None.
  */
 void qbt_update_mgr_on_request(void)
 {
@@ -450,7 +439,6 @@ void qbt_update_mgr_on_request(void)
 /**
  * @brief Handle download start event.
  *
- * @return None.
  */
 void qbt_update_mgr_on_start(void)
 {
@@ -461,13 +449,12 @@ void qbt_update_mgr_on_start(void)
     qbt_update_mgr_set_state(QBT_UPD_STATE_RECV);
 #ifdef QBT_UPDATE_MGR_PROGRESS_ENABLE
     qbt_update_reset_progress();
-#endif  /* QBT_UPDATE_MGR_PROGRESS_ENABLE */
+#endif /* QBT_UPDATE_MGR_PROGRESS_ENABLE */
 }
 
 /**
  * @brief Handle download data event.
  *
- * @return None.
  */
 void qbt_update_mgr_on_data(void)
 {
@@ -482,7 +469,6 @@ void qbt_update_mgr_on_data(void)
  * @brief Handle download finish event.
  *
  * @param ok RT_TRUE when download completed successfully.
- * @return None.
  */
 void qbt_update_mgr_on_finish(rt_bool_t ok)
 {
@@ -509,7 +495,6 @@ void qbt_update_mgr_on_finish(rt_bool_t ok)
 /**
  * @brief Handle download abort event.
  *
- * @return None.
  */
 void qbt_update_mgr_on_abort(void)
 {
@@ -522,7 +507,6 @@ void qbt_update_mgr_on_abort(void)
  * @brief Poll update state machine and enforce timeouts.
  *
  * @param poll_delay_ms Delay between polls in milliseconds.
- * @return None.
  */
 void qbt_update_mgr_poll(rt_uint32_t poll_delay_ms)
 {
@@ -618,7 +602,6 @@ void qbt_update_mgr_poll(rt_uint32_t poll_delay_ms)
  * @brief Notify update result after release/apply.
  *
  * @param success RT_TRUE when release/apply succeeded.
- * @return None.
  */
 void qboot_notify_update_result(rt_bool_t success)
 {
@@ -639,7 +622,6 @@ void qboot_notify_update_result(rt_bool_t success)
  * @param ops     Bootloader callback table (must be non-NULL).
  * @param wait_ms Wait window timeout in milliseconds.
  * @param idle_ms Idle timeout in milliseconds.
- * @return None.
  */
 void qbt_update_mgr_register(const qbt_update_ops_t *ops, rt_uint32_t wait_ms, rt_uint32_t idle_ms)
 {

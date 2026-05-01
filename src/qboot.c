@@ -456,7 +456,6 @@ extern void qbt_jump_to_app(void);
 /**
  * @brief Feed watchdog and jump to application.
  *
- * @return None.
  */
 static void qbt_jump_to_app_with_feed(void)
 {
@@ -468,7 +467,6 @@ static void qbt_jump_to_app_with_feed(void)
 /**
  * @brief Initialize status LED pattern.
  *
- * @return None.
  */
 static void qbt_status_led_init(void)
 {
@@ -524,7 +522,6 @@ static rt_device_t qbt_shell_dev = NULL;
 /**
  * @brief Stop the system shell thread and RX semaphore.
  *
- * @return None.
  */
 static void qbt_close_sys_shell(void)
 {
@@ -560,7 +557,6 @@ static void qbt_close_sys_shell(void)
 /**
  * @brief Start system shell if not running.
  *
- * @return None.
  */
 static void qbt_open_sys_shell(void)
 {
@@ -704,7 +700,6 @@ static rt_bool_t qbt_startup_shell(rt_bool_t wait_press_key)
 /**
  * @brief Print startup banner and product info.
  *
- * @return None.
  */
 static void qbt_show_msg(void)
 {
@@ -866,7 +861,6 @@ exit:
  * @brief Main qboot thread entry.
  *
  * @param params Thread parameter (unused).
- * @return None.
  */
 static void qbt_thread_entry(void *params)
 {
@@ -1027,7 +1021,6 @@ static rt_bool_t qbt_fw_clone(void *dst_handle, const char *dst_name, void *src_
  * @brief Show firmware information of a target partition.
  *
  * @param part_id Target partition ID.
- * @return None.
  */
 static void qbt_fw_info_show(qbt_target_id_t part_id)
 {
@@ -1095,7 +1088,6 @@ static rt_bool_t qbt_fw_delete(void *handle, const char *name, rt_uint32_t part_
  *
  * @param argc Argument count.
  * @param argv Argument list.
- * @return None.
  */
 static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
 {

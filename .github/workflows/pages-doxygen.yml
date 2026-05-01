@@ -34,6 +34,10 @@ jobs:
       - name: Prepare output directory
         run: mkdir -p build/doxygen
 
+
+      - name: Test package tool web transforms
+        run: python3 -S tests/test_package_tool_web.py
+
       - name: Build Doxygen site
         run: |
           doxygen Doxyfile
@@ -49,6 +53,18 @@ jobs:
           test -f build/doxygen/html/package-tool/package_tool_web.py
           grep -q 'data-lang="zh-CN"' build/doxygen/html/package-tool/index.html
           grep -q 'data-lang="en"' build/doxygen/html/package-tool/index.html
+          grep -q 'data-mode-section="[^"]*unpack' build/doxygen/html/package-tool/index.html
+          grep -q 'data-mode-section="[^"]*patch-pack' build/doxygen/html/package-tool/index.html
+          grep -q 'data-mode-section="[^"]*patch-unpack' build/doxygen/html/package-tool/index.html
+          grep -q 'hpatch-compress' build/doxygen/html/package-tool/index.html
+          grep -q 'data-compress-field' build/doxygen/html/package-tool/index.html
+          grep -q '<option value="none">none</option>' build/doxygen/html/package-tool/index.html
+          grep -q '<option value="tuz">_CompressPlugin_tuz</option>' build/doxygen/html/package-tool/index.html
+          grep -q 'unpack_rbl_bytes' build/doxygen/html/package-tool/app.js
+          grep -q 'patch_compress' build/doxygen/html/package-tool/app.js
+          grep -q 'isPatchPack ? "hpatchlite"' build/doxygen/html/package-tool/app.js
+          grep -q 'setSectionVisible(section, operation !== "patch-pack")' build/doxygen/html/package-tool/app.js
+          grep -q 'unpack_hpatchlite_rbl_bytes' build/doxygen/html/package-tool/app.js
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4

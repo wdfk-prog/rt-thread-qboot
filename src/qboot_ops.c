@@ -329,6 +329,7 @@ const qboot_store_desc_t *qbt_target_desc(qbt_target_id_t id)
  * @param id       Target identifier.
  * @param handle   Output opaque handle.
  * @param out_size Output total size; ignored if NULL.
+ * @param flags    Open flags forwarded to the storage backend.
  *
  * @return RT_TRUE on success, RT_FALSE otherwise.
  */
@@ -403,12 +404,7 @@ rt_weak rt_int32_t qboot_src_read_pos(void)
     return sizeof(fw_info_t);
 }
 
-/**
- * @brief  Notify update result.
- * @note   This is a weak hook, override in backend implementations.
- * @param  success: RT_TRUE when update success, RT_FALSE otherwise.
- * @retval None
- */
+/* Default weak update-result hook; backend implementations may override it. */
 rt_weak void qboot_notify_update_result(rt_bool_t success)
 {
     RT_UNUSED(success);

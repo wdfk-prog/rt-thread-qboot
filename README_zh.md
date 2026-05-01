@@ -1,6 +1,6 @@
 # QBoot
 
-[English](README.md) | 中文
+[English](readme.md) | 中文
 
 QBoot 是一个面向嵌入式产品工程的可裁剪 bootloader 组件框架，适合在 RT-Thread 工程中集成使用，也支持按需改造成基于自定义存储后端的工程实现。
 

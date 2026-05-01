@@ -211,3 +211,11 @@ code {
   font-weight: 700;
   overflow-wrap: anywhere;
 }
+
+[hidden] {
+  display: none !important;
+}
+
+.actions button {
+  min-height: 44px;
+}

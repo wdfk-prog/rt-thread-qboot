@@ -18,7 +18,7 @@ INPUT                  = \
                          src \
                          platform \
                          algorithm \
-                         README.md \
+                         readme.md \
                          README_zh.md \
                          docs/doxygen-mainpage.md \
                          docs/en \
@@ -94,3 +94,4 @@ QUIET                  = NO
 WARNINGS               = YES
 WARN_IF_UNDOCUMENTED   = NO
 WARN_IF_DOC_ERROR      = YES
+WARN_AS_ERROR           = FAIL_ON_WARNINGS

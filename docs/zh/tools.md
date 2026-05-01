@@ -130,18 +130,38 @@ python tools/package_tool.py   --pkg patch.bin   --raw new.bin   -o patch.rbl   
 ```
 
 
-## 6. GitHub Pages 网页打包工具
+## 6. GitHub Pages 网页打包/解包工具
 
-GitHub Pages 站点中同时发布了一个浏览器版 RBL 打包工具：
+GitHub Pages 站点中同时发布了一个浏览器版 RBL 打包/解包工具：
 
 - 网页入口：[QBoot RBL Packager](https://wdfk-prog.space/rt-thread-qboot/package-tool/index.html)
 - 语言：页面顶部可在中文和 English 之间切换
 - 执行模型：通过 Pyodide 在浏览器本地执行
 - 文件处理：上传的文件只在浏览器内读取，不会发送到服务器
 
-网页端刻意保持和 `tools/package_tool.py` 相同的打包语义：生成 RBL header，然后追加你选择的包体文件。无压缩/无加密打包时，包体文件通常与原始固件相同。页面里选择的 `gzip`、`quicklz`、`fastlz`、`hpatchlite`、`xor` 或 `aes` 会写入 RBL header 的算法字段，但网页端不会实际对包体执行压缩或加密。
+网页端提供五种模式：
 
-CI 会用全部 `--crypt`、`--cmprs`、`--algo2` 组合对比 `docs/package-tool/package_tool_web.py` 与 `tools/package_tool.py` 的输出。对比对象是生成后的 `.rbl` 完整字节流，因此本地命令行工具与浏览器端核心会按照同一个可观察包格式做一致性校验。
+1. **自动处理原始固件并打包**：对原始固件执行浏览器端处理，再生成 RBL。处理顺序与 QBoot 释放链路相反，即先压缩、再加密。
+2. **手动包体打包**：保持 `tools/package_tool.py` 的旧语义，直接把已经准备好的包体追加到 RBL header 后面。
+3. **解包并还原固件**：读取 RBL 包，校验 header CRC 和包体 CRC，然后按 header 中的算法字段先解密、再解压，输出还原后的固件。
+4. **生成 HPatchLite 差分包**：读取旧固件和新固件，生成 HPatchLite full-diff patch body，差分包体可选择不压缩或使用 HPatchLite 自带的 `_CompressPlugin_tuz` 压缩，然后封装为 RBL 包。
+5. **应用 HPatchLite 差分包**：读取旧固件和差分 RBL 包，在浏览器中还原新固件，用于验证或下载。
+
+当前浏览器端真实执行的算法：
+
+- `none`：直通打包和还原
+- `gzip`：使用 zlib/gzip 语义压缩和解压，兼容 QBoot 侧 `inflateInit2(..., 47)` 的自动识别行为
+- `fastlz`：使用 literal-only level-1 records 生成并解析 QBoot one-shot FastLZ block
+- `quicklz`：使用 level-1 stored packets 生成并解析 QBoot one-shot QuickLZ block
+- `hpatchlite`：生成并应用 HPatchLite full-diff 原生格式 patch；patch stream 可选择不压缩或使用 `_CompressPlugin_tuz` 压缩/解压，格式兼容，但不做相似块匹配压缩
+- `aes`：使用 QBoot 兼容的裸 AES-CBC，不做 padding，输入长度必须 16 字节对齐；默认 key/iv 与 `QBOOT_AES_KEY`、`QBOOT_AES_IV` 一致，也可以在页面手动输入
+
+手动包体模式仍可用于封装外部工具生成的包体，例如原生 `hdiffi` 生成的紧凑 HPatchLite patch，或浏览器路径不主动合成的 compressed QuickLZ payload。
+
+CI 会执行两类校验：
+
+- 对全部 `--crypt`、`--cmprs`、`--algo2` 组合，对比手动包体模式与 `tools/package_tool.py` 的 `.rbl` 完整字节流。
+- 对浏览器端真实处理路径执行回归测试，包括 RBL header 解析、CRC 校验、gzip/FastLZ/QuickLZ 打包与还原、AES 测试向量、AES 打包/还原、HPatchLite 差分往返，以及无效组合的明确失败路径。
 
 ## 7. 如何选择工具
 
@@ -160,3 +180,7 @@ CI 会用全部 `--crypt`、`--cmprs`、`--algo2` 组合对比 `docs/package-too
 - 想先跑通主链路：看 [快速开始](quick-start.md)
 - 想理解算法与后端组合：看 [配置指南](configuration.md)
 - 想做差分升级：看 [HPatchLite 差分升级](differential-ota-hpatchlite.md)
+
+### 差分模式说明
+
+网页差分模式会生成 HPatchLite full-diff 原生格式包体，输入为旧固件和新固件；应用差分包时需要旧固件和 `.rbl` 包。RBL 外层 `cmprs` 字段固定为 `hpatchlite`，不能选择 `none`/`gzip`/`quicklz`/`fastlz`。差分包体内部可选择不压缩或使用 HPatchLite 自带的 `_CompressPlugin_tuz` 压缩/解压，不会走 RBL 外层 `gzip`/`zlib`，也不会使用通用 raw-deflate。该实现会把完整新固件作为 diff data 写入 HPatchLite patch，因此格式兼容 QBoot HPatchLite patch flow，但不会获得原生 `hdiffi` 相似块匹配带来的体积压缩。生产环境如需紧凑差分包，仍建议使用原生 HPatchLite 工具生成包体后走“手动包体打包”。
