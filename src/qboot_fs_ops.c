@@ -20,6 +20,9 @@
 #include "dfs_romfs.h"
 #include <dfs_file.h>
 #include <unistd.h>
+#ifdef QBOOT_CI_HOST_TEST
+#include "qboot_host_flash.h"
+#endif /* QBOOT_CI_HOST_TEST */
 
 #define DBG_TAG "qb_fs"
 #define DBG_LVL DBG_INFO
@@ -32,6 +35,7 @@ static int g_fs_fds[QBOOT_TARGET_COUNT];
  *
  * @param id     Target identifier.
  * @param handle Output handle (encoded target id).
+ * @param flags  Open flags from QBT_OPEN_* bit mask.
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
@@ -45,6 +49,12 @@ static rt_err_t qbt_fs_open(qbt_target_id_t id, void **handle, int flags)
     {
         return -RT_ERROR;
     }
+#ifdef QBOOT_CI_HOST_TEST
+    if (qboot_host_fault_check_id(QBOOT_HOST_FAULT_OPEN, id))
+    {
+        return -RT_ERROR;
+    }
+#endif /* QBOOT_CI_HOST_TEST */
 
     if (flags & QBT_OPEN_WRITE)
     {
@@ -58,7 +68,7 @@ static rt_err_t qbt_fs_open(qbt_target_id_t id, void **handle, int flags)
     {
         open_flags |= O_TRUNC;
     }
-    fd = open(desc->store_name, open_flags, 0);
+    fd = open(desc->store_name, open_flags, 0666);
     if (fd < 0)
     {
         LOG_E("FS open file %s fail.", desc->store_name);
@@ -104,6 +114,13 @@ static rt_err_t qbt_fs_read(void *handle, rt_uint32_t off, void *buf, rt_uint32_
 {
     int id = (int)((uintptr_t)handle) - 1;
     int fd = g_fs_fds[id] - 1;
+#ifdef QBOOT_CI_HOST_TEST
+    if (id >= 0 && id < QBOOT_TARGET_COUNT &&
+        qboot_host_fault_check_id(QBOOT_HOST_FAULT_READ, (qbt_target_id_t)id))
+    {
+        return -RT_ERROR;
+    }
+#endif /* QBOOT_CI_HOST_TEST */
     if (lseek(fd, (off_t)off, SEEK_SET) < 0)
     {
         return -RT_ERROR;
@@ -133,6 +150,13 @@ static rt_err_t qbt_fs_erase(void *handle, rt_uint32_t off, rt_uint32_t len)
     int fd = g_fs_fds[id] - 1;
 
     off_t offset = 0;
+#ifdef QBOOT_CI_HOST_TEST
+    if (id >= 0 && id < QBOOT_TARGET_COUNT &&
+        qboot_host_fault_check_id(QBOOT_HOST_FAULT_ERASE, (qbt_target_id_t)id))
+    {
+        return -RT_ERROR;
+    }
+#endif /* QBOOT_CI_HOST_TEST */
 #if defined(QBOOT_USING_HPATCHLITE) && defined(QBOOT_HPATCH_USE_STORAGE_SWAP) && defined(QBOOT_HPATCH_SWAP_STORE_FS)
     if (id == QBOOT_TARGET_SWAP)
     {
@@ -160,6 +184,13 @@ static rt_err_t qbt_fs_write(void *handle, rt_uint32_t off, const void *buf, rt_
 {
     int id = (int)((uintptr_t)handle) - 1;
     int fd = g_fs_fds[id] - 1;
+#ifdef QBOOT_CI_HOST_TEST
+    if (id >= 0 && id < QBOOT_TARGET_COUNT &&
+        qboot_host_fault_check_id(QBOOT_HOST_FAULT_WRITE, (qbt_target_id_t)id))
+    {
+        return -RT_ERROR;
+    }
+#endif /* QBOOT_CI_HOST_TEST */
     if (lseek(fd, (off_t)off, SEEK_SET) < 0)
     {
         return -RT_ERROR;
@@ -230,7 +261,7 @@ static rt_err_t qbt_fs_ioctl(void *handle, int cmd, void *arg)
  * @brief Read release sign marker from filesystem download storage.
  *
  * @param handle   Encoded target id (unused).
- * @param released Output flag, RT_TRUE when marker exists.
+ * @param released Output flag, RT_TRUE when the marker word is valid.
  * @param fw_info  Firmware header context (unused).
  *
  * @return RT_EOK on success, negative error code otherwise.
@@ -238,18 +269,31 @@ static rt_err_t qbt_fs_ioctl(void *handle, int cmd, void *arg)
 static rt_err_t qbt_fs_sign_read(void *handle, rt_bool_t *released, const fw_info_t *fw_info)
 {
     int sign_fd = -1;
+    rt_uint32_t sign_word = 0u;
 
     RT_UNUSED(handle);
     RT_UNUSED(fw_info);
     *released = RT_FALSE;
+
+#ifdef QBOOT_CI_HOST_TEST
+    if (qboot_host_fault_check_id(QBOOT_HOST_FAULT_SIGN_READ, QBOOT_TARGET_DOWNLOAD))
+    {
+        return -RT_ERROR;
+    }
+#endif /* QBOOT_CI_HOST_TEST */
 
     sign_fd = open(QBOOT_DOWNLOAD_SIGN_FILE_PATH, O_RDONLY, 0);
     if (sign_fd < 0)
     {
         return RT_EOK;
     }
+    if (read(sign_fd, &sign_word, sizeof(sign_word)) != (int)sizeof(sign_word))
+    {
+        close(sign_fd);
+        return RT_EOK;
+    }
     close(sign_fd);
-    *released = RT_TRUE;
+    *released = (sign_word == QBOOT_RELEASE_SIGN_WORD) ? RT_TRUE : RT_FALSE;
     return RT_EOK;
 }
 
@@ -264,13 +308,26 @@ static rt_err_t qbt_fs_sign_read(void *handle, rt_bool_t *released, const fw_inf
 static rt_err_t qbt_fs_sign_write(void *handle, const fw_info_t *fw_info)
 {
     int sign_fd = -1;
+    const rt_uint32_t sign_word = QBOOT_RELEASE_SIGN_WORD;
 
     RT_UNUSED(handle);
     RT_UNUSED(fw_info);
-    sign_fd = open(QBOOT_DOWNLOAD_SIGN_FILE_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0);
+#ifdef QBOOT_CI_HOST_TEST
+    if (qboot_host_fault_check_id(QBOOT_HOST_FAULT_SIGN_WRITE, QBOOT_TARGET_DOWNLOAD))
+    {
+        return -RT_ERROR;
+    }
+#endif /* QBOOT_CI_HOST_TEST */
+
+    sign_fd = open(QBOOT_DOWNLOAD_SIGN_FILE_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (sign_fd < 0)
     {
         LOG_E("FS sign open fail %s.", QBOOT_DOWNLOAD_SIGN_FILE_PATH);
+        return -RT_ERROR;
+    }
+    if (write(sign_fd, &sign_word, sizeof(sign_word)) != (int)sizeof(sign_word))
+    {
+        close(sign_fd);
         return -RT_ERROR;
     }
     close(sign_fd);

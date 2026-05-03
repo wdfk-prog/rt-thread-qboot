@@ -197,13 +197,15 @@ rt_err_t qboot_register_header_io_ops(const qboot_io_ops_t *ops)
  */
 rt_bool_t qbt_fw_info_read(void *handle, rt_uint32_t part_len, fw_info_t *fw_info, rt_bool_t from_tail)
 {
-    if (from_tail && part_len < qboot_src_read_pos())
+    rt_uint32_t hdr_size = (rt_uint32_t)qboot_src_read_pos();
+
+    if (from_tail && part_len < hdr_size)
     {
         LOG_E("Qboot read firmware info fail. part size %u < hdr size.", (unsigned int)part_len);
         return RT_FALSE;
     }
-    rt_uint32_t addr = from_tail ? (part_len - qboot_src_read_pos()) : 0;
-    if (_header_io_ops->read(handle, addr, (rt_uint8_t *)fw_info, qboot_src_read_pos()) != RT_EOK)
+    rt_uint32_t addr = from_tail ? (part_len - hdr_size) : 0;
+    if (_header_io_ops->read(handle, addr, (rt_uint8_t *)fw_info, hdr_size) != RT_EOK)
     {
         return (RT_FALSE);
     }
@@ -222,8 +224,16 @@ rt_bool_t qbt_fw_info_read(void *handle, rt_uint32_t part_len, fw_info_t *fw_inf
  */
 rt_bool_t qbt_fw_info_write(void *handle, rt_uint32_t part_len, fw_info_t *fw_info, rt_bool_t to_tail)
 {
-    rt_uint32_t addr = to_tail ? (part_len - qboot_src_read_pos()) : 0;
-    if (_header_io_ops->write(handle, addr, (rt_uint8_t *)fw_info, qboot_src_read_pos()) != RT_EOK)
+    rt_uint32_t hdr_size = (rt_uint32_t)qboot_src_read_pos();
+
+    if (to_tail && part_len < hdr_size)
+    {
+        LOG_E("Qboot write firmware info fail. part size %u < hdr size.", (unsigned int)part_len);
+        return RT_FALSE;
+    }
+    rt_uint32_t addr = to_tail ? (part_len - hdr_size) : 0;
+
+    if (_header_io_ops->write(handle, addr, (rt_uint8_t *)fw_info, hdr_size) != RT_EOK)
     {
         return (RT_FALSE);
     }

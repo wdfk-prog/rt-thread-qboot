@@ -74,6 +74,10 @@ rt_err_t qbt_algo_none_crypt(rt_uint8_t *out, const rt_uint8_t *in, rt_uint32_t 
 {
 #ifdef QBOOT_USING_COMPRESSION
     rt_memcpy(out, in, len);
+#else
+    RT_UNUSED(out);
+    RT_UNUSED(in);
+    RT_UNUSED(len);
 #endif /* QBOOT_USING_COMPRESSION */
     return RT_EOK;
 }

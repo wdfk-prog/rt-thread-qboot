@@ -1,12 +1,12 @@
 /**
  * @file qboot_update.c
- * @brief 
+ * @brief
  * @author wdfk-prog ()
  * @version 1.0
  * @date 2026-01-23
- * 
- * @copyright Copyright (c) 2026  
- * 
+ *
+ * @copyright Copyright (c) 2026
+ *
  * @note :
  * @par Change Log:
  * Date       Version Author      Description
@@ -68,6 +68,25 @@ static const char *const s_state_names[] = {
     "ERROR",
     "READY",
 };
+
+
+/**
+ * @brief Check whether all update-manager callbacks are registered.
+ *
+ * @return RT_TRUE when the callback table is complete, RT_FALSE otherwise.
+ */
+static rt_bool_t qbt_update_mgr_ops_ready(void)
+{
+    return (s_mgr.ops != RT_NULL &&
+            s_mgr.ops->get_reason != RT_NULL &&
+            s_mgr.ops->set_reason != RT_NULL &&
+            s_mgr.ops->is_app_valid != RT_NULL &&
+            s_mgr.ops->enter_download != RT_NULL &&
+            s_mgr.ops->leave_download != RT_NULL &&
+            s_mgr.ops->on_error != RT_NULL &&
+            s_mgr.ops->on_ready_to_app != RT_NULL &&
+            s_mgr.ops->try_recover != RT_NULL) ? RT_TRUE : RT_FALSE;
+}
 
 #ifdef QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
 /**
@@ -393,7 +412,7 @@ static void qbt_update_mgr_reset_recover_probe(void)
  */
 static rt_bool_t qbt_update_mgr_try_recover_once(void)
 {
-    if (s_mgr.recover_probe_used)
+    if (s_mgr.recover_probe_used || !qbt_update_mgr_ops_ready())
     {
         return RT_FALSE;
     }
@@ -417,6 +436,10 @@ qbt_upd_state_t qbt_update_mgr_get_state(void)
  */
 static void qbt_update_mgr_ready(void)
 {
+    if (!qbt_update_mgr_ops_ready())
+    {
+        return;
+    }
     s_mgr.ready_flag = RT_TRUE;
     qbt_update_mgr_set_state(QBT_UPD_STATE_READY);
 #ifdef QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
@@ -431,6 +454,10 @@ static void qbt_update_mgr_ready(void)
  */
 void qbt_update_mgr_on_request(void)
 {
+    if (!qbt_update_mgr_ops_ready() || s_mgr.state == QBT_UPD_STATE_RECV)
+    {
+        return;
+    }
     /* Ensure we never stick at REQ across reboots. */
     s_mgr.ops->set_reason(QBT_UPD_REASON_REQ);
     qbt_update_mgr_set_state(QBT_UPD_STATE_WAIT);
@@ -442,11 +469,18 @@ void qbt_update_mgr_on_request(void)
  */
 void qbt_update_mgr_on_start(void)
 {
-    /* New download session begins: allow one recover probe in this session. */
+    if (!qbt_update_mgr_ops_ready() ||
+        s_mgr.state == QBT_UPD_STATE_RECV ||
+        s_mgr.state == QBT_UPD_STATE_READY)
+    {
+        return;
+    }
+    /* New download session begins: publish RECV before invoking callbacks so
+     * reentrant start requests are rejected by the normal state guard.
+     */
     qbt_update_mgr_reset_recover_probe();
-    s_mgr.ops->enter_download();
-    /* Enter active receive mode and start idle timeout tracking. */
     qbt_update_mgr_set_state(QBT_UPD_STATE_RECV);
+    s_mgr.ops->enter_download();
 #ifdef QBT_UPDATE_MGR_PROGRESS_ENABLE
     qbt_update_reset_progress();
 #endif /* QBT_UPDATE_MGR_PROGRESS_ENABLE */
@@ -472,6 +506,10 @@ void qbt_update_mgr_on_data(void)
  */
 void qbt_update_mgr_on_finish(rt_bool_t ok)
 {
+    if (!qbt_update_mgr_ops_ready() || s_mgr.state != QBT_UPD_STATE_RECV)
+    {
+        return;
+    }
     s_mgr.ops->leave_download();
 
 #ifdef QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
@@ -498,6 +536,10 @@ void qbt_update_mgr_on_finish(rt_bool_t ok)
  */
 void qbt_update_mgr_on_abort(void)
 {
+    if (!qbt_update_mgr_ops_ready() || s_mgr.state != QBT_UPD_STATE_RECV)
+    {
+        return;
+    }
     s_mgr.ops->leave_download();
     /* Abort returns to wait state to allow retry. */
     qbt_update_mgr_set_state(QBT_UPD_STATE_WAIT);
@@ -510,6 +552,10 @@ void qbt_update_mgr_on_abort(void)
  */
 void qbt_update_mgr_poll(rt_uint32_t poll_delay_ms)
 {
+    if (!qbt_update_mgr_ops_ready())
+    {
+        return;
+    }
     s_mgr.wait_start = rt_tick_get();
     /* Blocking loop: caller waits here until ready flag is set. */
     while (!s_mgr.ready_flag)
@@ -605,6 +651,10 @@ void qbt_update_mgr_poll(rt_uint32_t poll_delay_ms)
  */
 void qboot_notify_update_result(rt_bool_t success)
 {
+    if (!qbt_update_mgr_ops_ready())
+    {
+        return;
+    }
     if (success)
     {
         s_mgr.ops->set_reason(QBT_UPD_REASON_DONE);
@@ -625,12 +675,19 @@ void qboot_notify_update_result(rt_bool_t success)
  */
 void qbt_update_mgr_register(const qbt_update_ops_t *ops, rt_uint32_t wait_ms, rt_uint32_t idle_ms)
 {
+    rt_uint32_t reason;
+
     s_mgr.ops = ops;
     s_mgr.ready_flag = RT_FALSE;
     qbt_update_mgr_reset_recover_probe();
     s_mgr.wait_ms = wait_ms;
     s_mgr.idle_ms = idle_ms;
-    rt_uint32_t reason = s_mgr.ops->get_reason();
+    if (!qbt_update_mgr_ops_ready())
+    {
+        qbt_update_mgr_set_state(QBT_UPD_STATE_IDLE);
+        return;
+    }
+    reason = s_mgr.ops->get_reason();
     LOG_I("Reason: %d", reason);
     switch (reason)
     {

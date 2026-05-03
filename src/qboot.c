@@ -1,12 +1,12 @@
 /**
  * @file qboot.c
- * @brief 
+ * @brief
  * @author qiyongzhong
  * @version 1.8
  * @date 2026-01-15
- * 
- * @copyright Copyright (c) 2026  
- * 
+ *
+ * @copyright Copyright (c) 2026
+ *
  * @note :
  * @par Change Log:
  * Date       Version Author        Description
@@ -53,6 +53,76 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv);
 #define QBOOT_ALGO2_VERIFY_NONE 0
 #define QBOOT_ALGO2_VERIFY_CRC  1
 #define QBOOT_ALGO2_VERIFY_MASK 0x0F
+
+#ifdef QBOOT_USING_PRODUCT_CODE
+/**
+ * @brief Compare a fixed-width product-code field safely.
+ *
+ * @param prod_code Product-code field from fw_info_t.
+ * @return RT_TRUE when it exactly matches QBOOT_PRODUCT_CODE and has zero padding.
+ */
+static rt_bool_t qbt_product_code_match(const rt_uint8_t prod_code[24])
+{
+    rt_size_t expect_len = rt_strlen(QBOOT_PRODUCT_CODE);
+
+    if (expect_len > sizeof(((fw_info_t *)0)->prod_code))
+    {
+        return RT_FALSE;
+    }
+    if (rt_memcmp(prod_code, QBOOT_PRODUCT_CODE, expect_len) != 0)
+    {
+        return RT_FALSE;
+    }
+    for (rt_size_t i = expect_len; i < sizeof(((fw_info_t *)0)->prod_code); i++)
+    {
+        if (prod_code[i] != 0u)
+        {
+            return RT_FALSE;
+        }
+    }
+    return RT_TRUE;
+}
+#endif /* QBOOT_USING_PRODUCT_CODE */
+
+/**
+ * @brief Check whether the encoded package body fits in the source target.
+ *
+ * @param part_len Source target size in bytes.
+ * @param info     Firmware header to check.
+ * @return RT_TRUE when package size fields are acceptable, RT_FALSE otherwise.
+ */
+static rt_bool_t qbt_fw_package_size_accepts(rt_uint32_t part_len, const fw_info_t *info)
+{
+    rt_uint32_t hdr_size = (rt_uint32_t)qboot_src_read_pos();
+
+    if (info == RT_NULL || info->raw_size == 0u || info->pkg_size == 0u)
+    {
+        return RT_FALSE;
+    }
+    if (part_len < hdr_size)
+    {
+        return RT_FALSE;
+    }
+    return (info->pkg_size <= (part_len - hdr_size)) ? RT_TRUE : RT_FALSE;
+}
+
+/**
+ * @brief Check whether the raw firmware and mirrored header fit the destination.
+ *
+ * @param dst_size Destination target size in bytes.
+ * @param info     Firmware header to check.
+ * @return RT_TRUE when destination size is acceptable, RT_FALSE otherwise.
+ */
+static rt_bool_t qbt_fw_destination_size_accepts(rt_uint32_t dst_size, const fw_info_t *info)
+{
+    rt_uint32_t hdr_size = (rt_uint32_t)qboot_src_read_pos();
+
+    if (info == RT_NULL || dst_size < hdr_size)
+    {
+        return RT_FALSE;
+    }
+    return (info->raw_size <= (dst_size - hdr_size)) ? RT_TRUE : RT_FALSE;
+}
 
 static fw_info_t fw_info;
 static rt_uint8_t g_cmprs_buf[QBOOT_CMPRS_BUF_SIZE]; /* Decompression buffer. */
@@ -312,15 +382,8 @@ rt_weak rt_bool_t qbt_dest_part_verify(void *handle, rt_uint32_t part_len, const
     return RT_TRUE;
 }
 
-/**
- * @brief Check firmware package header and body CRC.
- *
- * @param fw_handle Firmware package handle.
- * @param part_len  Package length in bytes.
- * @param name      Package name for logs.
- * @param fw_info   Output firmware header.
- *
- * @return RT_TRUE when package is valid, RT_FALSE otherwise.
+/* Validate the RBL header first, then verify the encoded package body and
+ * optional raw application CRC according to the parsed algorithm metadata.
  */
 rt_weak rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char *name, fw_info_t *fw_info)
 {
@@ -341,6 +404,12 @@ rt_weak rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char
         return RT_FALSE;
     }
 
+    if (!qbt_fw_package_size_accepts(part_len, fw_info))
+    {
+        LOG_E("Qboot firmware check fail. partition \"%s\" size invalid.", name);
+        return RT_FALSE;
+    }
+
     if (!qbt_fw_crc_check(fw_handle, name, qboot_src_read_pos(), fw_info->pkg_size, fw_info->pkg_crc))
     {
         LOG_E("Qboot firmware check fail. partition \"%s\" body check fail.", name);
@@ -349,7 +418,7 @@ rt_weak rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char
 
 #ifdef QBOOT_USING_APP_CHECK
     /*
-    * The difference algorithm does not support streaming decompression. Therefore, 
+    * The difference algorithm does not support streaming decompression. Therefore,
     * it cannot support the CRC check of the app and can only rely on the CRC of the package.
     */
     if((fw_info->algo & QBOOT_ALGO_CMPRS_MASK) != QBOOT_ALGO_CMPRS_HPATCHLITE)
@@ -384,6 +453,12 @@ rt_weak rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char
 static rt_bool_t qbt_fw_update(void *dst_handle, rt_uint32_t dst_size, const char *dst_name, void *src_handle, const char *src_name, fw_info_t *fw_info)
 {
     rt_bool_t rst;
+
+    if (!qbt_fw_destination_size_accepts(dst_size, fw_info))
+    {
+        LOG_E("Qboot firmware update fail. destination size invalid.");
+        return RT_FALSE;
+    }
 
 #ifdef QBOOT_USING_STATUS_LED
     qled_set_blink(QBOOT_STATUS_LED_PIN, 50, 50);
@@ -427,11 +502,11 @@ __WEAK void qbt_jump_to_app(void)
 
     rt_kprintf("Jump to application running ... \n");
     rt_thread_mdelay(200);
-    
+
     __disable_irq();
     HAL_DeInit();
     HAL_RCC_DeInit();
-    
+
     SysTick->CTRL = 0;
     SysTick->LOAD = 0;
     SysTick->VAL = 0;
@@ -441,12 +516,12 @@ __WEAK void qbt_jump_to_app(void)
         HAL_NVIC_DisableIRQ(i);
         HAL_NVIC_ClearPendingIRQ(i);
     }
-    
+
     __set_CONTROL(0);
     __set_MSP(stk_addr);
-    
+
     app_func();//Jump to application running
-    
+
     LOG_E("Qboot jump to application fail.");
 }
 #else
@@ -751,13 +826,13 @@ static rt_bool_t qbt_app_resume_from(qbt_target_id_t src_id)
     }
 
 #ifdef QBOOT_USING_PRODUCT_CODE
-    if (rt_strcmp((char *)fw_info.prod_code, QBOOT_PRODUCT_CODE) != 0)
+    if (!qbt_product_code_match(fw_info.prod_code))
     {
         LOG_E("Qboot resume fail from %s.", src_desc->role_name);
-        LOG_E("The product code error. ");
+        LOG_E("The product code error.");
         goto exit;
     }
-#endif
+#endif /* QBOOT_USING_PRODUCT_CODE */
 
     if (rt_strcmp((char *)fw_info.part_name, app_desc->role_name) != 0)
     {
@@ -795,6 +870,7 @@ static rt_bool_t qbt_release_from_part(qbt_target_id_t src_id, rt_bool_t check_s
     rt_uint32_t src_size = 0;
     rt_uint32_t dst_size = 0;
     rt_bool_t rst = RT_FALSE;
+    fw_info_t src_fw_info;
     const qboot_store_desc_t *src_desc = qbt_target_desc(src_id);
 
     if (src_desc == RT_NULL || !qbt_target_open(src_id, &src_handle, &src_size, QBT_OPEN_READ))
@@ -807,25 +883,40 @@ static rt_bool_t qbt_release_from_part(qbt_target_id_t src_id, rt_bool_t check_s
     {
         goto exit;
     }
+    src_fw_info = fw_info;
 
 #ifdef QBOOT_USING_PRODUCT_CODE
-    if (rt_strcmp((char *)fw_info.prod_code, QBOOT_PRODUCT_CODE) != 0)
+    if (!qbt_product_code_match(fw_info.prod_code))
     {
         LOG_E("The product code error.");
         goto exit;
     }
-#endif
+#endif /* QBOOT_USING_PRODUCT_CODE */
 
-    if (check_sign)
+    /* Treat the release sign only as a fast-path hint. The destination image
+     * must still be verified before skipping release, because the APP partition
+     * may have been erased or corrupted after the sign was written. If the
+     * verification fails, restore the source package header since destination
+     * verification may overwrite the global fw_info.
+     */
+    dst_id = qbt_name_to_id((char *)fw_info.part_name);
+    if (check_sign && qbt_release_sign_check(src_handle, src_desc->role_name, &fw_info))
     {
-        if (qbt_release_sign_check(src_handle, src_desc->role_name, &fw_info))//not need release
+        if (dst_id < QBOOT_TARGET_COUNT &&
+            qbt_target_open(dst_id, &dst_handle, &dst_size, QBT_OPEN_READ))
         {
-            rst = RT_TRUE;
-            goto exit;
+            rst = qbt_dest_part_verify(dst_handle, dst_size, (char *)fw_info.part_name);
+            qbt_target_close(dst_handle);
+            dst_handle = RT_NULL;
+            if (rst)
+            {
+                LOG_I("Firmware package from %s already released.", src_desc->role_name);
+                goto exit;
+            }
+            fw_info = src_fw_info;
         }
     }
 
-    dst_id = qbt_name_to_id((char *)fw_info.part_name);
     if (dst_id >= QBOOT_TARGET_COUNT || !qbt_target_open(dst_id, &dst_handle, &dst_size, QBT_OPEN_WRITE | QBT_OPEN_CREATE))
     {
         LOG_E("The destination %s partition is not exist.", fw_info.part_name);
@@ -839,7 +930,11 @@ static rt_bool_t qbt_release_from_part(qbt_target_id_t src_id, rt_bool_t check_s
 
     if (!qbt_release_sign_check(src_handle, src_desc->role_name, &fw_info))
     {
-        qbt_release_sign_write(src_handle, src_desc->role_name, &fw_info);
+        if (!qbt_release_sign_write(src_handle, src_desc->role_name, &fw_info))
+        {
+            LOG_E("Release firmware fail. write release sign from %s failed.", src_desc->role_name);
+            goto exit;
+        }
     }
 
     LOG_I("Release firmware success from %s to %s.", src_desc->role_name, fw_info.part_name);
@@ -857,6 +952,20 @@ exit:
     return rst;
 }
 
+#ifdef QBOOT_CI_HOST_TEST
+/**
+ * @brief Release firmware from DOWNLOAD to APP for host-side CI simulation.
+ *
+ * @param check_sign RT_TRUE to skip an already released package.
+ *
+ * @return RT_TRUE on release success, RT_FALSE otherwise.
+ */
+rt_bool_t qbt_ci_release_from_download(rt_bool_t check_sign)
+{
+    return qbt_release_from_part(QBOOT_TARGET_DOWNLOAD, check_sign);
+}
+#endif /* QBOOT_CI_HOST_TEST */
+
 /**
  * @brief Main qboot thread entry.
  *
@@ -865,6 +974,8 @@ exit:
 static void qbt_thread_entry(void *params)
 {
 #define QBOOT_REBOOT_DELAY_MS 5000
+
+    RT_UNUSED(params);
 
 #ifdef QBOOT_USING_SHELL
     rt_thread_mdelay(2);

@@ -14,6 +14,10 @@
  */
 #include <qboot.h>
 
+#ifdef QBOOT_CI_HOST_TEST
+#include "qboot_host_flash.h"
+#endif /* QBOOT_CI_HOST_TEST */
+
 #ifdef QBOOT_PKG_SOURCE_CUSTOM
 
 #define DBG_TAG "qb_custom"
@@ -260,6 +264,12 @@ static rt_err_t qbt_custom_sign_read(void *handle, rt_bool_t *released, const fw
 {
     rt_uint32_t pos = (((qboot_src_read_pos() + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
     rt_uint32_t release_sign = 0;
+#ifdef QBOOT_CI_HOST_TEST
+    if (qboot_host_fault_check_id(QBOOT_HOST_FAULT_SIGN_READ, QBOOT_TARGET_DOWNLOAD))
+    {
+        return -RT_ERROR;
+    }
+#endif /* QBOOT_CI_HOST_TEST */
     if (qbt_custom_read(handle, pos, (rt_uint8_t *)&release_sign, sizeof(rt_uint32_t)) != RT_EOK)
     {
         LOG_E("CUSTOM sign read fail at pos=%u.", (unsigned int)pos);
@@ -281,6 +291,12 @@ static rt_err_t qbt_custom_sign_write(void *handle, const fw_info_t *fw_info)
 {
     rt_uint32_t release_sign = QBOOT_RELEASE_SIGN_WORD;
     rt_uint32_t pos = (((qboot_src_read_pos() + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
+#ifdef QBOOT_CI_HOST_TEST
+    if (qboot_host_fault_check_id(QBOOT_HOST_FAULT_SIGN_WRITE, QBOOT_TARGET_DOWNLOAD))
+    {
+        return -RT_ERROR;
+    }
+#endif /* QBOOT_CI_HOST_TEST */
     if (qbt_custom_write(handle, pos, (rt_uint8_t *)&release_sign, sizeof(rt_uint32_t)) != RT_EOK)
     {
         LOG_E("CUSTOM sign write fail at pos=%u.", (unsigned int)pos);

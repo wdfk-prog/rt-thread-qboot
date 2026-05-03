@@ -78,6 +78,7 @@ static int qbt_gzip_decompress(rt_uint8_t *out_buf, rt_uint32_t out_buf_size)
     {
     case Z_NEED_DICT:
         ret = Z_DATA_ERROR;
+        /* fall through */
     case Z_DATA_ERROR:
     case Z_MEM_ERROR:
         inflateEnd(&qbt_strm);
@@ -188,7 +189,7 @@ static rt_err_t qbt_algo_gzip_decompress(const qbt_stream_buf_t *buf, qbt_stream
     {
         return -RT_ENOSPC;                                   /**< Request more input. */
     }
-    if (out->produced == 0)                                  /**< Produced nothing in a successful call. */
+    if ((out->consumed == 0) && (out->produced == 0))         /**< Finished without flushed data. */
     {
         LOG_E("Qboot gzip decompress error. consumed=%u produced=%u end=%d", (rt_uint32_t)out->consumed, (rt_uint32_t)out->produced, is_end);
         return -RT_ERROR;

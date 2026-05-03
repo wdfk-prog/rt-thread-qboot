@@ -1,12 +1,12 @@
 /**
  * @file qboot_cfg.h
- * @brief 
+ * @brief
  * @author qiyongzhong
  * @version 1.0
  * @date 2020-07-06
- * 
- * @copyright Copyright (c) 2026  
- * 
+ *
+ * @copyright Copyright (c) 2026
+ *
  * @note :
  * @par Change Log:
  * Date       Version Author      Description
@@ -20,12 +20,6 @@
 
 //#define QBOOT_DEBUG
 #define QBOOT_USING_LOG
-#ifdef QBOOT_DEBUG
-#define DBG_LVL DBG_LOG
-#else
-#define DBG_LVL DBG_INFO
-#endif
-
 #ifdef QBOOT_USING_LOG
 #ifndef DBG_ENABLE
 #define DBG_ENABLE
@@ -51,7 +45,10 @@
 #define QBOOT_RELEASE_SIGN_ALIGN_SIZE 8//can is 4, 8, 16
 #define QBOOT_RELEASE_SIGN_WORD       0x5555AAAA
 
+#ifndef QBOOT_BUF_SIZE
+/** @brief Default QBoot work buffer size in bytes. */
 #define QBOOT_BUF_SIZE 4096//must is 4096
+#endif /* QBOOT_BUF_SIZE */
 #if (defined(QBOOT_USING_QUICKLZ) || defined(QBOOT_USING_FASTLZ))
 #define QBOOT_CMPRS_READ_SIZE 4096 //it can is 512, 1024, 2048, 4096,
 #define QBOOT_CMPRS_BUF_SIZE  (QBOOT_BUF_SIZE + QBOOT_CMPRS_READ_SIZE + 32)
@@ -99,7 +96,7 @@
 #endif
 #endif
 
-/* The character name is used for fw_info.part_name matching and log output, 
+/* The character name is used for fw_info.part_name matching and log output,
  * and should remain stable to avoid compatibility issues. */
 #define QBOOT_APP_PART_NAME         "app"
 #define QBOOT_DOWNLOAD_PART_NAME    "download"
@@ -176,6 +173,11 @@
 #define QBOOT_AES_KEY "0123456789ABCDEF0123456789ABCDEF"
 #endif
 #endif
+
+#ifndef QBOOT_CURRENT_FW_VER
+/** @brief Current application version used by optional anti-rollback checks. */
+#define QBOOT_CURRENT_FW_VER ""
+#endif /* QBOOT_CURRENT_FW_VER */
 
 #ifdef QBOOT_USING_PRODUCT_INFO
 #ifndef QBOOT_PRODUCT_NAME

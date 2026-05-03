@@ -1,12 +1,12 @@
 /**
  * @file qboot_stream.c
- * @brief 
+ * @brief
  * @author wdfk-prog ()
  * @version 1.0
  * @date 2026-01-15
- * 
- * @copyright Copyright (c) 2026  
- * 
+ *
+ * @copyright Copyright (c) 2026
+ *
  * @note :
  * @par Change Log:
  * Date       Version Author      Description
@@ -76,7 +76,7 @@ static rt_err_t qbt_decompress_with_consumer(const qbt_algo_context_t *algo_ops,
 {
     rt_uint32_t cmprs_len = stream_buf->in_len;
     rt_uint32_t remaining_out = cmprs_ctx->raw_remaining;
-    qbt_stream_status_t step = { 0 };
+    qbt_stream_status_t step = {0};
     rt_err_t rst = RT_EOK;
 
     /* Keep looping while output budget remains. */
@@ -84,15 +84,15 @@ static rt_err_t qbt_decompress_with_consumer(const qbt_algo_context_t *algo_ops,
     {
         /* (1) Build per-iteration context and decide empty-input flush. */
         rt_uint32_t cur_cap = (remaining_out < stream_buf->out_len) ? remaining_out : stream_buf->out_len; /**< Output cap for this iteration. */
-        qbt_stream_ctx_t call_ctx = *cmprs_ctx; /**< Local context copy. */
-        call_ctx.raw_remaining = remaining_out; /**< Refresh remaining raw budget. */
-        call_ctx.consumed = cmprs_ctx->consumed + out->consumed; /**< Update consumed offset. */
+        qbt_stream_ctx_t call_ctx = *cmprs_ctx;                                                            /**< Local context copy. */
+        call_ctx.raw_remaining = remaining_out;                                                            /**< Refresh remaining raw budget. */
+        call_ctx.consumed = cmprs_ctx->consumed + out->consumed;                                           /**< Update consumed offset. */
 
         if (cmprs_len == 0) /**< No buffered compressed input. */
         {
             if (call_ctx.consumed < call_ctx.total) /**< Stream not ended. */
             {
-                break;  /**< Wait for more input. */
+                break; /**< Wait for more input. */
             }
             else
             {
@@ -101,15 +101,15 @@ static rt_err_t qbt_decompress_with_consumer(const qbt_algo_context_t *algo_ops,
         }
 
         /* (2) Invoke decompressor and validate progress paths. */
-        qbt_stream_buf_t io = { stream_buf->in, (rt_uint32_t)cmprs_len, stream_buf->out, cur_cap };
+        qbt_stream_buf_t io = {stream_buf->in, (rt_uint32_t)cmprs_len, stream_buf->out, cur_cap};
         rst = algo_ops->cmprs_ops->decompress(&io, &step, &call_ctx);
         if (rst == -RT_ENOSPC) /**< Need more input data. */
         {
             break;
         }
-        else if ((rst != RT_EOK)                  /**< Decompress failed. */
-                 || (step.consumed > cmprs_len)   /**< Consumed more input than available. */
-                 || (step.produced > cur_cap))    /**< Produced more output than buffer capacity. */
+        else if ((rst != RT_EOK)                /**< Decompress failed. */
+                 || (step.consumed > cmprs_len) /**< Consumed more input than available. */
+                 || (step.produced > cur_cap))  /**< Produced more output than buffer capacity. */
         {
             break;
         }
@@ -119,10 +119,13 @@ static rt_err_t qbt_decompress_with_consumer(const qbt_algo_context_t *algo_ops,
         }
 
         /* (3) Dispatch output and update counters/budget. */
-        rst = consumer(stream_buf->out, step.produced, consumer_ctx);
-        if (rst != RT_EOK)
+        if (step.produced > 0)
         {
-            break;
+            rst = consumer(stream_buf->out, step.produced, consumer_ctx);
+            if (rst != RT_EOK)
+            {
+                break;
+            }
         }
 
         /* Accumulate output and enforce the optional total output cap. */
@@ -154,39 +157,68 @@ rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_
                                 qbt_stream_proc_t proc, void *proc_ctx)
 {
     /* Track package read position, raw output position, and buffered input length. */
-    rt_uint32_t src_read_pos =  qboot_src_read_pos();
-    rt_uint32_t pkg_size = cfg->fw_info->pkg_size + qboot_src_read_pos();
+    rt_uint32_t src_read_pos = (rt_uint32_t)qboot_src_read_pos();
+    rt_uint32_t pkg_size = cfg->fw_info->pkg_size + (rt_uint32_t)qboot_src_read_pos();
     rt_uint32_t raw_pos = 0;
     rt_uint32_t cmprs_len = 0;
 
     /* Continue until the expected raw size has been produced. */
     while (raw_pos < cfg->fw_info->raw_size)
     {
+        rt_uint32_t remain_len;
+
+        if (src_read_pos > pkg_size)
+        {
+            LOG_E("Qboot stream read pkg error. read beyond pkg size %u.",
+                  (unsigned int)(src_read_pos - pkg_size));
+            return RT_FALSE;
+        }
+
         /* Limit read length to remaining package bytes. */
-        int remain_len = pkg_size - src_read_pos;
+        remain_len = pkg_size - src_read_pos;
         if (remain_len > 0)
         {
+            rt_uint32_t free_len = QBOOT_CMPRS_BUF_SIZE - cmprs_len;
             rt_uint32_t read_len = QBOOT_CMPRS_READ_SIZE;
+
             if (read_len > remain_len)
             {
                 read_len = remain_len;
             }
-
-            /* Read (and decrypt if required) into the tail of the compressed buffer. */
-            if (!qbt_fw_pkg_read(cfg->src_handle, src_read_pos, cfg->cmprs_buf + cmprs_len, cfg->crypt_buf, read_len, cfg->algo_ops))
+            if (read_len > free_len)
             {
-                LOG_E("Qboot stream read pkg error. addr=%08X, len=%d", src_read_pos, read_len);
-                return RT_FALSE;
+                read_len = free_len;
             }
 
-            /* Advance read position and update buffered compressed length. */
-            src_read_pos += read_len;
-            cmprs_len += (rt_uint32_t)read_len;
-        }
-        else if (remain_len < 0)
-        {
-            LOG_E("Qboot stream read pkg error. read beyond pkg size %d.", remain_len);
-            return RT_FALSE;
+#ifdef QBOOT_USING_AES
+            if ((cfg->algo_ops->crypt_ops != RT_NULL) &&
+                (cfg->algo_ops->crypt_ops->crypto_id == QBOOT_ALGO_CRYPT_AES))
+            {
+                read_len &= ~((rt_uint32_t)16u - 1u);
+            }
+#endif /* QBOOT_USING_AES */
+
+            if (read_len > 0)
+            {
+                /* Read and decrypt into the tail of the compressed buffer. */
+                if (!qbt_fw_pkg_read(cfg->src_handle, src_read_pos,
+                                     cfg->cmprs_buf + cmprs_len,
+                                     cfg->crypt_buf, read_len,
+                                     cfg->algo_ops))
+                {
+                    LOG_E("Qboot stream read pkg error. addr=%08X, len=%u",
+                          src_read_pos, (unsigned int)read_len);
+                    return RT_FALSE;
+                }
+
+                src_read_pos += read_len;
+                cmprs_len += read_len;
+            }
+            else if (cmprs_len == 0)
+            {
+                LOG_E("Qboot stream read pkg error. no readable input block.");
+                return RT_FALSE;
+            }
         }
         else if (cmprs_len == 0)
         {
@@ -209,14 +241,14 @@ rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_
             ((qbt_stream_state_t *)proc_ctx)->raw_pos = raw_pos;
         }
         rt_err_t rst = proc(cfg->algo_ops, &stream_buf, &cmprs_ctx, &out, proc_ctx);
-        if ((rst != RT_EOK && rst != -ENOSPC) || out.produced <= 0)
+        if ((rst != RT_EOK && rst != -ENOSPC) || ((out.consumed == 0) && (out.produced == 0)))
         {
-            LOG_E("Qboot stream process error %d. addr=0X%08X, out_len = %d", rst, raw_pos, out.produced);
+            LOG_E("Qboot stream process error %d. addr=0X%08X, in_len = %d, out_len = %d", rst, raw_pos, out.consumed, out.produced);
             return RT_FALSE;
         }
         cmprs_len = stream_buf.in_len;
 
-        /* Advance raw output position. */
+        /* Advance raw output position when the algorithm produced bytes. */
         raw_pos += (rt_uint32_t)out.produced;
     }
 

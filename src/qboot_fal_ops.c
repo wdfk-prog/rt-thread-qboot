@@ -14,6 +14,10 @@
  */
 #include <qboot.h>
 
+#ifdef QBOOT_CI_HOST_TEST
+#include "qboot_host_flash.h"
+#endif /* QBOOT_CI_HOST_TEST */
+
 #ifdef QBOOT_PKG_SOURCE_FAL
 
 #include <fal.h>

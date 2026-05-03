@@ -32,7 +32,8 @@ static tiny_aes_context qbt_aes_ctx;
  */
 void qbt_aes_decrypt_init(void)
 {
-    int len = strlen(QBOOT_AES_IV);
+    size_t len = strlen(QBOOT_AES_IV);
+
     if (len > sizeof(qbt_aes_iv))
     {
         len = sizeof(qbt_aes_iv);
