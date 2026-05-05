@@ -124,9 +124,53 @@ void qbt_update_mgr_on_data_len(rt_uint32_t bytes);
 
 void qbt_update_mgr_on_finish(rt_bool_t ok);
 void qbt_update_mgr_on_abort(void);
+#ifdef QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
+/**
+ * @brief Open and erase the DOWNLOAD target for a helper-driven update.
+ *
+ * @return RT_TRUE on success, RT_FALSE otherwise.
+ */
 rt_bool_t qbt_update_mgr_download_begin(void);
+
+/**
+ * @brief Write one data block into the active DOWNLOAD target.
+ *
+ * This helper is a storage-session primitive only. It does not infer,
+ * accumulate, or validate the complete object length. Packet ordering,
+ * retry, duplicate, overlap, gap, declared total size, and transport-level
+ * completeness are owned by the protocol adapter. Package-level size and
+ * integrity are validated later by the firmware parser/release path.
+ *
+ * @param offset Byte offset selected by the caller.
+ * @param data   Data buffer to write.
+ * @param size   Data size in bytes.
+ *
+ * @return RT_TRUE on successful backend write, RT_FALSE otherwise.
+ */
 rt_bool_t qbt_update_mgr_download_write(rt_uint32_t offset, rt_uint8_t *data, rt_uint32_t size);
+
+/**
+ * @brief Finish and close the active helper-driven DOWNLOAD session.
+ *
+ * The @p ok argument is a caller-owned completion verdict. Passing RT_TRUE
+ * means the protocol adapter has accepted the received object according to
+ * its own length, ordering, and integrity rules. This helper does not perform
+ * an independent received-length check before marking the DOWNLOAD target
+ * available for the subsequent firmware check/release path.
+ *
+ * @param ok RT_TRUE when the caller has accepted the complete download body.
+ *
+ * @return RT_TRUE when an active helper session was closed, RT_FALSE otherwise.
+ */
+rt_bool_t qbt_update_mgr_download_finish(rt_bool_t ok);
+
+/**
+ * @brief Try to recover app from DOWNLOAD/FACTORY if present.
+ *
+ * @return RT_TRUE when a valid backup exists, RT_FALSE otherwise.
+ */
 rt_bool_t qbt_update_mgr_try_recover(void);
+#endif /* QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER */
 
 #ifdef __cplusplus
 }

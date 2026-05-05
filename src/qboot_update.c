@@ -98,7 +98,12 @@ typedef struct
     const qboot_store_desc_t *desc;
     /** @brief Active download target handle. */
     void *handle;
-    /** @brief Download target size in bytes. */
+    /**
+     * @brief Download target capacity or backend-reported object size.
+     *
+     * This field is not a received-length accumulator. The protocol adapter
+     * and package parser own complete-object length validation.
+     */
     rt_uint32_t size;
     /** @brief Download validity flag used by fw_check helper. */
     rt_bool_t ok;
@@ -108,11 +113,18 @@ typedef struct
 static qbt_update_download_ctx_t s_dl = {0};
 
 /*--------------------WEAK FUNCTIONS ------------------------------------------ */
+#if !defined(QBOOT_CI_HOST_RBL_PACKAGE_TEST)
 /**
- * @brief Fill firmware header information for update flow.
+ * @brief Fill firmware header information for the weak raw-helper flow.
+ *
+ * This weak fallback does not parse an RBL package header. It trusts the
+ * storage backend's reported effective object length as both raw_size and
+ * pkg_size. Backends or protocol adapters that need exact received-length
+ * semantics must provide that effective length themselves, or replace this
+ * weak function with a package-aware implementation.
  *
  * @param fw_handle Firmware storage handle (unused).
- * @param part_len  Total partition length in bytes.
+ * @param part_len  Effective source length reported by the storage backend.
  * @param name      Target name (unused).
  * @param fw_info   Output firmware header structure.
  *
@@ -148,7 +160,8 @@ rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char *name, 
         return RT_FALSE;
     }
 
-    LOG_D("fw_check part=%s allow=%d", name, allow);
+    LOG_D("fw_check part=%s allow=%d size=%u", name, allow,
+          (unsigned int)part_len);
     if (allow == RT_FALSE)
     {
         return RT_FALSE;
@@ -161,6 +174,9 @@ rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char *name, 
 
     fw_info->algo = 0;
     rt_strcpy((char *)fw_info->part_name, QBOOT_APP_PART_NAME);
+    /* The helper does not track received length. Backends that support raw
+     * helper recovery must report the effective object length through size().
+     */
     fw_info->raw_size = part_len;
     fw_info->pkg_size = part_len;
     return RT_TRUE;
@@ -177,11 +193,15 @@ rt_bool_t qbt_fw_check(void *fw_handle, rt_uint32_t part_len, const char *name, 
  */
 rt_bool_t qbt_dest_part_verify(void *handle, rt_uint32_t part_len, const char *name)
 {
+    RT_UNUSED(handle);
+    RT_UNUSED(part_len);
+    RT_UNUSED(name);
+
     return RT_TRUE;
 }
 
 /**
- * @brief Return source read position for firmware header.
+ * @brief Return source read position for raw download-helper payloads.
  *
  * @return Read offset in bytes.
  */
@@ -189,6 +209,7 @@ rt_int32_t qboot_src_read_pos(void)
 {
     return 0;
 }
+#endif /* !defined(QBOOT_CI_HOST_RBL_PACKAGE_TEST) */
 
 /**
  * @brief Close and reset download handle.
@@ -225,7 +246,10 @@ rt_bool_t qbt_update_mgr_download_begin(void)
     {
         return RT_FALSE;
     }
-    /* Start a new session with download validity cleared. */
+    /* Start a new session with download validity cleared. No received-length
+     * state is created here; the protocol adapter and firmware package
+     * parser own complete-object length validation.
+     */
     qbt_update_mgr_download_cleanup();
     qbt_update_mgr_set_download_ok(RT_FALSE);
     if (!qbt_target_open(QBOOT_TARGET_DOWNLOAD, &s_dl.handle, &s_dl.size, QBT_OPEN_WRITE | QBT_OPEN_CREATE | QBT_OPEN_TRUNC))
@@ -245,9 +269,15 @@ rt_bool_t qbt_update_mgr_download_begin(void)
 }
 
 /**
- * @brief Write a download data block and refresh activity timestamps.
+ * @brief Write a download data block at a caller-selected offset.
  *
- * @param offset Byte offset to write.
+ * This helper is a storage-session primitive only. Packet ordering, retry,
+ * duplicate, overlap, gap, declared total size, transport completeness, and
+ * complete-object length validation belong to the protocol adapter and later
+ * firmware parser/release path. This function only forwards the write to the
+ * active DOWNLOAD backend.
+ *
+ * @param offset Byte offset selected by the caller.
  * @param data   Data buffer.
  * @param size   Bytes to write.
  *
@@ -259,14 +289,55 @@ rt_bool_t qbt_update_mgr_download_write(rt_uint32_t offset, rt_uint8_t *data, rt
     {
         return RT_FALSE;
     }
-    if (_header_io_ops->write(s_dl.handle, offset, data, size) != RT_EOK)
+    if (data == RT_NULL || size == 0u)
     {
-        qbt_update_mgr_on_finish(RT_FALSE);
-        qbt_update_mgr_download_cleanup();
+        qbt_update_mgr_download_finish(RT_FALSE);
         return RT_FALSE;
     }
+    /* Do not enforce packet ordering or received-length policy here.
+     * Protocol adapters own offset/completeness policy, and storage backends
+     * own capacity checks.
+     */
+    if (_header_io_ops->write(s_dl.handle, offset, data, size) != RT_EOK)
+    {
+        qbt_update_mgr_download_finish(RT_FALSE);
+        return RT_FALSE;
+    }
+
     qbt_update_mgr_on_data();
     qbt_update_mgr_on_data_len(size);
+    return RT_TRUE;
+}
+
+/**
+ * @brief Finish the active download helper session.
+ *
+ * The @p ok argument is a caller-owned completion verdict. Passing RT_TRUE
+ * means the protocol adapter has already accepted the received object. This
+ * helper does not perform an independent received-length check before making
+ * the DOWNLOAD target available to the firmware check/release path.
+ *
+ * @param ok RT_TRUE when the caller has accepted the complete download body.
+ *
+ * @return RT_TRUE when an active helper session was closed, RT_FALSE otherwise.
+ */
+rt_bool_t qbt_update_mgr_download_finish(rt_bool_t ok)
+{
+    if (s_dl.handle == RT_NULL)
+    {
+        return RT_FALSE;
+    }
+
+    if (qbt_update_mgr_ops_ready() && s_mgr.state == QBT_UPD_STATE_RECV)
+    {
+        qbt_update_mgr_on_finish(ok);
+    }
+    else
+    {
+        qbt_update_mgr_set_download_ok(ok);
+    }
+
+    qbt_update_mgr_download_cleanup();
     return RT_TRUE;
 }
 
@@ -541,6 +612,10 @@ void qbt_update_mgr_on_abort(void)
         return;
     }
     s_mgr.ops->leave_download();
+#ifdef QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
+    qbt_update_mgr_set_download_ok(RT_FALSE);
+    qbt_update_mgr_download_cleanup();
+#endif /* QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER */
     /* Abort returns to wait state to allow retry. */
     qbt_update_mgr_set_state(QBT_UPD_STATE_WAIT);
 }

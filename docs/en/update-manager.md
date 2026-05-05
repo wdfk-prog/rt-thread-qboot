@@ -65,7 +65,29 @@ Good when:
 - you already have a full reception-storage flow
 - you only want the state-control logic
 
-## 7. State model
+## 7. Download helper length ownership
+
+`qbt_update_mgr_download_begin()`, `qbt_update_mgr_download_write()`, and
+`qbt_update_mgr_download_finish()` are storage-session helpers. They do not
+track the complete received length, enforce packet ordering, reject duplicate
+or overlapping writes, or compare a transport-level total size.
+
+The intended ownership is:
+
+- the protocol adapter owns transport-level total length, ordering, retry,
+  duplicate, overlap, and gap policy;
+- the storage backend owns write-range and capacity checks;
+- the firmware parser/release path owns package-level `pkg_size`, `raw_size`,
+  CRC, compression/decryption output size, and destination-size validation.
+
+Calling `qbt_update_mgr_download_finish(RT_TRUE)` means the caller has already
+accepted the received object. The helper does not independently prove that the
+object is complete. For RBL packages, malformed, truncated, oversized, zero-size,
+CRC-mismatched, and target-size-exceeded packages are rejected later by the
+firmware check/release path. Extra trailing bytes after the declared package
+body are accepted by current policy and ignored by package-size based parsing.
+
+## 8. State model
 
 The typical state meanings are:
 
@@ -73,7 +95,7 @@ The typical state meanings are:
 - **RECV**: receiving upgrade data
 - **READY**: ready for further processing or app handoff
 
-## 8. Integration advice
+## 9. Integration advice
 
 1. Define the upgrade input entry first
 2. Decide whether helper mode is needed
@@ -81,13 +103,13 @@ The typical state meanings are:
 4. Make recovery probing repeatable and side-effect aware
 5. Bring up reception first, then optimize progress logs and UI
 
-## 9. Relationship with other modules
+## 10. Relationship with other modules
 
 - works with custom reception protocols
 - works with custom/FAL/FS backends
 - works with APP validation and recovery logic to decide when APP can run
 
-## 10. Debug priorities
+## 11. Debug priorities
 
 Check these first:
 

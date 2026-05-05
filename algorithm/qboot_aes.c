@@ -20,7 +20,10 @@
 #include <tinycrypt.h>
 #include <string.h>
 
-static rt_uint8_t qbt_aes_iv[16];
+/** @brief AES-CBC block size in bytes. */
+#define QBT_AES_BLOCK_SIZE 16u
+
+static rt_uint8_t qbt_aes_iv[QBT_AES_BLOCK_SIZE];
 static tiny_aes_context qbt_aes_ctx;
 
 /**
@@ -52,10 +55,19 @@ void qbt_aes_decrypt_init(void)
  * @param[out] dst_buf  Pointer to the destination buffer for the decrypted data.
  * @param[in]  src_buf  Pointer to the source buffer containing the encrypted data.
  * @param[in]  len      The length, in bytes, of the data to be decrypted.
+ *
+ * @return RT_EOK on success, negative error code otherwise.
  */
-void qbt_aes_decrypt(rt_uint8_t *dst_buf, const rt_uint8_t *src_buf, rt_uint32_t len)
+rt_err_t qbt_aes_decrypt(rt_uint8_t *dst_buf, const rt_uint8_t *src_buf, rt_uint32_t len)
 {
-    tiny_aes_crypt_cbc(&qbt_aes_ctx, AES_DECRYPT, len, qbt_aes_iv, (rt_uint8_t *)src_buf, dst_buf);    
+    if ((dst_buf == RT_NULL) || (src_buf == RT_NULL) ||
+        ((len % QBT_AES_BLOCK_SIZE) != 0u))
+    {
+        return -RT_ERROR;
+    }
+    tiny_aes_crypt_cbc(&qbt_aes_ctx, AES_DECRYPT, len, qbt_aes_iv,
+                       (rt_uint8_t *)src_buf, dst_buf);
+    return RT_EOK;
 }
 
 /**
@@ -76,12 +88,11 @@ static rt_err_t qbt_algo_aes_init(void)
  * @param in  Input ciphertext buffer.
  * @param len Number of bytes to decrypt.
  *
- * @return RT_EOK on success.
+ * @return RT_EOK on success, negative error code otherwise.
  */
 static rt_err_t qbt_algo_aes_crypt(rt_uint8_t *out, const rt_uint8_t *in, rt_uint32_t len)
 {
-    qbt_aes_decrypt(out, in, len);
-    return RT_EOK;
+    return qbt_aes_decrypt(out, in, len);
 }
 
 /** AES crypto ops for Qboot. */

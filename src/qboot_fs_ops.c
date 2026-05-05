@@ -261,7 +261,7 @@ static rt_err_t qbt_fs_ioctl(void *handle, int cmd, void *arg)
  * @brief Read release sign marker from filesystem download storage.
  *
  * @param handle   Encoded target id (unused).
- * @param released Output flag, RT_TRUE when the marker word is valid.
+ * @param released Output flag, RT_TRUE when the marker prefix is valid.
  * @param fw_info  Firmware header context (unused).
  *
  * @return RT_EOK on success, negative error code otherwise.
