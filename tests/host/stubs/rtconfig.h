@@ -1,0 +1,102 @@
+#ifndef RTCONFIG_H
+#define RTCONFIG_H
+
+#define PKG_USING_QBOOT
+#define QBOOT_CI_HOST_TEST
+
+#if defined(QBOOT_HOST_BACKEND_NONE)
+/* Intentionally no storage backend: used by config-matrix expected-fail cases. */
+#elif defined(QBOOT_HOST_BACKEND_MIXED)
+#define QBOOT_HOST_BACKEND_CUSTOM
+#define QBOOT_HOST_BACKEND_FAL
+#define QBOOT_HOST_BACKEND_FS
+#define QBOOT_PKG_SOURCE_CUSTOM
+#define QBOOT_PKG_SOURCE_FAL
+#define QBOOT_PKG_SOURCE_FS
+#define QBOOT_APP_STORE_CUSTOM
+#define QBOOT_DOWNLOAD_STORE_FAL
+#define QBOOT_FACTORY_STORE_FS
+#define QBOOT_APP_FAL_PART_NAME        "app"
+#define QBOOT_DOWNLOAD_FAL_PART_NAME   "download"
+#define QBOOT_FACTORY_FAL_PART_NAME    "factory"
+#define QBOOT_APP_FILE_PATH            "_ci/host-sim/fs/app.bin"
+#define QBOOT_APP_SIGN_FILE_PATH       "_ci/host-sim/fs/app.sign"
+#define QBOOT_DOWNLOAD_FILE_PATH       "_ci/host-sim/fs/download.bin"
+#define QBOOT_DOWNLOAD_SIGN_FILE_PATH  "_ci/host-sim/fs/download.sign"
+#define QBOOT_FACTORY_FILE_PATH        "_ci/host-sim/fs/factory.bin"
+#define QBOOT_APP_FLASH_ADDR           0x08020000u
+#define QBOOT_APP_FLASH_LEN            0x00030000u
+#define QBOOT_DOWNLOAD_FLASH_ADDR      0x08060000u
+#define QBOOT_DOWNLOAD_FLASH_LEN       0x00050000u
+#define QBOOT_FACTORY_FLASH_ADDR       0x080B0000u
+#define QBOOT_FACTORY_FLASH_LEN        0x00010000u
+#elif defined(QBOOT_HOST_BACKEND_FAL)
+#define QBOOT_PKG_SOURCE_FAL
+#define QBOOT_APP_STORE_FAL
+#define QBOOT_DOWNLOAD_STORE_FAL
+#define QBOOT_FACTORY_STORE_FAL
+#define QBOOT_APP_FAL_PART_NAME        "app"
+#define QBOOT_DOWNLOAD_FAL_PART_NAME   "download"
+#define QBOOT_FACTORY_FAL_PART_NAME    "factory"
+#elif defined(QBOOT_HOST_BACKEND_FS)
+#define QBOOT_PKG_SOURCE_FS
+#define QBOOT_APP_STORE_FS
+#define QBOOT_DOWNLOAD_STORE_FS
+#define QBOOT_FACTORY_STORE_FS
+#define QBOOT_APP_FILE_PATH            "_ci/host-sim/fs/app.bin"
+#define QBOOT_APP_SIGN_FILE_PATH       "_ci/host-sim/fs/app.sign"
+#define QBOOT_DOWNLOAD_FILE_PATH       "_ci/host-sim/fs/download.bin"
+#define QBOOT_DOWNLOAD_SIGN_FILE_PATH  "_ci/host-sim/fs/download.sign"
+#define QBOOT_FACTORY_FILE_PATH        "_ci/host-sim/fs/factory.bin"
+#else
+#ifndef QBOOT_HOST_BACKEND_CUSTOM
+#define QBOOT_HOST_BACKEND_CUSTOM
+#endif
+#define QBOOT_PKG_SOURCE_CUSTOM
+#define QBOOT_APP_STORE_CUSTOM
+#define QBOOT_DOWNLOAD_STORE_CUSTOM
+#define QBOOT_FACTORY_STORE_CUSTOM
+#define QBOOT_APP_FLASH_ADDR           0x08020000u
+#define QBOOT_APP_FLASH_LEN            0x00030000u
+#define QBOOT_DOWNLOAD_FLASH_ADDR      0x08060000u
+#define QBOOT_DOWNLOAD_FLASH_LEN       0x00050000u
+#define QBOOT_FACTORY_FLASH_ADDR       0x080B0000u
+#define QBOOT_FACTORY_FLASH_LEN        0x00010000u
+#endif /* defined(QBOOT_HOST_BACKEND_NONE) */
+
+#define QBOOT_USING_PRODUCT_CODE
+#define QBOOT_PRODUCT_CODE "host-product"
+#if !defined(QBOOT_HOST_DISABLE_AES)
+#define QBOOT_USING_AES
+#endif /* !defined(QBOOT_HOST_DISABLE_AES) */
+#if !defined(QBOOT_HOST_DISABLE_GZIP)
+#define QBOOT_USING_GZIP
+#endif /* !defined(QBOOT_HOST_DISABLE_GZIP) */
+#if !defined(QBOOT_HOST_DISABLE_HPATCHLITE)
+#define QBOOT_USING_HPATCHLITE
+#if defined(QBOOT_HOST_HPATCH_STORAGE_SWAP)
+#define QBOOT_HPATCH_USE_STORAGE_SWAP
+#define QBOOT_HPATCH_SWAP_STORE_CUSTOM
+#define QBOOT_HPATCH_SWAP_FLASH_ADDR       0x080C0000u
+#define QBOOT_HPATCH_SWAP_FLASH_LEN        0x00030000u
+#define QBOOT_HPATCH_SWAP_OFFSET           0u
+#define QBOOT_HPATCH_COPY_BUFFER_SIZE      4096
+#else
+#define QBOOT_HPATCH_USE_RAM_BUFFER
+#endif /* defined(QBOOT_HOST_HPATCH_STORAGE_SWAP) */
+#endif /* !defined(QBOOT_HOST_DISABLE_HPATCHLITE) */
+
+#define QBOOT_USING_APP_CHECK
+#define QBOOT_USING_UPDATE_MGR
+#define QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
+
+#define QBOOT_HPATCH_RAM_BUFFER_SIZE       4096
+#define QBOOT_HPATCH_PATCH_CACHE_SIZE      1024
+#define QBOOT_HPATCH_DECOMPRESS_CACHE_SIZE 1024
+#define QBOOT_FLASH_ERASE_ALIGN            8u
+
+#define QBOOT_HOST_APP_LEN      0x00030000u
+#define QBOOT_HOST_DOWNLOAD_LEN 0x00050000u
+#define QBOOT_HOST_FACTORY_LEN  0x00010000u
+
+#endif /* RTCONFIG_H */
