@@ -214,24 +214,38 @@ rt_int32_t qboot_src_read_pos(void)
 /**
  * @brief Close and reset download handle.
  *
+ * @return RT_EOK on success, negative error code otherwise.
  */
-static void qbt_update_mgr_download_cleanup(void)
+static rt_err_t qbt_update_mgr_download_cleanup(void)
 {
+    rt_err_t result = RT_EOK;
+
     if (s_dl.handle != RT_NULL)
     {
-        qbt_target_close(s_dl.handle);
+        result = qbt_target_close(s_dl.handle);
         s_dl.handle = RT_NULL;
     }
+    return result;
 }
 
 /**
- * @brief Close and reset download handle.
+ * @brief Set helper download validity and close the active handle.
  *
+ * @param ok RT_TRUE when the download object is valid.
+ *
+ * @return RT_EOK on success, negative error code otherwise.
  */
-static void qbt_update_mgr_set_download_ok(rt_bool_t ok)
+static rt_err_t qbt_update_mgr_set_download_ok(rt_bool_t ok)
 {
+    rt_err_t result;
+
     s_dl.ok = ok;
-    qbt_update_mgr_download_cleanup();
+    result = qbt_update_mgr_download_cleanup();
+    if (result != RT_EOK)
+    {
+        s_dl.ok = RT_FALSE;
+    }
+    return result;
 }
 
 /**
@@ -250,8 +264,10 @@ rt_bool_t qbt_update_mgr_download_begin(void)
      * state is created here; the protocol adapter and firmware package
      * parser own complete-object length validation.
      */
-    qbt_update_mgr_download_cleanup();
-    qbt_update_mgr_set_download_ok(RT_FALSE);
+    if (qbt_update_mgr_set_download_ok(RT_FALSE) != RT_EOK)
+    {
+        return RT_FALSE;
+    }
     if (!qbt_target_open(QBOOT_TARGET_DOWNLOAD, &s_dl.handle, &s_dl.size, QBT_OPEN_WRITE | QBT_OPEN_CREATE | QBT_OPEN_TRUNC))
     {
         return RT_FALSE;
@@ -259,7 +275,7 @@ rt_bool_t qbt_update_mgr_download_begin(void)
     qbt_release_sign_clear(s_dl.handle, s_dl.desc->role_name, RT_NULL);
     if (qbt_erase_with_feed(s_dl.handle, 0, s_dl.size) != RT_EOK)
     {
-        qbt_update_mgr_download_cleanup();
+        (void)qbt_update_mgr_download_cleanup();
         return RT_FALSE;
     }
 
@@ -291,7 +307,7 @@ rt_bool_t qbt_update_mgr_download_write(rt_uint32_t offset, rt_uint8_t *data, rt
     }
     if (data == RT_NULL || size == 0u)
     {
-        qbt_update_mgr_download_finish(RT_FALSE);
+        (void)qbt_update_mgr_download_finish(RT_FALSE);
         return RT_FALSE;
     }
     /* Do not enforce packet ordering or received-length policy here.
@@ -300,7 +316,7 @@ rt_bool_t qbt_update_mgr_download_write(rt_uint32_t offset, rt_uint8_t *data, rt
      */
     if (_header_io_ops->write(s_dl.handle, offset, data, size) != RT_EOK)
     {
-        qbt_update_mgr_download_finish(RT_FALSE);
+        (void)qbt_update_mgr_download_finish(RT_FALSE);
         return RT_FALSE;
     }
 
@@ -319,26 +335,28 @@ rt_bool_t qbt_update_mgr_download_write(rt_uint32_t offset, rt_uint8_t *data, rt
  *
  * @param ok RT_TRUE when the caller has accepted the complete download body.
  *
- * @return RT_TRUE when an active helper session was closed, RT_FALSE otherwise.
+ * @return RT_EOK on success, negative error code otherwise.
  */
-rt_bool_t qbt_update_mgr_download_finish(rt_bool_t ok)
+rt_err_t qbt_update_mgr_download_finish(rt_bool_t ok)
 {
+    rt_err_t result;
+
     if (s_dl.handle == RT_NULL)
     {
-        return RT_FALSE;
+        return -RT_ERROR;
     }
 
     if (qbt_update_mgr_ops_ready() && s_mgr.state == QBT_UPD_STATE_RECV)
     {
-        qbt_update_mgr_on_finish(ok);
-    }
-    else
-    {
-        qbt_update_mgr_set_download_ok(ok);
+        result = qbt_update_mgr_on_finish(ok);
+        if (result != RT_EOK)
+        {
+            return result;
+        }
+        return (!ok || s_mgr.state == QBT_UPD_STATE_READY) ? RT_EOK : -RT_ERROR;
     }
 
-    qbt_update_mgr_download_cleanup();
-    return RT_TRUE;
+    return qbt_update_mgr_set_download_ok(ok);
 }
 
 /**
@@ -358,7 +376,10 @@ rt_bool_t qbt_update_mgr_try_recover(void)
         {
             ok = RT_TRUE;
         }
-        qbt_target_close(handle);
+        if (qbt_target_close(handle) != RT_EOK)
+        {
+            ok = RT_FALSE;
+        }
     }
 
     if (!ok && qbt_target_open(QBOOT_TARGET_FACTORY, &handle, &part_size, QBT_OPEN_READ))
@@ -367,7 +388,10 @@ rt_bool_t qbt_update_mgr_try_recover(void)
         {
             ok = RT_TRUE;
         }
-        qbt_target_close(handle);
+        if (qbt_target_close(handle) != RT_EOK)
+        {
+            ok = RT_FALSE;
+        }
     }
 
     return ok;
@@ -504,19 +528,32 @@ qbt_upd_state_t qbt_update_mgr_get_state(void)
 /**
  * @brief Notify bootloader that it's safe to jump to app.
  *
+ * @return RT_EOK on success, negative error code otherwise.
  */
-static void qbt_update_mgr_ready(void)
+static rt_err_t qbt_update_mgr_ready(void)
 {
+    rt_err_t result = RT_EOK;
+
     if (!qbt_update_mgr_ops_ready())
     {
-        return;
+        return -RT_ERROR;
     }
+#ifdef QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
+    result = qbt_update_mgr_download_cleanup();
+    if (result != RT_EOK)
+    {
+        s_dl.ok = RT_FALSE;
+        s_mgr.ready_flag = RT_FALSE;
+        s_mgr.state = QBT_UPD_STATE_ERROR;
+        s_mgr.ops->on_error(result);
+        qbt_update_mgr_set_state(QBT_UPD_STATE_WAIT);
+        return result;
+    }
+#endif /* QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER */
     s_mgr.ready_flag = RT_TRUE;
     qbt_update_mgr_set_state(QBT_UPD_STATE_READY);
-#ifdef QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
-    qbt_update_mgr_download_cleanup();
-#endif
     s_mgr.ops->on_ready_to_app();
+    return RT_EOK;
 }
 
 /**
@@ -573,32 +610,48 @@ void qbt_update_mgr_on_data(void)
 /**
  * @brief Handle download finish event.
  *
+ * The state machine always runs the normal finish handling for a valid RECV
+ * session. When helper cleanup fails, the session is treated as a failed
+ * download, the error callback receives the cleanup error, and the return
+ * value propagates the original backend error to the caller.
+ *
  * @param ok RT_TRUE when download completed successfully.
+ *
+ * @return RT_EOK on success, negative error code otherwise.
  */
-void qbt_update_mgr_on_finish(rt_bool_t ok)
+rt_err_t qbt_update_mgr_on_finish(rt_bool_t ok)
 {
+    rt_err_t result = RT_EOK;
+    int error_code = -RT_ERROR;
+
     if (!qbt_update_mgr_ops_ready() || s_mgr.state != QBT_UPD_STATE_RECV)
     {
-        return;
+        return -RT_ERROR;
     }
     s_mgr.ops->leave_download();
 
 #ifdef QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
-    qbt_update_mgr_set_download_ok(ok);
+    result = qbt_update_mgr_set_download_ok(ok);
+    if (result != RT_EOK)
+    {
+        ok = RT_FALSE;
+        error_code = result;
+    }
 #endif /* QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER */
     if (ok)
     {
         /* Download completed: allow qboot to proceed with release/apply. */
         s_mgr.ops->set_reason(QBT_UPD_REASON_DONE);
-        qbt_update_mgr_ready();
+        result = qbt_update_mgr_ready();
     }
     else
     {
         s_mgr.state = QBT_UPD_STATE_ERROR;
-        s_mgr.ops->on_error(-1);
+        s_mgr.ops->on_error(error_code);
         /* Go back to wait window after failure. */
         qbt_update_mgr_set_state(QBT_UPD_STATE_WAIT);
     }
+    return result;
 }
 
 /**
@@ -613,10 +666,15 @@ void qbt_update_mgr_on_abort(void)
     }
     s_mgr.ops->leave_download();
 #ifdef QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
-    qbt_update_mgr_set_download_ok(RT_FALSE);
-    qbt_update_mgr_download_cleanup();
+    rt_err_t result = qbt_update_mgr_set_download_ok(RT_FALSE);
+    if (result != RT_EOK)
+    {
+        s_mgr.state = QBT_UPD_STATE_ERROR;
+        s_mgr.ops->on_error(result);
+        return;
+    }
 #endif /* QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER */
-    /* Abort returns to wait state to allow retry. */
+    /* Abort returns to wait state only after helper cleanup succeeds. */
     qbt_update_mgr_set_state(QBT_UPD_STATE_WAIT);
 }
 
