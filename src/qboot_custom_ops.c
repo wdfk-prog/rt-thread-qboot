@@ -137,15 +137,24 @@ static rt_err_t qbt_custom_open(qbt_target_id_t id, void **handle, int flags)
 }
 
 /**
- * @brief Close custom backend handle (no-op).
+ * @brief Close custom backend handle.
  *
  * @param handle Backend handle.
  *
- * @return RT_EOK always.
+ * @return RT_EOK on success, negative error code otherwise.
  */
 static rt_err_t qbt_custom_close(void *handle)
 {
+#ifdef QBOOT_CI_HOST_TEST
+    const qboot_store_desc_t *desc = (const qboot_store_desc_t *)handle;
+
+    if (desc != RT_NULL && qboot_host_fault_check_id(QBOOT_HOST_FAULT_CLOSE, desc->id))
+    {
+        return -RT_ERROR;
+    }
+#else
     RT_UNUSED(handle);
+#endif /* QBOOT_CI_HOST_TEST */
     return RT_EOK;
 }
 

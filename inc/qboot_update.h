@@ -122,7 +122,14 @@ void qbt_update_mgr_on_data(void);
 void qbt_update_mgr_set_total(rt_uint32_t total_bytes);
 void qbt_update_mgr_on_data_len(rt_uint32_t bytes);
 
-void qbt_update_mgr_on_finish(rt_bool_t ok);
+/**
+ * @brief Handle a download finish event.
+ *
+ * @param ok RT_TRUE when the download completed successfully.
+ *
+ * @return RT_EOK on success, negative error code otherwise.
+ */
+rt_err_t qbt_update_mgr_on_finish(rt_bool_t ok);
 void qbt_update_mgr_on_abort(void);
 #ifdef QBOOT_UPDATE_MGR_USE_DOWNLOAD_HELPER
 /**
@@ -160,9 +167,9 @@ rt_bool_t qbt_update_mgr_download_write(rt_uint32_t offset, rt_uint8_t *data, rt
  *
  * @param ok RT_TRUE when the caller has accepted the complete download body.
  *
- * @return RT_TRUE when an active helper session was closed, RT_FALSE otherwise.
+ * @return RT_EOK on success, negative error code otherwise.
  */
-rt_bool_t qbt_update_mgr_download_finish(rt_bool_t ok);
+rt_err_t qbt_update_mgr_download_finish(rt_bool_t ok);
 
 /**
  * @brief Try to recover app from DOWNLOAD/FACTORY if present.

@@ -50,9 +50,34 @@ jobs:
           test -f .github/ci/qboot/prepare-stm32f407-base.sh
           test -f .github/ci/qboot/build-stm32f407-profile.sh
           test -f .github/ci/qboot/build-stm32f407-profiles.sh
+          test -f .github/ci/qboot/check-line-endings.sh
+          test -f .github/ci/qboot/build-host-sim.sh
+          test -f .github/ci/qboot/run-host-sim.sh
+          test -f .github/ci/qboot/run-config-matrix.sh
+          test -f .github/ci/qboot/run-host-sanitizer.sh
+          test -f .github/ci/qboot/run-host-static-checks.sh
+          test -f .github/ci/qboot/run-host-extended-coverage.sh
+          test -f .github/ci/qboot/check-host-sim-artifacts.sh
+          test -f .github/ci/qboot/run-rtthread-scons-matrix.sh
           test -f tools/package_tool.py
           test -f tests/test_package_tool.py
           test -f tests/test_package_tool_web.py
+          test -f tests/host/qboot_host_runner.c
+          test -f tests/host/qboot_host_flash.c
+          test -f tests/host/qboot_host_flash.h
+          test -f tests/host/qboot_host_crc32.c
+          test -f tests/host/qboot_host_tinycrypt.c
+          test -f tests/host/qboot_host_hpatchlite.c
+          test -f tests/host/stubs/dfs_romfs.h
+          test -f tests/host/stubs/dfs_file.h
+          test -f tests/host/stubs/dfs_fs.h
+          test -f tests/host/stubs/fal.h
+          test -f tests/host/qboot_host_fal.c
+          test -f tests/host/stubs/rtthread.h
+          test -f tests/host/stubs/rtconfig.h
+          test -f tests/host/stubs/rtdbg.h
+          test -f tests/host/stubs/crc32.h
+          test -f tests/host/stubs/tinycrypt.h
           test -f docs/package-tool/index.html
           test -f docs/package-tool/app.js
           test -f docs/package-tool/style.css
@@ -147,6 +172,88 @@ jobs:
               raise SystemExit(f'Kconfig:{opener_lineno}: unclosed {opener}')
           PY
 
+
+  host-upgrade-sim:
+    name: Host qboot upgrade simulation
+    runs-on: ubuntu-latest
+    needs:
+      - package-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check qboot CI script line endings
+        shell: bash
+        run: |
+          bash .github/ci/qboot/check-line-endings.sh \
+            .github/ci/qboot/*.sh \
+            .github/workflows/*.yml
+
+      - name: Install host simulation dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            cppcheck \
+            python3 \
+            zlib1g-dev
+
+      - name: Build host qboot simulator
+        shell: bash
+        run: bash .github/ci/qboot/build-host-sim.sh
+
+      - name: Run host qboot upgrade simulation
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p _ci/host-sim/logs
+          bash .github/ci/qboot/run-host-sim.sh | tee _ci/host-sim/logs/run-host-sim-ci.log
+
+      - name: Run host qboot config matrix
+        shell: bash
+        run: bash .github/ci/qboot/run-config-matrix.sh
+
+      - name: Run host qboot sanitizer checks
+        shell: bash
+        run: bash .github/ci/qboot/run-host-sanitizer.sh
+
+      - name: Run host qboot static checks
+        shell: bash
+        run: bash .github/ci/qboot/run-host-static-checks.sh
+
+      - name: Run host qboot extended coverage
+        shell: bash
+        run: bash .github/ci/qboot/run-host-extended-coverage.sh
+
+      - name: Validate board qboot smoke HIL template
+        shell: bash
+        run: QBOOT_BOARD_SMOKE_DRY_RUN=1 bash .github/ci/qboot/run-board-smoke-template.sh
+
+      - name: Check host qboot artifact consistency
+        shell: bash
+        run: bash .github/ci/qboot/check-host-sim-artifacts.sh _ci/host-sim/logs/run-host-sim-ci.log
+
+      - name: Upload host simulation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qboot-host-sim-artifacts
+          path: |
+            _ci/host-sim/fixtures
+            _ci/host-sim/logs
+            _ci/host-sim/config-matrix
+            _ci/host-sim/sanitizer
+            _ci/host-sim/static-checks
+            _ci/host-sim/extended-logs
+            _ci/host-sim/qboot_host_sim_summary.md
+            _ci/host-sim/extended_coverage_summary.md
+            _ci/host-sim/artifact_check_summary.md
+            _ci/host-sim/qboot_c_header.json
+            _ci/host-sim/qboot_py_header_expected.json
+          if-no-files-found: warn
+
   cppcheck-report:
     name: Static analysis with cppcheck
     runs-on: ubuntu-latest
@@ -226,6 +333,10 @@ jobs:
       - name: Build qboot profiles
         shell: bash
         run: bash .github/ci/qboot/build-stm32f407-profiles.sh
+
+      - name: Run RT-Thread SCons qboot matrix
+        shell: bash
+        run: bash .github/ci/qboot/run-rtthread-scons-matrix.sh
 
       - name: Upload STM32F407 build logs
         if: always()
