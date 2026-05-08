@@ -51,15 +51,25 @@ static rt_err_t qbt_fal_open(qbt_target_id_t id, void **handle, int flags)
 }
 
 /**
- * @brief Close FAL partition handle (no-op).
+ * @brief Close FAL partition handle.
  *
- * @param handle Partition handle (unused).
+ * @param handle Partition handle.
  *
- * @return RT_EOK always.
+ * @return RT_EOK on success, negative error code otherwise.
  */
 static rt_err_t qbt_fal_close(void *handle)
 {
+#ifdef QBOOT_CI_HOST_TEST
+    fal_partition_t part = (fal_partition_t)handle;
+    qbt_target_id_t id = part == RT_NULL ? QBOOT_TARGET_COUNT : qbt_name_to_id(part->name);
+
+    if (id < QBOOT_TARGET_COUNT && qboot_host_fault_check_id(QBOOT_HOST_FAULT_CLOSE, id))
+    {
+        return -RT_ERROR;
+    }
+#else
     RT_UNUSED(handle);
+#endif /* QBOOT_CI_HOST_TEST */
     return RT_EOK;
 }
 
@@ -189,6 +199,12 @@ static rt_err_t qbt_fal_sign_read(void *handle, rt_bool_t *released, const fw_in
     fal_partition_t part = (fal_partition_t)handle;
     rt_uint32_t pos = (((qboot_src_read_pos() + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
     rt_uint32_t release_sign = 0;
+#ifdef QBOOT_CI_HOST_TEST
+    if (qboot_host_fault_check_id(QBOOT_HOST_FAULT_SIGN_READ, QBOOT_TARGET_DOWNLOAD))
+    {
+        return -RT_ERROR;
+    }
+#endif /* QBOOT_CI_HOST_TEST */
     if (fal_partition_read(part, pos, (rt_uint8_t *)&release_sign, sizeof(rt_uint32_t)) < 0)
     {
         LOG_E("FAL sign read fail at pos=%u.", (unsigned int)pos);
@@ -198,11 +214,25 @@ static rt_err_t qbt_fal_sign_read(void *handle, rt_bool_t *released, const fw_in
     return RT_EOK;
 }
 
+/**
+ * @brief Write release sign to FAL package partition.
+ *
+ * @param handle  Partition handle.
+ * @param fw_info Firmware package metadata that determines sign position.
+ *
+ * @return RT_EOK on success, negative error code otherwise.
+ */
 static rt_err_t qbt_fal_sign_write(void *handle, const fw_info_t *fw_info)
 {
     fal_partition_t part = (fal_partition_t)handle;
     rt_uint32_t release_sign = QBOOT_RELEASE_SIGN_WORD;
     rt_uint32_t pos = (((qboot_src_read_pos() + fw_info->pkg_size) + (QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1)) & ~(QBOOT_RELEASE_SIGN_ALIGN_SIZE - 1));
+#ifdef QBOOT_CI_HOST_TEST
+    if (qboot_host_fault_check_id(QBOOT_HOST_FAULT_SIGN_WRITE, QBOOT_TARGET_DOWNLOAD))
+    {
+        return -RT_ERROR;
+    }
+#endif /* QBOOT_CI_HOST_TEST */
     if (fal_partition_write(part, pos, (rt_uint8_t *)&release_sign, sizeof(rt_uint32_t)) < 0)
     {
         LOG_E("FAL sign write fail at pos=%u.", (unsigned int)pos);
@@ -211,6 +241,17 @@ static rt_err_t qbt_fal_sign_write(void *handle, const fw_info_t *fw_info)
     return RT_EOK;
 }
 
+/**
+ * @brief Clear FAL release sign metadata.
+ *
+ * The FAL backend rewrites the release sign in-place, so the host model keeps
+ * clear as a no-op.
+ *
+ * @param handle  Partition handle (unused).
+ * @param fw_info Firmware package metadata (unused).
+ *
+ * @return RT_EOK always.
+ */
 static rt_err_t qbt_fal_sign_clear(void *handle, const fw_info_t *fw_info)
 {
     RT_UNUSED(handle);

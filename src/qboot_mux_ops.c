@@ -137,14 +137,13 @@ static rt_err_t qbt_mux_open(qbt_target_id_t id, void **handle, int flags)
  *
  * @param handle Mux handle.
  *
- * @return RT_EOK on success.
+ * @return RT_EOK on success, negative error code otherwise.
  */
 static rt_err_t qbt_mux_close(void *handle)
 {
     qbt_mux_handle_t *mux_handle = (qbt_mux_handle_t *)(handle);
 
-    qbt_mux_backend_ops(mux_handle->backend)->close(mux_handle->backend_handle);
-    return RT_EOK;
+    return qbt_mux_backend_ops(mux_handle->backend)->close(mux_handle->backend_handle);
 }
 
 /**

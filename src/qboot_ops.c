@@ -364,13 +364,16 @@ rt_bool_t qbt_target_open(qbt_target_id_t id, void **handle, rt_uint32_t *out_si
  * @brief Close target handle opened by qbt_target_open.
  *
  * @param handle Target handle.
+ *
+ * @return RT_EOK on success, negative error code otherwise.
  */
-void qbt_target_close(void *handle)
+rt_err_t qbt_target_close(void *handle)
 {
-    if (handle != RT_NULL)
+    if (handle == RT_NULL)
     {
-        _header_io_ops->close(handle);
+        return RT_EOK;
     }
+    return _header_io_ops->close(handle);
 }
 
 /**
