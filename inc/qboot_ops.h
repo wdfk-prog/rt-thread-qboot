@@ -184,7 +184,7 @@ rt_bool_t qbt_release_sign_write(void *handle, const char *name, fw_info_t *fw_i
 rt_bool_t qbt_release_sign_clear(void *handle, const char *name, fw_info_t *fw_info);
 
 rt_bool_t qbt_target_open(qbt_target_id_t id, void **handle, rt_uint32_t *out_size, int flags);
-void qbt_target_close(void *handle);
+rt_err_t qbt_target_close(void *handle);
 const qboot_store_desc_t *qbt_target_desc(qbt_target_id_t id);
 qbt_target_id_t qbt_name_to_id(const char *name);
 rt_err_t qbt_erase_with_feed(void *handle, rt_uint32_t off, rt_uint32_t len);

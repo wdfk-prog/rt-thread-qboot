@@ -46,7 +46,7 @@ typedef struct
 #endif
 
     hpi_BOOL (*init)(hpatchi_instance_t *instance);                          /**< Prepare swap backend. */
-    void (*deinit)(hpatchi_instance_t *instance);                            /**< Cleanup swap backend. */
+    hpi_BOOL (*deinit)(hpatchi_instance_t *instance);                        /**< Cleanup swap backend. */
     hpi_BOOL (*append)(hpatchi_instance_t *instance, const hpi_byte *data,
                        hpi_size_t size);                                     /**< Append data to swap. */
     hpi_BOOL (*copy_to_old)(hpatchi_instance_t *instance, int size);         /**< Copy swap data to old partition. */
@@ -146,11 +146,26 @@ static hpi_BOOL _do_read_old(struct hpatchi_listener_t *listener, hpi_pos_t addr
 // FLASH Swap Strategy Implementation
 // -----------------------------------------------------------------------------
 #if defined(QBOOT_HPATCH_USE_STORAGE_SWAP)
+/**
+ * @brief Close HPatchLite swap partition during init cleanup.
+ *
+ * @param instance HPatchLite patch instance.
+ *
+ * @return Always hpi_FALSE; cleanup must not mask init failure.
+ */
+static hpi_BOOL qbt_flash_swap_close_on_init_fail(hpatchi_instance_t *instance)
+{
+    (void)qbt_target_close(instance->swap->part);
+
+    instance->swap->part = RT_NULL;
+    return hpi_FALSE;
+}
 
 /**
  * @brief Initialize FLASH swap backend.
  *
  * @param instance Patch instance.
+ *
  * @return hpi_TRUE on success, hpi_FALSE on failure.
  */
 static hpi_BOOL qbt_flash_swap_init(hpatchi_instance_t *instance)
@@ -158,7 +173,9 @@ static hpi_BOOL qbt_flash_swap_init(hpatchi_instance_t *instance)
     rt_uint32_t swap_part_size = 0;
     qbt_target_id_t swap_id = qbt_name_to_id(QBOOT_HPATCH_SWAP_PART_NAME);
 
-    if (swap_id >= QBOOT_TARGET_COUNT || !qbt_target_open(swap_id, &instance->swap->part, &swap_part_size, QBT_OPEN_WRITE | QBT_OPEN_CREATE))
+    if (swap_id >= QBOOT_TARGET_COUNT ||
+        !qbt_target_open(swap_id, &instance->swap->part, &swap_part_size,
+                         QBT_OPEN_WRITE | QBT_OPEN_CREATE))
     {
         LOG_E("Swap partition '%s' open fail.", QBOOT_HPATCH_SWAP_PART_NAME);
         return hpi_FALSE;
@@ -166,20 +183,23 @@ static hpi_BOOL qbt_flash_swap_init(hpatchi_instance_t *instance)
 
     if ((rt_uint32_t)QBOOT_HPATCH_SWAP_OFFSET >= swap_part_size)
     {
-        LOG_E("Swap offset %d out of range (size %u).", QBOOT_HPATCH_SWAP_OFFSET, swap_part_size);
-        qbt_target_close(instance->swap->part);
-        return hpi_FALSE;
+        LOG_E("Swap offset %d out of range (size %u).",
+              QBOOT_HPATCH_SWAP_OFFSET, swap_part_size);
+        return qbt_flash_swap_close_on_init_fail(instance);
     }
+
     instance->swap->part_size = (int)(swap_part_size - (rt_uint32_t)QBOOT_HPATCH_SWAP_OFFSET);
     instance->swap->capacity = instance->swap->part_size;
 
-    LOG_I("Erasing swap area '%s' (size: %d) before use...", QBOOT_HPATCH_SWAP_PART_NAME, instance->swap->part_size);
-    if (qbt_erase_with_feed(instance->swap->part, QBOOT_HPATCH_SWAP_OFFSET, instance->swap->part_size) != RT_EOK)
+    LOG_I("Erasing swap area '%s' (size: %d) before use...",
+          QBOOT_HPATCH_SWAP_PART_NAME, instance->swap->part_size);
+    if (qbt_erase_with_feed(instance->swap->part, QBOOT_HPATCH_SWAP_OFFSET,
+                            instance->swap->part_size) != RT_EOK)
     {
         LOG_E("Failed to erase swap partition '%s'!", QBOOT_HPATCH_SWAP_PART_NAME);
-        qbt_target_close(instance->swap->part);
-        return hpi_FALSE;
+        return qbt_flash_swap_close_on_init_fail(instance);
     }
+
     instance->swap->write_pos = 0;
     return hpi_TRUE;
 }
@@ -188,11 +208,19 @@ static hpi_BOOL qbt_flash_swap_init(hpatchi_instance_t *instance)
  * @brief Deinitialize FLASH swap backend.
  *
  * @param instance Patch instance.
+ *
+ * @return hpi_TRUE on success, hpi_FALSE on failure.
  */
-static void qbt_flash_swap_deinit(hpatchi_instance_t *instance)
+static hpi_BOOL qbt_flash_swap_deinit(hpatchi_instance_t *instance)
 {
-    qbt_target_close(instance->swap->part);
+    rt_err_t result = qbt_target_close(instance->swap->part);
+
     instance->swap->part = RT_NULL;
+    if (result != RT_EOK)
+    {
+        return hpi_FALSE;
+    }
+    return hpi_TRUE;
 }
 
 /**
@@ -297,10 +325,12 @@ static hpi_BOOL qbt_ram_swap_init(hpatchi_instance_t *instance)
  * @brief Deinitialize RAM swap backend.
  *
  * @param instance Patch instance.
+ * @return hpi_TRUE always.
  */
-static void qbt_ram_swap_deinit(hpatchi_instance_t *instance)
+static hpi_BOOL qbt_ram_swap_deinit(hpatchi_instance_t *instance)
 {
     RT_UNUSED(instance);
+    return hpi_TRUE;
 }
 
 /**
@@ -535,7 +565,7 @@ static hpi_BOOL _do_write_new(struct hpatchi_listener_t *listener, const hpi_byt
  * @param patch_file_len    Length of the patch data within the patch partition.
  * @param newer_file_len    Expected length of the new firmware after patching.
  * @param patch_file_offset Starting offset of the patch data within the patch partition.
- * @return 0 on success, non-zero on failure.
+ * @return RT_TRUE/non-zero on success, RT_FALSE/0 on failure.
  */
 int qbt_hpatchlite_release_from_part(void *patch_part, void *old_part, const char *patch_name, const char *old_name, int patch_file_len, int newer_file_len, int patch_file_offset)
 {
@@ -597,9 +627,9 @@ int qbt_hpatchlite_release_from_part(void *patch_part, void *old_part, const cha
         }
     }
 hpatch_cleanup:
-    if (swap_inited)
+    if (swap_inited && !instance.swap->deinit(&instance) && result == HPATCHI_SUCCESS)
     {
-        instance.swap->deinit(&instance);
+        result = HPATCHI_FILEWRITE_ERROR;
     }
     qbt_swap_free_buf(&instance);
 

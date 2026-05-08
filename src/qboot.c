@@ -288,16 +288,13 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
     if (algo_ops.cmprs_ops->cmprs_id == QBOOT_ALGO_CMPRS_HPATCHLITE)
     {
         extern int qbt_hpatchlite_release_from_part(void *patch_part, void *old_part, const char *patch_name, const char *old_name, int patch_file_len, int newer_file_len, int patch_file_offset);
-        if (qbt_hpatchlite_release_from_part(src_handle, dst_handle, src_name, dst_name, fw_info->pkg_size, fw_info->raw_size, qboot_src_read_pos()) == RT_TRUE)
+        if (qbt_hpatchlite_release_from_part(src_handle, dst_handle, src_name, dst_name, fw_info->pkg_size, fw_info->raw_size, qboot_src_read_pos()) != RT_TRUE)
         {
-            goto done;
+            goto cleanup;
         }
-        else
-        {
-            return RT_FALSE;
-        }
+        goto done;
     }
-#endif
+#endif /* QBOOT_USING_HPATCHLITE */
     rt_kprintf("Start erase partition %s ...\n", dst_name);
     if ((qbt_erase_with_feed(dst_handle, 0, fw_info->raw_size) != RT_EOK) || (qbt_erase_with_feed(dst_handle, dst_size - qboot_src_read_pos(), qboot_src_read_pos()) != RT_EOK))
     {
@@ -332,7 +329,7 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
 
 #ifdef QBOOT_USING_HPATCHLITE
 done:
-#endif
+#endif /* QBOOT_USING_HPATCHLITE */
     qbt_fw_algo_deinit(&algo_ops);
     if (!qbt_fw_info_write(dst_handle, dst_size, fw_info, RT_TRUE))
     {
@@ -341,6 +338,12 @@ done:
     }
 
     return RT_TRUE;
+
+#ifdef QBOOT_USING_HPATCHLITE
+cleanup:
+    qbt_fw_algo_deinit(&algo_ops);
+    return RT_FALSE;
+#endif /* QBOOT_USING_HPATCHLITE */
 }
 
 /**
@@ -816,7 +819,10 @@ static rt_bool_t qbt_app_resume_from(qbt_target_id_t src_id)
     {
         LOG_E("Qboot resume fail from %s.", src_desc->role_name);
         LOG_E("Destination partition %s is not exist.", app_desc ? app_desc->role_name : "app");
-        qbt_target_close(src_handle);
+        if (qbt_target_close(src_handle) != RT_EOK)
+        {
+            LOG_E("Qboot resume fail. close source target error.");
+        }
         return RT_FALSE;
     }
 
@@ -850,8 +856,16 @@ static rt_bool_t qbt_app_resume_from(qbt_target_id_t src_id)
     rst = RT_TRUE;
 
 exit:
-    qbt_target_close(src_handle);
-    qbt_target_close(dst_handle);
+    if (qbt_target_close(src_handle) != RT_EOK)
+    {
+        LOG_E("Qboot resume fail. close source target error.");
+        rst = RT_FALSE;
+    }
+    if (qbt_target_close(dst_handle) != RT_EOK)
+    {
+        LOG_E("Qboot resume fail. close destination target error.");
+        rst = RT_FALSE;
+    }
     return rst;
 }
 
@@ -906,7 +920,11 @@ static rt_bool_t qbt_release_from_part(qbt_target_id_t src_id, rt_bool_t check_s
             qbt_target_open(dst_id, &dst_handle, &dst_size, QBT_OPEN_READ))
         {
             rst = qbt_dest_part_verify(dst_handle, dst_size, (char *)fw_info.part_name);
-            qbt_target_close(dst_handle);
+            if (qbt_target_close(dst_handle) != RT_EOK)
+            {
+                LOG_E("Release firmware fail. close destination %s failed.", fw_info.part_name);
+                rst = RT_FALSE;
+            }
             dst_handle = RT_NULL;
             if (rst)
             {
@@ -927,6 +945,13 @@ static rt_bool_t qbt_release_from_part(qbt_target_id_t src_id, rt_bool_t check_s
     {
         goto exit;
     }
+    if (qbt_target_close(dst_handle) != RT_EOK)
+    {
+        LOG_E("Release firmware fail. close destination %s failed.", fw_info.part_name);
+        dst_handle = RT_NULL;
+        goto exit;
+    }
+    dst_handle = RT_NULL;
 
     if (!qbt_release_sign_check(src_handle, src_desc->role_name, &fw_info))
     {
@@ -943,11 +968,19 @@ static rt_bool_t qbt_release_from_part(qbt_target_id_t src_id, rt_bool_t check_s
 exit:
     if (dst_handle != RT_NULL)
     {
-        qbt_target_close(dst_handle);
+        if (qbt_target_close(dst_handle) != RT_EOK)
+        {
+            LOG_E("Release firmware fail. close destination target failed.");
+            rst = RT_FALSE;
+        }
     }
     if (src_handle != RT_NULL)
     {
-        qbt_target_close(src_handle);
+        if (qbt_target_close(src_handle) != RT_EOK)
+        {
+            LOG_E("Release firmware fail. close source target failed.");
+            rst = RT_FALSE;
+        }
     }
     return rst;
 }
@@ -1152,7 +1185,10 @@ static void qbt_fw_info_show(qbt_target_id_t part_id)
 
     if (!qbt_fw_check(handle, part_size, desc->role_name, &fw_info))
     {
-        qbt_target_close(handle);
+        if (qbt_target_close(handle) != RT_EOK)
+        {
+            rt_kprintf("Close %s partition fail.\n", desc->role_name);
+        }
         return;
     }
 
@@ -1171,7 +1207,10 @@ static void qbt_fw_info_show(qbt_target_id_t part_id)
     rt_kprintf("| Header crc            | %20X |\n", fw_info.hdr_crc);
     rt_kprintf("| Build timestamp       | %20d |\n", fw_info.time_stamp);
     rt_kprintf("\n");
-    qbt_target_close(handle);
+    if (qbt_target_close(handle) != RT_EOK)
+    {
+        rt_kprintf("Close %s partition fail.\n", desc->role_name);
+    }
 }
 /**
  * @brief Erase firmware in a target partition.
@@ -1262,6 +1301,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         void *src_handle = RT_NULL;
         void *dst_handle = RT_NULL;
         rt_uint32_t src_size = 0;
+        rt_bool_t rst = RT_FALSE;
         if (argc < 4)
         {
             rt_kprintf(cmd_info[3]);
@@ -1279,23 +1319,43 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         if (src_id >= QBOOT_TARGET_COUNT || !qbt_target_open(src_id, &src_handle, &src_size, QBT_OPEN_READ))
         {
             rt_kprintf("Soure %s partition is not exist.\n", src);
-            qbt_target_close(dst_handle);
+            if (qbt_target_close(dst_handle) != RT_EOK)
+            {
+                rt_kprintf("Close %s partition fail.\n", dst);
+            }
             return;
         }
 
         if (!qbt_fw_check(src_handle, src_size, src, &fw_info))
         {
             rt_kprintf("Soure %s partition firmware error.\n", src);
-            qbt_target_close(src_handle);
-            qbt_target_close(dst_handle);
+            if (qbt_target_close(src_handle) != RT_EOK)
+            {
+                rt_kprintf("Close %s partition fail.\n", src);
+            }
+            if (qbt_target_close(dst_handle) != RT_EOK)
+            {
+                rt_kprintf("Close %s partition fail.\n", dst);
+            }
             return;
         }
-        if (qbt_fw_clone(dst_handle, dst, src_handle, src, qboot_src_read_pos() + fw_info.pkg_size))
+        rst = qbt_fw_clone(dst_handle, dst, src_handle, src, qboot_src_read_pos() + fw_info.pkg_size);
+        if (qbt_target_close(src_handle) != RT_EOK)
+        {
+            rst = RT_FALSE;
+        }
+        if (qbt_target_close(dst_handle) != RT_EOK)
+        {
+            rst = RT_FALSE;
+        }
+        if (rst)
         {
             rt_kprintf("Clone firmware success from %s to %s.\n", src, dst);
         }
-        qbt_target_close(src_handle);
-        qbt_target_close(dst_handle);
+        else
+        {
+            rt_kprintf("Clone firmware fail from %s to %s.\n", src, dst);
+        }
         return;
     }
 
@@ -1327,6 +1387,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         qbt_target_id_t part_id = QBOOT_TARGET_COUNT;
         void *handle = RT_NULL;
         rt_uint32_t part_size = 0;
+        rt_bool_t rst = RT_FALSE;
         if (argc < 3)
         {
             rt_kprintf(cmd_info[5]);
@@ -1340,7 +1401,12 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
             return;
         }
 
-        if (qbt_dest_part_verify(handle, part_size, part_name))
+        rst = qbt_dest_part_verify(handle, part_size, part_name);
+        if (qbt_target_close(handle) != RT_EOK)
+        {
+            rst = RT_FALSE;
+        }
+        if (rst)
         {
             rt_kprintf("%s partition code verify ok.\n", part_name);
         }
@@ -1348,7 +1414,6 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         {
             rt_kprintf("%s partition code verify error.\n", part_name);
         }
-        qbt_target_close(handle);
         return;
     }
 
@@ -1358,6 +1423,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         qbt_target_id_t part_id = QBOOT_TARGET_COUNT;
         void *handle = RT_NULL;
         rt_uint32_t part_size = 0;
+        rt_bool_t rst = RT_FALSE;
 
         if (argc < 3)
         {
@@ -1373,9 +1439,19 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
             return;
         }
 
-        qbt_fw_delete(handle, part_name, part_size);
-        qbt_target_close(handle);
-
+        rst = qbt_fw_delete(handle, part_name, part_size);
+        if (qbt_target_close(handle) != RT_EOK)
+        {
+            rst = RT_FALSE;
+        }
+        if (rst)
+        {
+            rt_kprintf("Qboot delete firmware success.\n");
+        }
+        else
+        {
+            rt_kprintf("Qboot delete firmware fail.\n");
+        }
         return;
     }
 

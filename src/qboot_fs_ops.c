@@ -82,22 +82,48 @@ static rt_err_t qbt_fs_open(qbt_target_id_t id, void **handle, int flags)
 }
 
 /**
+ * @brief Close a filesystem fd with host fault injection.
+ *
+ * @param id Target identifier used for host fault injection.
+ * @param fd Open file descriptor to close.
+ *
+ * @return RT_EOK on success, negative error code otherwise.
+ */
+static rt_err_t qbt_fs_close_fd(qbt_target_id_t id, int fd)
+{
+    rt_err_t result = RT_EOK;
+
+    if (fd >= 0)
+    {
+        if (close(fd) != 0)
+        {
+            result = -RT_ERROR;
+        }
+#ifdef QBOOT_CI_HOST_TEST
+        if (qboot_host_fault_check_id(QBOOT_HOST_FAULT_CLOSE, id))
+        {
+            result = -RT_ERROR;
+        }
+#endif /* QBOOT_CI_HOST_TEST */
+    }
+    return result;
+}
+
+/**
  * @brief Close filesystem handle.
  *
  * @param handle Encoded target id.
  *
- * @return RT_EOK on success.
+ * @return RT_EOK on success, negative error code otherwise.
  */
 static rt_err_t qbt_fs_close(void *handle)
 {
     int id = (int)((uintptr_t)handle) - 1;
     int fd = g_fs_fds[id] - 1;
-    if (fd >= 0)
-    {
-        close(fd);
-    }
+    rt_err_t result = qbt_fs_close_fd((qbt_target_id_t)id, fd);
+
     g_fs_fds[id] = 0;
-    return RT_EOK;
+    return result;
 }
 
 /**
@@ -327,10 +353,16 @@ static rt_err_t qbt_fs_sign_write(void *handle, const fw_info_t *fw_info)
     }
     if (write(sign_fd, &sign_word, sizeof(sign_word)) != (int)sizeof(sign_word))
     {
-        close(sign_fd);
+        (void)qbt_fs_close_fd(QBOOT_TARGET_DOWNLOAD, sign_fd);
+        unlink(QBOOT_DOWNLOAD_SIGN_FILE_PATH);
         return -RT_ERROR;
     }
-    close(sign_fd);
+    if (qbt_fs_close_fd(QBOOT_TARGET_DOWNLOAD, sign_fd) != RT_EOK)
+    {
+        LOG_E("FS sign close fail %s.", QBOOT_DOWNLOAD_SIGN_FILE_PATH);
+        unlink(QBOOT_DOWNLOAD_SIGN_FILE_PATH);
+        return -RT_ERROR;
+    }
     return RT_EOK;
 }
 
