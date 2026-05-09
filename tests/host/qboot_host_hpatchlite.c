@@ -211,12 +211,11 @@ int qbt_hpatchlite_release_from_part(void *patch_part, void *old_part,
     {
         goto exit;
     }
-    if (_header_io_ops->size(old_part, &old_part_len) != RT_EOK ||
-        new_size > old_part_len)
+    if (_header_io_ops->size(old_part, &old_part_len) != RT_EOK)
     {
         goto exit;
     }
-    erase_len = old_part_len;
+    erase_len = (old_part_len > new_size) ? old_part_len : new_size;
     if (qbt_erase_with_feed(old_part, 0, erase_len) != RT_EOK)
     {
         goto exit;
