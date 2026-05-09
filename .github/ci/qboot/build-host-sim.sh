@@ -53,136 +53,235 @@ common_sources=(
   algorithm/qboot_aes.c
 )
 
-exclude_common_source() {
-  local exclude=$1
-  local -n output_sources=$2
-  output_sources=()
+backend_configs=()
+default_backends="custom custom-smallbuf fal fs custom-helper custom-hpatch-production custom-hpatch-storage-swap"
+
+add_backend() {
+  local name=$1 cflags=$2 sources=$3 excludes=$4 use_package_override=$5
+
+  backend_configs+=("$name|$cflags|$sources|$excludes|$use_package_override")
+}
+
+add_backend custom-helper \
+  "-DQBOOT_HOST_BACKEND_CUSTOM" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  0
+add_backend custom \
+  "-DQBOOT_HOST_BACKEND_CUSTOM" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend custom-smallbuf \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_BUF_SIZE=16" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend custom-no-gzip \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend custom-no-aes \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_AES" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend custom-no-hpatch \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend custom-gzip-only \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend custom-aes-gzip-only \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend custom-hpatch-only \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend custom-hpatch-production \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter" \
+  "src/qboot_custom_ops.c algorithm/qboot_hpatchlite.c .github/ci/qboot/packages/hpatchlite/hpatch_impl.c" \
+  "tests/host/qboot_host_hpatchlite.c" \
+  1
+add_backend custom-hpatch-storage-swap \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_HPATCH_STORAGE_SWAP -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter" \
+  "src/qboot_custom_ops.c algorithm/qboot_hpatchlite.c .github/ci/qboot/packages/hpatchlite/hpatch_impl.c" \
+  "tests/host/qboot_host_hpatchlite.c" \
+  1
+add_backend custom-minimal \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend mixed-backend \
+  "-DQBOOT_HOST_BACKEND_MIXED" \
+  "src/qboot_custom_ops.c src/qboot_fal_ops.c src/qboot_fs_ops.c src/qboot_mux_ops.c tests/host/qboot_host_fal.c" \
+  "" \
+  1
+add_backend none-disabled \
+  "-DQBOOT_HOST_BACKEND_NONE" \
+  "" \
+  "" \
+  1
+add_backend fal \
+  "-DQBOOT_HOST_BACKEND_FAL" \
+  "src/qboot_fal_ops.c tests/host/qboot_host_fal.c" \
+  "" \
+  1
+add_backend fal-minimal \
+  "-DQBOOT_HOST_BACKEND_FAL -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
+  "src/qboot_fal_ops.c tests/host/qboot_host_fal.c" \
+  "" \
+  1
+add_backend fal-gzip \
+  "-DQBOOT_HOST_BACKEND_FAL -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
+  "src/qboot_fal_ops.c tests/host/qboot_host_fal.c" \
+  "" \
+  1
+add_backend fal-gzip-only \
+  "-DQBOOT_HOST_BACKEND_FAL -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
+  "src/qboot_fal_ops.c tests/host/qboot_host_fal.c" \
+  "" \
+  1
+add_backend fs \
+  "-DQBOOT_HOST_BACKEND_FS" \
+  "src/qboot_fs_ops.c" \
+  "" \
+  1
+add_backend fs-minimal \
+  "-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
+  "src/qboot_fs_ops.c" \
+  "" \
+  1
+add_backend fs-gzip \
+  "-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
+  "src/qboot_fs_ops.c" \
+  "" \
+  1
+add_backend fs-gzip-only \
+  "-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
+  "src/qboot_fs_ops.c" \
+  "" \
+  1
+add_backend fal-missing-package \
+  "-DQBOOT_HOST_BACKEND_FAL" \
+  "src/qboot_fal_ops.c" \
+  "" \
+  1
+add_backend fs-missing-dfs \
+  "-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_MISSING_DFS_PACKAGE" \
+  "src/qboot_fs_ops.c" \
+  "" \
+  1
+add_backend custom-hpatch-missing-lib \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -Wno-unused-parameter" \
+  "src/qboot_custom_ops.c" \
+  "tests/host/qboot_host_hpatchlite.c" \
+  1
+add_backend custom-aes-missing-lib \
+  "-DQBOOT_HOST_BACKEND_CUSTOM" \
+  "src/qboot_custom_ops.c" \
+  "tests/host/qboot_host_tinycrypt.c" \
+  1
+
+read_backend_config() {
+  local requested=$1 row
+
+  for row in "${backend_configs[@]}"; do
+    IFS='|' read -r backend_name backend_cflags backend_sources backend_excludes backend_use_package_override <<< "$row"
+    if [ "$backend_name" = "$requested" ]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+append_backend_cflags() {
+  local words=$1
+  local parsed=()
+
+  [ -n "$words" ] || return 0
+  read -r -a parsed <<< "$words"
+  extra_cflags+=("${parsed[@]}")
+}
+
+append_backend_sources() {
+  local words=$1
+  local parsed=()
+
+  [ -n "$words" ] || return 0
+  read -r -a parsed <<< "$words"
+  extra_sources+=("${parsed[@]}")
+}
+
+append_backend_excludes() {
+  local words=$1
+  local parsed=()
+
+  [ -n "$words" ] || return 0
+  read -r -a parsed <<< "$words"
+  source_excludes+=("${parsed[@]}")
+}
+
+source_is_excluded() {
+  local source=$1 excluded
+
+  for excluded in "${source_excludes[@]}"; do
+    if [ "$source" = "$excluded" ]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+copy_common_sources() {
+  local src
+
+  sources=()
   for src in "${common_sources[@]}"; do
-    [ "$src" = "$exclude" ] || output_sources+=("$src")
+    if ! source_is_excluded "$src"; then
+      sources+=("$src")
+    fi
   done
 }
 
 build_one() {
-  backend=$1
-  output="$out_dir/qboot_host_runner_$backend"
-  sources=("${common_sources[@]}")
-  case "$backend" in
-    custom-helper)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM)
-      extra_sources=(src/qboot_custom_ops.c)
-      ;;
-    custom)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM)
-      extra_sources=(src/qboot_custom_ops.c)
-      ;;
-    custom-smallbuf)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_BUF_SIZE=16)
-      extra_sources=(src/qboot_custom_ops.c)
-      ;;
-    custom-no-gzip)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP)
-      extra_sources=(src/qboot_custom_ops.c)
-      ;;
-    custom-no-aes)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_AES)
-      extra_sources=(src/qboot_custom_ops.c)
-      ;;
-    custom-no-hpatch)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter)
-      extra_sources=(src/qboot_custom_ops.c)
-      ;;
-    custom-gzip-only)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter)
-      extra_sources=(src/qboot_custom_ops.c)
-      ;;
-    custom-aes-gzip-only)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter)
-      extra_sources=(src/qboot_custom_ops.c)
-      ;;
-    custom-hpatch-only)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter)
-      extra_sources=(src/qboot_custom_ops.c)
-      ;;
-    custom-hpatch-production)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter)
-      exclude_common_source tests/host/qboot_host_hpatchlite.c sources
-      extra_sources=(src/qboot_custom_ops.c algorithm/qboot_hpatchlite.c .github/ci/qboot/packages/hpatchlite/hpatch_impl.c)
-      ;;
-    custom-hpatch-storage-swap)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_HPATCH_STORAGE_SWAP -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter)
-      exclude_common_source tests/host/qboot_host_hpatchlite.c sources
-      extra_sources=(src/qboot_custom_ops.c algorithm/qboot_hpatchlite.c .github/ci/qboot/packages/hpatchlite/hpatch_impl.c)
-      ;;
-    custom-minimal)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter)
-      extra_sources=(src/qboot_custom_ops.c)
-      ;;
-    mixed-backend)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_MIXED)
-      extra_sources=(src/qboot_custom_ops.c src/qboot_fal_ops.c src/qboot_fs_ops.c src/qboot_mux_ops.c tests/host/qboot_host_fal.c)
-      ;;
-    none-disabled)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_NONE)
-      extra_sources=()
-      ;;
-    fal)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_FAL)
-      extra_sources=(src/qboot_fal_ops.c tests/host/qboot_host_fal.c)
-      ;;
-    fal-minimal)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_FAL -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter)
-      extra_sources=(src/qboot_fal_ops.c tests/host/qboot_host_fal.c)
-      ;;
-    fal-gzip|fal-gzip-only)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_FAL -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter)
-      extra_sources=(src/qboot_fal_ops.c tests/host/qboot_host_fal.c)
-      ;;
-    fs)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_FS)
-      extra_sources=(src/qboot_fs_ops.c)
-      ;;
-    fs-minimal)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter)
-      extra_sources=(src/qboot_fs_ops.c)
-      ;;
-    fs-gzip|fs-gzip-only)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter)
-      extra_sources=(src/qboot_fs_ops.c)
-      ;;
-    fal-missing-package)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_FAL)
-      extra_sources=(src/qboot_fal_ops.c)
-      ;;
-    fs-missing-dfs)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_MISSING_DFS_PACKAGE)
-      extra_sources=(src/qboot_fs_ops.c)
-      ;;
-    custom-hpatch-missing-lib)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM -Wno-unused-parameter)
-      exclude_common_source tests/host/qboot_host_hpatchlite.c sources
-      extra_sources=(src/qboot_custom_ops.c)
-      ;;
-    custom-aes-missing-lib)
-      extra_cflags=(-DQBOOT_HOST_BACKEND_CUSTOM)
-      exclude_common_source tests/host/qboot_host_tinycrypt.c sources
-      extra_sources=(src/qboot_custom_ops.c)
-      ;;
-    *)
-      echo "unsupported backend: $backend" >&2
-      exit 1
-      ;;
-  esac
-  # custom-helper intentionally keeps the production weak helper fallback
-  # enabled. Other runners use host RBL package overrides.
-  if [ "$backend" != "custom-helper" ]; then
+  local backend=$1
+  local output="$out_dir/qboot_host_runner_$backend"
+  local backend_name backend_cflags backend_sources backend_excludes backend_use_package_override
+  local sources=() extra_cflags=() extra_sources=() source_excludes=()
+
+  if ! read_backend_config "$backend"; then
+    echo "unsupported backend: $backend" >&2
+    exit 1
+  fi
+
+  append_backend_cflags "$backend_cflags"
+  append_backend_sources "$backend_sources"
+  append_backend_excludes "$backend_excludes"
+  copy_common_sources
+
+  if [ "$backend_use_package_override" = "1" ]; then
     extra_cflags=(-DQBOOT_CI_HOST_RBL_PACKAGE_TEST "${extra_cflags[@]}")
   fi
+
   "$cc" "${common_cflags[@]}" "${extra_cflags[@]}" \
     "${sources[@]}" "${extra_sources[@]}" \
     "${common_ldflags[@]}" -lz -o "$output"
   echo "Built $output"
 }
 
-for backend in ${QBOOT_HOST_BACKENDS:-custom custom-smallbuf fal fs custom-helper custom-hpatch-production custom-hpatch-storage-swap}; do
+for backend in ${QBOOT_HOST_BACKENDS:-$default_backends}; do
   build_one "$backend"
 done

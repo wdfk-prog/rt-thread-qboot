@@ -2,9 +2,6 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-      - "feature/**"
   pull_request:
   workflow_dispatch:
 
@@ -56,6 +53,7 @@ jobs:
           test -f .github/ci/qboot/run-config-matrix.sh
           test -f .github/ci/qboot/run-host-sanitizer.sh
           test -f .github/ci/qboot/run-host-static-checks.sh
+          test -f .github/ci/qboot/test-board-smoke-parser.sh
           test -f .github/ci/qboot/run-host-extended-coverage.sh
           test -f .github/ci/qboot/check-host-sim-artifacts.sh
           test -f .github/ci/qboot/run-rtthread-scons-matrix.sh

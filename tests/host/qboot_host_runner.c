@@ -942,6 +942,16 @@ static int qboot_host_run_fault_sequence_case(const char *case_name, const char 
         { RT_TRUE, QBOOT_HOST_FAULT_SIGN_READ, QBOOT_HOST_FAULT_TARGET_DOWNLOAD, 1u, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
         { RT_FALSE, QBOOT_HOST_FAULT_OPEN, QBOOT_HOST_FAULT_TARGET_ANY, 0u, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
     };
+    static const qboot_host_fault_sequence_step_t app_write_retry_success[] = {
+        { RT_TRUE, QBOOT_HOST_FAULT_WRITE, QBOOT_HOST_FAULT_TARGET_APP, 0u, RT_FALSE, RT_FALSE, RT_FALSE, QBOOT_HOST_APP_EXPECT_ANY },
+        { RT_TRUE, QBOOT_HOST_FAULT_WRITE, QBOOT_HOST_FAULT_TARGET_APP, 1u, RT_FALSE, RT_FALSE, RT_FALSE, QBOOT_HOST_APP_EXPECT_ANY },
+        { RT_FALSE, QBOOT_HOST_FAULT_OPEN, QBOOT_HOST_FAULT_TARGET_ANY, 0u, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
+    };
+    static const qboot_host_fault_sequence_step_t sign_retry_success[] = {
+        { RT_TRUE, QBOOT_HOST_FAULT_SIGN_WRITE, QBOOT_HOST_FAULT_TARGET_DOWNLOAD, 0u, RT_FALSE, RT_FALSE, RT_FALSE, QBOOT_HOST_APP_EXPECT_ANY },
+        { RT_TRUE, QBOOT_HOST_FAULT_SIGN_READ, QBOOT_HOST_FAULT_TARGET_DOWNLOAD, 0u, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
+        { RT_FALSE, QBOOT_HOST_FAULT_OPEN, QBOOT_HOST_FAULT_TARGET_ANY, 0u, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
+    };
 
     if (strcmp(case_name, "fault-sequence-erase-write-sign-success") == 0)
     {
@@ -954,6 +964,18 @@ static int qboot_host_run_fault_sequence_case(const char *case_name, const char 
         return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
                                                    read_write_signread_success,
                                                    (rt_uint32_t)(sizeof(read_write_signread_success) / sizeof(read_write_signread_success[0])));
+    }
+    if (strcmp(case_name, "fault-sequence-app-write-retry-success") == 0)
+    {
+        return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
+                                                   app_write_retry_success,
+                                                   (rt_uint32_t)(sizeof(app_write_retry_success) / sizeof(app_write_retry_success[0])));
+    }
+    if (strcmp(case_name, "fault-sequence-sign-retry-success") == 0)
+    {
+        return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
+                                                   sign_retry_success,
+                                                   (rt_uint32_t)(sizeof(sign_retry_success) / sizeof(sign_retry_success[0])));
     }
     printf("QBOOT_HOST_FAIL unsupported fault sequence case: %s\n", case_name);
     return 2;
@@ -1393,6 +1415,14 @@ static int qboot_host_run_fake_flash_case(const char *case_name)
 
 #ifdef QBOOT_HOST_BACKEND_FS
 /**
+ * @brief Build firmware-info context for release-sign position tests.
+ *
+ * @param info     Output firmware header context.
+ * @param pkg_size Package payload size that determines sign position.
+ */
+static void qboot_host_make_sign_info(fw_info_t *info, rt_uint32_t pkg_size);
+
+/**
  * @brief Prepare DOWNLOAD storage with a readable firmware header.
  *
  * @return RT_TRUE on success, RT_FALSE on setup failure.
@@ -1770,6 +1800,81 @@ static int qboot_host_run_fs_boundary_case(const char *case_name)
             return 1;
         }
     }
+    else if (strcmp(case_name, "fs-valid-download-survives-close-reopen") == 0)
+    {
+        if (!qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size,
+                             QBT_OPEN_WRITE | QBT_OPEN_CREATE | QBT_OPEN_TRUNC))
+        {
+            printf("QBOOT_HOST_FAIL %s open-write\n", case_name);
+            return 1;
+        }
+        result = _header_io_ops->write(handle, 0u, data, sizeof(data));
+        qbt_target_close(handle);
+        if (result != RT_EOK ||
+            !qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size, QBT_OPEN_READ))
+        {
+            printf("QBOOT_HOST_FAIL %s reopen-read\n", case_name);
+            return 1;
+        }
+        result = _header_io_ops->read(handle, 0u, readback, sizeof(readback));
+        qbt_target_close(handle);
+        if (result != RT_EOK || memcmp(data, readback, sizeof(data)) != 0)
+        {
+            printf("QBOOT_HOST_FAIL %s close/reopen content mismatch\n", case_name);
+            return 1;
+        }
+    }
+    else if (strcmp(case_name, "fs-sign-clear-removes-marker") == 0)
+    {
+        fw_info_t info;
+
+        if (!qboot_host_prepare_fs_download_header() ||
+            !qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size,
+                             QBT_OPEN_WRITE | QBT_OPEN_READ))
+        {
+            printf("QBOOT_HOST_FAIL %s setup\n", case_name);
+            return 1;
+        }
+        qboot_host_make_sign_info(&info, 0u);
+        if (!qbt_release_sign_write(handle, QBOOT_DOWNLOAD_PART_NAME, &info) ||
+            !qbt_release_sign_check(handle, QBOOT_DOWNLOAD_PART_NAME, &info) ||
+            !qbt_release_sign_clear(handle, QBOOT_DOWNLOAD_PART_NAME, &info) ||
+            qbt_release_sign_check(handle, QBOOT_DOWNLOAD_PART_NAME, &info))
+        {
+            qbt_target_close(handle);
+            printf("QBOOT_HOST_FAIL %s sign clear\n", case_name);
+            return 1;
+        }
+        qbt_target_close(handle);
+    }
+    else if (strcmp(case_name, "fs-mount-lost-after-sign-current-policy") == 0)
+    {
+        fw_info_t info;
+
+        if (!qboot_host_prepare_fs_download_header() ||
+            !qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size,
+                             QBT_OPEN_WRITE | QBT_OPEN_READ))
+        {
+            printf("QBOOT_HOST_FAIL %s setup\n", case_name);
+            return 1;
+        }
+        qboot_host_make_sign_info(&info, 0u);
+        if (!qbt_release_sign_write(handle, QBOOT_DOWNLOAD_PART_NAME, &info))
+        {
+            qbt_target_close(handle);
+            printf("QBOOT_HOST_FAIL %s sign write\n", case_name);
+            return 1;
+        }
+        qbt_target_close(handle);
+        unlink(QBOOT_DOWNLOAD_SIGN_FILE_PATH);
+        unlink(QBOOT_DOWNLOAD_FILE_PATH);
+        rmdir("_ci/host-sim/fs");
+        if (qboot_host_download_has_release_sign())
+        {
+            printf("QBOOT_HOST_FAIL %s sign survived mount loss\n", case_name);
+            return 1;
+        }
+    }
     else
     {
         printf("QBOOT_HOST_FAIL unsupported fs boundary case: %s\n", case_name);
@@ -1877,6 +1982,14 @@ static int qboot_host_run_sign_boundary_case(const char *case_name)
             return 1;
         }
     }
+    else if (strcmp(case_name, "sign-different-pkg-size-rejected") == 0)
+    {
+        pkg_size = 4096u;
+    }
+    else if (strcmp(case_name, "sign-same-position-metadata-current-policy") == 0)
+    {
+        pkg_size = 4096u;
+    }
     else
     {
         qbt_target_close(handle);
@@ -1898,6 +2011,33 @@ static int qboot_host_run_sign_boundary_case(const char *case_name)
     if (expect_write)
     {
         released = qbt_release_sign_check(handle, QBOOT_DOWNLOAD_PART_NAME, &info);
+        if (strcmp(case_name, "sign-different-pkg-size-rejected") == 0)
+        {
+            info.pkg_size += QBOOT_RELEASE_SIGN_ALIGN_SIZE;
+            if (qbt_release_sign_check(handle, QBOOT_DOWNLOAD_PART_NAME, &info))
+            {
+                qbt_target_close(handle);
+                printf("QBOOT_HOST_FAIL %s accepted stale sign at different offset\n", case_name);
+                return 1;
+            }
+            info.pkg_size -= QBOOT_RELEASE_SIGN_ALIGN_SIZE;
+        }
+        else if (strcmp(case_name, "sign-same-position-metadata-current-policy") == 0)
+        {
+            info.raw_crc ^= 0x13572468u;
+            info.pkg_crc ^= 0x24681357u;
+            rt_strcpy((char *)info.fw_ver, "v-ci-other");
+#ifdef QBOOT_USING_PRODUCT_CODE
+            rt_strcpy((char *)info.prod_code, "other-product");
+#endif /* QBOOT_USING_PRODUCT_CODE */
+            if (!qbt_release_sign_check(handle, QBOOT_DOWNLOAD_PART_NAME, &info))
+            {
+                qbt_target_close(handle);
+                printf("QBOOT_HOST_FAIL %s current policy changed\n", case_name);
+                return 1;
+            }
+            qboot_host_make_sign_info(&info, pkg_size);
+        }
         if (!released)
         {
             if (app_handle != RT_NULL)

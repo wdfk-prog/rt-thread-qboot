@@ -65,12 +65,18 @@ hpatch_production_available=0
 if [ -x "$runner_hpatch" ] && [ -f "$fixture_dir/custom-hpatch-production-full.rbl" ] && \
    [ -f "$fixture_dir/custom-hpatch-production-delta.rbl" ] && \
    [ -f "$fixture_dir/custom-hpatch-production-tuz.rbl" ] && \
+   [ -f "$fixture_dir/custom-hpatch-production-multi-cover.rbl" ] && \
+   [ -f "$fixture_dir/custom-hpatch-production-multi-cover-tuz.rbl" ] && \
+   [ -f "$fixture_dir/mutation-hpatch-production-multi-cover-truncated.rbl" ] && \
    [ -f "$fixture_dir/mutation-hpatch-production-tuz-trailing-byte.rbl" ] && \
    [ -f "$fixture_dir/mutation-hpatch-production-output-too-large.rbl" ]; then
   hpatch_production_available=1
   run_release "$runner_hpatch" hpatch-production-full-diff "$fixture_dir/custom-hpatch-production-full.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257
   run_release "$runner_hpatch" hpatch-production-old-dependent-delta "$fixture_dir/custom-hpatch-production-delta.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257
   run_release "$runner_hpatch" hpatch-production-tinyuz-full-diff "$fixture_dir/custom-hpatch-production-tuz.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257
+  run_release "$runner_hpatch" hpatch-production-multi-cover "$fixture_dir/custom-hpatch-production-multi-cover.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_multi_new_app.bin" success --chunk 257
+  run_release "$runner_hpatch" hpatch-production-multi-cover-tinyuz "$fixture_dir/custom-hpatch-production-multi-cover-tuz.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_multi_new_app.bin" success --chunk 257
+  run_release "$runner_hpatch" hpatch-production-multi-cover-truncated-rejected "$fixture_dir/mutation-hpatch-production-multi-cover-truncated.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_multi_new_app.bin" fail --chunk 257
   run_release "$runner_hpatch" hpatch-production-tinyuz-trailing-byte-rejected "$fixture_dir/mutation-hpatch-production-tuz-trailing-byte.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" fail --chunk 257
   run_release "$runner_hpatch" hpatch-production-output-plus-one-rejected "$fixture_dir/mutation-hpatch-production-output-too-large.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/plus_one_app.bin" fail --chunk 257
 elif [ "${QBOOT_HOST_ALLOW_HPATCHLITE_SKIP:-0}" = "1" ]; then
@@ -196,6 +202,61 @@ while IFS=$'	' read -r prop_expect prop_name prop_pkg prop_note; do
   fi
 done < "$parser_property_manifest"
 
+
+run_parser_roundtrip() {
+  local case_name=$1 pkg_name=$2 log_file py_log
+  log_file="$log_dir/$case_name.log"
+  py_log="$log_dir/$case_name.python.log"
+  case_count=$((case_count + 1))
+  "$runner_custom" --inspect --package "$fixture_dir/$pkg_name" > "$log_file" 2>&1 || fail_case "$case_name" "$log_file"
+  if ! "$python_bin" - "$fixture_dir/$pkg_name" "$log_file" > "$py_log" 2>&1 <<'PYROUND'
+from pathlib import Path
+import importlib.util, json, sys
+spec = importlib.util.spec_from_file_location('package_tool_web', Path('docs/package-tool/package_tool_web.py'))
+ptw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(ptw)
+header = ptw.parse_rbl_header(Path(sys.argv[1]).read_bytes())
+lines = [line for line in Path(sys.argv[2]).read_text(encoding='utf-8').splitlines() if line.startswith('{')]
+if not lines:
+    raise SystemExit('C inspect output did not contain JSON')
+c_header = json.loads(lines[-1])
+checks = {
+    'algo': header['algo'],
+    'algo2': header['algo2'],
+    'part_name': header['part'],
+    'fw_ver': header['version'],
+    'prod_code': header['product'],
+    'pkg_crc': header['pkg_crc'],
+    'raw_crc': header['raw_crc'],
+    'raw_size': header['raw_size'],
+    'pkg_size': header['pkg_size'],
+    'hdr_crc': header['hdr_crc'],
+}
+for key, expected in checks.items():
+    if c_header.get(key) != expected:
+        raise SystemExit(f'{key}: C={c_header.get(key)!r} Python={expected!r}')
+PYROUND
+  then
+    cat "$py_log" >> "$log_file"
+    fail_case "$case_name" "$log_file"
+  fi
+  cat "$py_log" >> "$log_file"
+  pass_case "$case_name" "$log_file" "C parser and Python package tool header round-trip match"
+}
+
+for item in \
+  "parser-c-python-roundtrip-none:custom-none-full.rbl" \
+  "parser-c-python-roundtrip-gzip:custom-gzip.rbl" \
+  "parser-c-python-roundtrip-aes-gzip:custom-aes-gzip-real.rbl" \
+  "parser-c-python-roundtrip-hpatch:custom-hpatch-host-full-diff.rbl"; do
+  run_parser_roundtrip "${item%%:*}" "${item#*:}"
+done
+if [ "$hpatch_production_available" = "1" ]; then
+  run_parser_roundtrip parser-c-python-roundtrip-hpatch-multi custom-hpatch-production-multi-cover.rbl
+else
+  skip_case parser-c-python-roundtrip-hpatch-multi "production HPatchLite multi-cover fixture is missing in dependency bootstrap mode"
+fi
+
 for item in \
   "stream-aes-gzip-chunk-15:custom-aes-gzip-real.rbl:aes_new_app.bin:15" \
   "stream-aes-gzip-chunk-16:custom-aes-gzip-real.rbl:aes_new_app.bin:16" \
@@ -236,7 +297,7 @@ for item in \
   pass_case "$case_name" "$log_file" "single-fault replay converges to a valid new app"
 done
 
-for fault_sequence_case in fault-sequence-erase-write-sign-success fault-sequence-read-write-signread-success; do
+for fault_sequence_case in fault-sequence-erase-write-sign-success fault-sequence-read-write-signread-success fault-sequence-app-write-retry-success fault-sequence-sign-retry-success; do
   for item in "custom:$runner_custom" "fal:$runner_fal"; do
     backend=${item%%:*}
     runner=${item#*:}

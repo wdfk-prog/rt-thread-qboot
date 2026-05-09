@@ -4,9 +4,13 @@ set -euo pipefail
 out_dir="_ci/host-sim/static-checks"
 mkdir -p "$out_dir"
 summary="$out_dir/static_checks_summary.md"
+board_parser_out_dir="$out_dir/board-smoke-parser"
 
 QBOOT_HOST_ANALYZER=1 QBOOT_HOST_BACKENDS="custom" \
   bash .github/ci/qboot/build-host-sim.sh > "$out_dir/gcc-fanalyzer.log" 2>&1
+
+QBOOT_BOARD_PARSER_OUT_DIR="$board_parser_out_dir" \
+  bash .github/ci/qboot/test-board-smoke-parser.sh > "$out_dir/board-parser.log" 2>&1
 
 cppcheck_result=SKIPPED
 if command -v cppcheck >/dev/null 2>&1; then
@@ -39,5 +43,8 @@ fi
 
 printf 'QBOOT_HOST_STATIC_CHECK_PASS gcc-fanalyzer\n'
 printf 'QBOOT_HOST_STATIC_CHECK_PASS cppcheck-%s\n' "$cppcheck_result"
-printf '# QBoot Host Static Checks\n\n- gcc `-fanalyzer`: PASS (`%s`)\n- cppcheck: %s (`%s`)\n' \
-  "$out_dir/gcc-fanalyzer.log" "$cppcheck_result" "$out_dir/cppcheck.txt" > "$summary"
+printf 'QBOOT_HOST_STATIC_CHECK_PASS board-parser\n'
+printf '# QBoot Host Static Checks\n\n- gcc `-fanalyzer`: PASS (`%s`)\n- board command parser: PASS (`%s`, `%s`)\n- cppcheck: %s (`%s`)\n' \
+  "$out_dir/gcc-fanalyzer.log" "$out_dir/board-parser.log" \
+  "$board_parser_out_dir/board_parser_summary.md" \
+  "$cppcheck_result" "$out_dir/cppcheck.txt" > "$summary"

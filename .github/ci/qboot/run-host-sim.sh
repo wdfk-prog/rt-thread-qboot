@@ -70,6 +70,18 @@ for size in range(4097, 4700):
 if aes_new_app is None:
     raise SystemExit('failed to find AES-compatible gzip fixture')
 hpatch_new_app = pattern(2048, 9, 0x41)
+
+def make_hpatch_multi_cover_new(old_fw):
+    old_bytes = bytes(old_fw)
+    prefix = pattern(37, 41, 0x21)
+    mid = pattern(29, 43, 0x31)
+    tail = pattern(45, 47, 0x41)
+    cover1 = old_bytes[13:13 + 64]
+    cover2_old = old_bytes[84:84 + 80]
+    cover2 = bytes((value + 3) & 0xFF for value in cover2_old)
+    return prefix + cover1 + mid + cover2 + tail
+
+hpatch_multi_new_app = make_hpatch_multi_cover_new(old_app)
 large_app = pattern(app_limit + 4096, 3, 0x37)
 exact_fit_app = pattern(app_use_limit, 11, 0x31)
 minus_one_app = pattern(app_use_limit - 1, 13, 0x29)
@@ -85,6 +97,7 @@ paths = {
     'new': root / 'new_app.bin',
     'aes_new': root / 'aes_new_app.bin',
     'hpatch_new': root / 'hpatch_new_app.bin',
+    'hpatch_multi_new': root / 'hpatch_multi_new_app.bin',
     'large': root / 'large_app.bin',
     'exact_fit': root / 'exact_fit_app.bin',
     'minus_one': root / 'minus_one_app.bin',
@@ -95,7 +108,8 @@ paths = {
     'app_c': root / 'app_c.bin',
 }
 for key, data in [('old', old_app), ('old_mismatch', old_mismatch_app), ('new', new_app),
-                  ('aes_new', aes_new_app), ('hpatch_new', hpatch_new_app), ('large', large_app),
+                  ('aes_new', aes_new_app), ('hpatch_new', hpatch_new_app),
+                  ('hpatch_multi_new', hpatch_multi_new_app), ('large', large_app),
                   ('exact_fit', exact_fit_app), ('minus_one', minus_one_app),
                   ('plus_one', plus_one_app), ('large_chunk', large_chunk_app),
                   ('sector', sector_app), ('app_b', app_b), ('app_c', app_c)]:
@@ -121,6 +135,16 @@ def make_rbl(name, pkg, raw=paths['new'], crypt='none', cmprs='none', product_co
                                           timestamp=1700000100))
     return out
 
+def wrap_hpatch_body(body, new_len, patch_compress='none'):
+    new_size = ptw._hpi_size_bytes(new_len)
+    if patch_compress == 'tuz':
+        patch_body = ptw.tuz_compress(body)
+        uncompress_size = ptw._hpi_size_bytes(len(body))
+        code = (ptw.HPATCHLITE_VERSION_CODE << 6) | (len(uncompress_size) << 3) | len(new_size)
+        return ptw.HPATCHLITE_MAGIC + bytes([ptw.HPATCHLITE_COMPRESS_TUZ, code]) + new_size + uncompress_size + patch_body
+    code = (ptw.HPATCHLITE_VERSION_CODE << 6) | len(new_size)
+    return ptw.HPATCHLITE_MAGIC + bytes([ptw.HPATCHLITE_COMPRESS_NONE, code]) + new_size + bytes(body)
+
 def make_old_dependent_hpatch_patch(old_fw, new_fw):
     old_bytes = bytes(old_fw)
     new_bytes = bytes(new_fw)
@@ -133,9 +157,33 @@ def make_old_dependent_hpatch_patch(old_fw, new_fw):
     body.append(0)  # old position tag: absolute zero, with sub-diff data.
     body.extend(ptw._hpi_pack_uint(0))
     body.extend(sub_diff)
-    new_size = ptw._hpi_size_bytes(len(new_bytes))
-    code = (ptw.HPATCHLITE_VERSION_CODE << 6) | len(new_size)
-    return ptw.HPATCHLITE_MAGIC + bytes([ptw.HPATCHLITE_COMPRESS_NONE, code]) + new_size + bytes(body)
+    return wrap_hpatch_body(bytes(body), len(new_bytes))
+
+def make_multi_cover_hpatch_patch(old_fw, new_fw, patch_compress='none'):
+    old_bytes = bytes(old_fw)
+    new_bytes = bytes(new_fw)
+    prefix = new_bytes[:37]
+    mid = new_bytes[101:130]
+    tail = new_bytes[210:]
+    subdiff = bytes(3 for _ in range(80))
+    body = bytearray()
+    body.extend(ptw._hpi_pack_uint(3))
+    body.extend(ptw._hpi_pack_uint(64))
+    body.append(0x80 | 13)  # copy old[13:77] with no sub-diff.
+    body.extend(ptw._hpi_pack_uint(len(prefix)))
+    body.extend(prefix)
+    body.extend(ptw._hpi_pack_uint(80))
+    body.append(7)          # old position advances from 77 to 84.
+    body.extend(ptw._hpi_pack_uint(len(mid)))
+    body.extend(mid)
+    body.extend(subdiff)
+    body.extend(ptw._hpi_pack_uint(0))
+    body.append(0)
+    body.extend(ptw._hpi_pack_uint(len(tail)))
+    body.extend(tail)
+    if ptw.hpatchlite_apply_patch(old_bytes, wrap_hpatch_body(bytes(body), len(new_bytes))) != new_bytes:
+        raise SystemExit('generated multi-cover HPatchLite fixture does not round-trip')
+    return wrap_hpatch_body(bytes(body), len(new_bytes), patch_compress)
 
 def mutate_from(base, name, edit):
     out = root / name
@@ -211,6 +259,14 @@ hpatch_production_tuz_tail_patch.append(0xA5)
 hpatch_production_tuz_tail.write_bytes(ptw.package_rbl_bytes(raw_fw=hpatch_new_app, pkg_obj=bytes(hpatch_production_tuz_tail_patch), crypt='none', cmprs='hpatchlite', algo2='crc', part='app', version='v-ci-host-hpatch-tuz-tail', product=product, timestamp=1700000013))
 hpatch_production_too_large = root / 'mutation-hpatch-production-output-too-large.rbl'
 hpatch_production_too_large.write_bytes(hpatch_output_too_large.read_bytes())
+hpatch_multi_patch = make_multi_cover_hpatch_patch(old_app, hpatch_multi_new_app, 'none')
+hpatch_multi_tuz_patch = make_multi_cover_hpatch_patch(old_app, hpatch_multi_new_app, 'tuz')
+hpatch_production_multi = root / 'custom-hpatch-production-multi-cover.rbl'
+hpatch_production_multi.write_bytes(ptw.package_rbl_bytes(raw_fw=hpatch_multi_new_app, pkg_obj=hpatch_multi_patch, crypt='none', cmprs='hpatchlite', algo2='crc', part='app', version='v-ci-host-hpatch-multi', product=product, timestamp=1700000014))
+hpatch_production_multi_tuz = root / 'custom-hpatch-production-multi-cover-tuz.rbl'
+hpatch_production_multi_tuz.write_bytes(ptw.package_rbl_bytes(raw_fw=hpatch_multi_new_app, pkg_obj=hpatch_multi_tuz_patch, crypt='none', cmprs='hpatchlite', algo2='crc', part='app', version='v-ci-host-hpatch-multi-tuz', product=product, timestamp=1700000015))
+hpatch_production_multi_truncated = root / 'mutation-hpatch-production-multi-cover-truncated.rbl'
+hpatch_production_multi_truncated.write_bytes(ptw.package_rbl_bytes(raw_fw=hpatch_multi_new_app, pkg_obj=hpatch_multi_patch[:-1], crypt='none', cmprs='hpatchlite', algo2='crc', part='app', version='v-ci-host-hpatch-multi-trunc', product=product, timestamp=1700000016))
 
 product_bad = make_rbl('custom-product-code-mismatch.rbl', pkg_none, product_code='bad-product')
 product_empty = make_rbl('custom-product-empty.rbl', pkg_none, product_code='')
@@ -496,7 +552,7 @@ done
 
 for sign_backend in custom fal; do
   sign_runner=$(runner_for_backend "$sign_backend")
-  for sign_case in sign-align-exact sign-align-plus-padding sign-at-partition-end-exact sign-write-cross-sector sign-position-out-of-range sign-erase-does-not-corrupt-app-tail; do
+  for sign_case in sign-align-exact sign-align-plus-padding sign-at-partition-end-exact sign-write-cross-sector sign-position-out-of-range sign-erase-does-not-corrupt-app-tail sign-different-pkg-size-rejected sign-same-position-metadata-current-policy; do
     case_count=$((case_count + 1))
     log_file="$log_dir/$sign_backend-$sign_case.log"
     if "$sign_runner" --mode sign-boundary --case "$sign_case" > "$log_file" 2>&1; then
@@ -511,7 +567,7 @@ for sign_backend in custom fal; do
   done
 done
 
-for fs_case in fs-mount-missing fs-read-short-count fs-size-after-truncate-zero fs-close-reopen-readback fs-write-short-count fs-no-space-left fs-path-too-long fs-download-path-readonly fs-sign-path-readonly fs-download-and-sign-same-path fs-stale-temp-file-cleanup fs-existing-sign-file-shorter-than-sign fs-existing-sign-file-longer-than-sign fs-existing-download-file-longer-than-package fs-reopen-fail-after-write-current-policy fs-write-fail-after-download-write-current-policy fs-write-fail-after-download-overwrite-current-policy fs-write-fail-after-download-retry-current-policy fs-rename-temp-to-download-fail-current-policy fs-temp-file-power-loss-before-rename fs-mount-lost-during-release fs-unmount-before-replay fs-directory-missing-created-or-rejected-policy fs-stale-temp-sign-file-ignored; do
+for fs_case in fs-mount-missing fs-read-short-count fs-size-after-truncate-zero fs-close-reopen-readback fs-write-short-count fs-no-space-left fs-path-too-long fs-download-path-readonly fs-sign-path-readonly fs-download-and-sign-same-path fs-stale-temp-file-cleanup fs-existing-sign-file-shorter-than-sign fs-existing-sign-file-longer-than-sign fs-existing-download-file-longer-than-package fs-reopen-fail-after-write-current-policy fs-write-fail-after-download-write-current-policy fs-write-fail-after-download-overwrite-current-policy fs-write-fail-after-download-retry-current-policy fs-rename-temp-to-download-fail-current-policy fs-temp-file-power-loss-before-rename fs-mount-lost-during-release fs-unmount-before-replay fs-directory-missing-created-or-rejected-policy fs-stale-temp-sign-file-ignored fs-valid-download-survives-close-reopen fs-sign-clear-removes-marker fs-mount-lost-after-sign-current-policy; do
   case_count=$((case_count + 1))
   log_file="$log_dir/$fs_case.log"
   if "$runner_fs" --mode fs-boundary --case "$fs_case" > "$log_file" 2>&1; then
