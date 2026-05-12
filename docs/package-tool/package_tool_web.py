@@ -91,6 +91,14 @@ class PackageToolError(ValueError):
     """Raised when a browser-side package option is invalid."""
 
 
+def validate_hpatchlite_crypto(crypt: str, cmprs: str) -> None:
+    """Reject encrypted HPatchLite packages unsupported by QBoot firmware."""
+    crypt_name = (crypt or "none").strip().lower()
+    cmprs_name = (cmprs or "none").strip().lower()
+    if cmprs_name == "hpatchlite" and crypt_name != "none":
+        raise PackageToolError("hpatchlite packages only support crypt=none")
+
+
 def crc32(data: bytes) -> int:
     """Return the unsigned CRC32 value used by the RBL header."""
     return zlib.crc32(data) & 0xFFFFFFFF
@@ -337,8 +345,11 @@ TUZ_BIG_POS_FOR_LEN = (1 << 11) + (1 << 9) + (1 << 7) - 1
 
 
 
+QBOOT_CODEC_BLOCK_RAW_LIMIT = 4096
+
+
 def _pack_block_size(payload: bytes) -> bytes:
-    """Pack a QBoot big-endian one-shot compression block size."""
+    """Pack a QBoot big-endian compression block size."""
     if not payload:
         raise PackageToolError("compressed block must not be empty")
     if len(payload) > 0xFFFFFFFF:
@@ -346,24 +357,36 @@ def _pack_block_size(payload: bytes) -> bytes:
     return struct.pack(">I", len(payload)) + payload
 
 
-def _unpack_block_size(data: bytes, algo_name: str) -> bytes:
-    """Return the payload following a QBoot big-endian block-size header."""
+def _iter_block_payloads(data: bytes, algo_name: str):
+    """Yield QBoot block payloads from a multi-block compression body."""
     block = _normalize_bytes(data, f"{algo_name} block")
-    if len(block) < 4:
+    if not block:
         raise PackageToolError(f"{algo_name} block is missing the 4-byte size header")
-    block_size = struct.unpack(">I", block[:4])[0]
-    if block_size == 0:
-        raise PackageToolError(f"{algo_name} block size must not be zero")
-    if len(block) != block_size + 4:
-        raise PackageToolError(f"{algo_name} block size does not match package body")
-    return block[4:]
+    offset = 0
+    while offset < len(block):
+        if len(block) - offset < 4:
+            raise PackageToolError(f"{algo_name} block is missing the 4-byte size header")
+        block_size = struct.unpack(">I", block[offset:offset + 4])[0]
+        if block_size == 0:
+            raise PackageToolError(f"{algo_name} block size must not be zero")
+        offset += 4
+        end = offset + block_size
+        if end > len(block):
+            raise PackageToolError(f"{algo_name} block size does not match package body")
+        yield block[offset:end]
+        offset = end
 
 
-def fastlz_compress(data: bytes) -> bytes:
-    """Encode raw bytes as a QBoot FastLZ block using literal-only level-1 records."""
-    raw = _normalize_bytes(data, "FastLZ input")
+def _split_codec_raw_blocks(raw: bytes, algo_name: str):
+    """Yield raw chunks that fit the QBoot runtime codec output buffer."""
     if not raw:
-        raise PackageToolError("FastLZ input must not be empty")
+        raise PackageToolError(f"{algo_name} input must not be empty")
+    for offset in range(0, len(raw), QBOOT_CODEC_BLOCK_RAW_LIMIT):
+        yield raw[offset:offset + QBOOT_CODEC_BLOCK_RAW_LIMIT]
+
+
+def _fastlz_compress_block(raw: bytes) -> bytes:
+    """Encode one QBoot FastLZ raw chunk as literal-only level-1 records."""
     payload = bytearray()
     offset = 0
     while offset < len(raw):
@@ -372,6 +395,13 @@ def fastlz_compress(data: bytes) -> bytes:
         payload.extend(chunk)
         offset += len(chunk)
     return _pack_block_size(bytes(payload))
+
+
+def fastlz_compress(data: bytes) -> bytes:
+    """Encode raw bytes as QBoot FastLZ blocks bounded by the C output buffer."""
+    raw = _normalize_bytes(data, "FastLZ input")
+    return b"".join(_fastlz_compress_block(chunk)
+                    for chunk in _split_codec_raw_blocks(raw, "FastLZ"))
 
 
 def _fastlz_decompress_payload(payload: bytes, maxout: int) -> bytes:
@@ -460,17 +490,20 @@ def _fastlz_decompress_payload(payload: bytes, maxout: int) -> bytes:
 
 
 def fastlz_decompress(data: bytes, raw_size: Optional[int] = None) -> bytes:
-    """Decompress a QBoot FastLZ block."""
-    payload = _unpack_block_size(data, "FastLZ")
+    """Decompress one or more QBoot FastLZ blocks."""
     maxout = raw_size if raw_size is not None else 0xFFFFFFFF
-    return _fastlz_decompress_payload(payload, maxout)
+    restored = bytearray()
+    for payload in _iter_block_payloads(data, "FastLZ"):
+        restored.extend(_fastlz_decompress_payload(payload, maxout - len(restored)))
+        if len(restored) > maxout:
+            raise PackageToolError("FastLZ output exceeds raw_size")
+    if raw_size is not None and len(restored) != raw_size:
+        raise PackageToolError("FastLZ raw size does not match RBL header")
+    return bytes(restored)
 
 
-def quicklz_compress(data: bytes) -> bytes:
-    """Encode raw bytes as a QBoot QuickLZ block using a stored level-1 packet."""
-    raw = _normalize_bytes(data, "QuickLZ input")
-    if not raw:
-        raise PackageToolError("QuickLZ input must not be empty")
+def _quicklz_compress_block(raw: bytes) -> bytes:
+    """Encode one QBoot QuickLZ raw chunk as a stored level-1 packet."""
     if len(raw) < 216:
         packet = bytes([0x44, len(raw) + 3, len(raw)]) + raw
     else:
@@ -481,6 +514,13 @@ def quicklz_compress(data: bytes) -> bytes:
         packet.extend(raw)
         packet = bytes(packet)
     return _pack_block_size(packet)
+
+
+def quicklz_compress(data: bytes) -> bytes:
+    """Encode raw bytes as QBoot QuickLZ blocks bounded by the C output buffer."""
+    raw = _normalize_bytes(data, "QuickLZ input")
+    return b"".join(_quicklz_compress_block(chunk)
+                    for chunk in _split_codec_raw_blocks(raw, "QuickLZ"))
 
 
 def _quicklz_size_fields(packet: bytes) -> tuple[int, int, int]:
@@ -497,22 +537,24 @@ def _quicklz_size_fields(packet: bytes) -> tuple[int, int, int]:
 
 
 def quicklz_decompress(data: bytes, raw_size: Optional[int] = None) -> bytes:
-    """Decompress a QBoot QuickLZ stored block."""
-    packet = _unpack_block_size(data, "QuickLZ")
-    header_size, comp_size, expected_raw_size = _quicklz_size_fields(packet)
-    if comp_size != len(packet):
-        raise PackageToolError("QuickLZ compressed size does not match block")
-    if raw_size is not None and expected_raw_size != raw_size:
+    """Decompress one or more QBoot QuickLZ stored blocks."""
+    restored = bytearray()
+    for packet in _iter_block_payloads(data, "QuickLZ"):
+        header_size, comp_size, expected_raw_size = _quicklz_size_fields(packet)
+        if comp_size != len(packet):
+            raise PackageToolError("QuickLZ compressed size does not match block")
+        if packet[0] & 0x01:
+            raise PackageToolError(
+                "compressed QuickLZ payloads need the native QuickLZ codec; "
+                "this browser path supports stored packets"
+            )
+        chunk = packet[header_size:]
+        if len(chunk) != expected_raw_size:
+            raise PackageToolError("QuickLZ stored payload size does not match header")
+        restored.extend(chunk)
+    if raw_size is not None and len(restored) != raw_size:
         raise PackageToolError("QuickLZ raw size does not match RBL header")
-    if packet[0] & 0x01:
-        raise PackageToolError(
-            "compressed QuickLZ payloads need the native QuickLZ codec; "
-            "this browser path supports stored packets"
-        )
-    restored = packet[header_size:]
-    if len(restored) != expected_raw_size:
-        raise PackageToolError("QuickLZ stored payload size does not match header")
-    return restored
+    return bytes(restored)
 
 
 def _hpi_size_bytes(value: int) -> bytes:
@@ -1019,6 +1061,7 @@ def package_rbl_bytes(raw_fw: bytes, pkg_obj: bytes, crypt: str = "none",
 
     crypt_algo = parse_algo_strict("--crypt", crypt, QBOOT_CRYPT_ALGOS)
     cmprs_algo = parse_algo_strict("--cmprs", cmprs, QBOOT_CMPRS_ALGOS)
+    validate_hpatchlite_crypto(crypt, cmprs)
     effective_algo2 = parse_algo_strict("--algo2", algo2, QBOOT_ALGO2_ALGOS)
     if cmprs_algo == QBOOT_ALGO_CMPRS_HPATCHLITE:
         effective_algo2 = QBOOT_ALGO2_VERIFY_NONE
@@ -1074,6 +1117,7 @@ def package_hpatchlite_rbl_bytes(old_fw: bytes, new_fw: bytes, crypt: str = "non
     """Build an RBL package from a native HPatchLite full-diff patch."""
     old_bytes = _normalize_bytes(old_fw, "old firmware")
     new_bytes = _normalize_bytes(new_fw, "new firmware")
+    validate_hpatchlite_crypto(crypt, "hpatchlite")
     patch = hpatchlite_create_patch(old_bytes, new_bytes, patch_compress)
     pkg_body = _encrypt_package_body(patch, crypt, aes_key, aes_iv)
     return package_rbl_bytes(

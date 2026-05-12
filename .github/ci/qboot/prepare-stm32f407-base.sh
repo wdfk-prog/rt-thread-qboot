@@ -4,28 +4,88 @@ set -euo pipefail
 repo_root="$(pwd)"
 bsp_dir="_ci/rt-thread-base/${STM32_BSP:?STM32_BSP is required}"
 
-stage_git_package() {
-  pkg_name="$1"
-  repo_url="$2"
-  ref_name="$3"
-  dst="$bsp_dir/packages/$pkg_name"
+update_git_submodules() {
+  local pkg_name=$1 dst=$2 tmp_log=$3 submodule_log
 
-  if [ -d "$dst" ]; then
+  if [ ! -f "$dst/.gitmodules" ]; then
     return 0
   fi
 
-  git clone --depth 1 --branch "$ref_name" "$repo_url" "$dst"
+  submodule_log="$tmp_log.submodules"
+  if git -C "$dst" submodule update --init --recursive --depth 1 > "$submodule_log" 2>&1; then
+    return 0
+  fi
+
+  echo "failed to update submodules for $pkg_name" >&2
+  cat "$submodule_log" >&2
+  return 1
 }
 
-stage_builtin_hpatchlite_package() {
-  dst="$bsp_dir/packages/hpatchlite"
+checkout_git_package_ref() {
+  local pkg_name=$1 repo_url=$2 ref_name=$3 dst=$4 tmp_log=$5
 
-  if [ -d "$dst" ]; then
-    return 0
+  if ! git -C "$dst" remote set-url origin "$repo_url" >> "$tmp_log" 2>&1; then
+    cat "$tmp_log" >&2
+    return 1
   fi
 
+  if git -C "$dst" fetch --depth 1 origin "$ref_name" >> "$tmp_log" 2>&1 && \
+    git -C "$dst" checkout --detach FETCH_HEAD >> "$tmp_log" 2>&1; then
+    update_git_submodules "$pkg_name" "$dst" "$tmp_log"
+    return $?
+  fi
+
+  if [ "$ref_name" = "master" ] && \
+    grep -Eq "Remote branch .* not found|could not find remote ref|couldn't find remote ref|not our ref" "$tmp_log"; then
+    printf 'ref `%s` is unavailable for %s; retrying repository default branch\n' "$ref_name" "$pkg_name" >&2
+    cat "$tmp_log" >&2
+    : > "$tmp_log"
+    if git -C "$dst" fetch --depth 1 origin HEAD >> "$tmp_log" 2>&1 && \
+      git -C "$dst" checkout --detach FETCH_HEAD >> "$tmp_log" 2>&1; then
+      update_git_submodules "$pkg_name" "$dst" "$tmp_log"
+      return $?
+    fi
+  fi
+
+  cat "$tmp_log" >&2
+  return 1
+}
+
+stage_git_package() {
+  local pkg_name=$1 repo_url=$2 ref_name=$3 dst tmp_log
+  dst="$bsp_dir/packages/$pkg_name"
+  tmp_log="$bsp_dir/packages/$pkg_name.clone.log"
+
   mkdir -p "$bsp_dir/packages"
-  cp -a .github/ci/qboot/packages/hpatchlite "$dst"
+
+  if [ -d "$dst/.git" ]; then
+    : > "$tmp_log"
+    checkout_git_package_ref "$pkg_name" "$repo_url" "$ref_name" "$dst" "$tmp_log"
+    return $?
+  fi
+  if [ -e "$dst" ]; then
+    echo "refusing to reuse non-git package path: $dst" >&2
+    return 1
+  fi
+
+  if git clone --depth 1 --branch "$ref_name" "$repo_url" "$dst" > "$tmp_log" 2>&1; then
+    update_git_submodules "$pkg_name" "$dst" "$tmp_log"
+    return $?
+  fi
+
+  if [ "$ref_name" = "master" ] && \
+    grep -Eq "Remote branch .* not found|could not find remote ref|couldn't find remote ref|not our ref" "$tmp_log"; then
+    printf 'ref `%s` is unavailable for %s; retrying repository default branch\n' "$ref_name" "$pkg_name" >&2
+    cat "$tmp_log" >&2
+    rm -rf "$dst"
+    if git clone --depth 1 "$repo_url" "$dst" > "$tmp_log" 2>&1; then
+      update_git_submodules "$pkg_name" "$dst" "$tmp_log"
+      return $?
+    fi
+  fi
+
+  cat "$tmp_log" >&2
+  return 1
 }
 
 prune_crclib_sample_sources() {
@@ -88,8 +148,13 @@ update_bsp_packages() {
   )
 }
 
-rm -rf _ci/rt-thread-base _ci/profile-builds _ci/profile-logs
-mkdir -p _ci
+# Keep _ci/profile-logs intact because the workflow may tee this script's
+# output to _ci/profile-logs/prepare-stm32f407-base.log while the
+# script is running. Removing the directory here leaves tee writing to
+# an unlinked file, so the follow-up upload-artifact step has no file
+# to upload.
+rm -rf _ci/rt-thread-base _ci/profile-builds
+mkdir -p _ci _ci/profile-logs
 
 git clone --depth 1 --branch "${RTTHREAD_REF:?RTTHREAD_REF is required}" \
   https://github.com/RT-Thread/rt-thread.git _ci/rt-thread-base
@@ -114,6 +179,6 @@ isolate_zlib_private_crc32_header
 stage_git_package quicklz https://github.com/RT-Thread-packages/quicklz.git "$QUICKLZ_REF"
 stage_git_package fastlz https://github.com/RT-Thread-packages/fastlz.git "$FASTLZ_REF"
 stage_git_package qled https://github.com/qiyongzhong0/rt-thread-qled.git "$QLED_REF"
-stage_builtin_hpatchlite_package
+stage_git_package hpatchlite https://github.com/wdfk-prog/hpatchlite-wrapper.git "$HPATCHLITE_REF"
 
 echo "Prepared shared RT-Thread BSP base: _ci/rt-thread-base/$STM32_BSP"

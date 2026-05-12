@@ -48,6 +48,86 @@ rt_bool_t qbt_fw_pkg_read(void *src_handle, rt_uint32_t src_off, rt_uint8_t *out
 }
 
 /**
+ * @brief Clamp package read length to available source and buffer space.
+ *
+ * @param desired_len  Preferred read length.
+ * @param readable_len Remaining source bytes available for reading.
+ * @param free_len     Remaining compressed input buffer capacity.
+ * @param read_buf_len Single-read staging buffer capacity.
+ *
+ * @return Read length accepted by the stream buffer limits.
+ */
+static rt_uint32_t qbt_stream_clamp_read_len(rt_uint32_t desired_len,
+                                             rt_uint32_t readable_len,
+                                             rt_uint32_t free_len,
+                                             rt_uint32_t read_buf_len)
+{
+    rt_uint32_t read_len = desired_len;
+
+    if (read_len > readable_len)
+    {
+        read_len = readable_len;
+    }
+    if (read_len > free_len)
+    {
+        read_len = free_len;
+    }
+    if (read_len > read_buf_len)
+    {
+        read_len = read_buf_len;
+    }
+
+    return read_len;
+}
+
+/**
+ * @brief Clamp package read length and apply optional crypto constraints.
+ *
+ * @param crypt_ops    Optional crypto operation table.
+ * @param desired_len  Preferred read length.
+ * @param readable_len Remaining source bytes available for reading.
+ * @param free_len     Remaining compressed input buffer capacity.
+ * @param read_buf_len Single-read staging buffer capacity.
+ *
+ * @return Read length accepted by the stream and crypto layers.
+ */
+static rt_uint32_t qbt_stream_limit_read_len(const qboot_crypto_ops_t *crypt_ops,
+                                             rt_uint32_t desired_len,
+                                             rt_uint32_t readable_len,
+                                             rt_uint32_t free_len,
+                                             rt_uint32_t read_buf_len)
+{
+    rt_uint32_t capacity_len = (free_len < read_buf_len) ? free_len : read_buf_len;
+    rt_uint32_t read_len = qbt_stream_clamp_read_len(desired_len, readable_len, free_len, read_buf_len);
+
+    if ((crypt_ops != RT_NULL) && (crypt_ops->limit_read_len != RT_NULL))
+    {
+        read_len = crypt_ops->limit_read_len(read_len, readable_len, capacity_len);
+        read_len = qbt_stream_clamp_read_len(read_len, readable_len, free_len, read_buf_len);
+    }
+
+    return read_len;
+}
+
+/**
+ * @brief Return the staging capacity used by one package read.
+ *
+ * @param cfg Stream configuration.
+ *
+ * @return Crypto staging capacity when a crypto handler is active; otherwise
+ *         compressed-buffer capacity for direct reads.
+ */
+static rt_uint32_t qbt_stream_read_buf_size(const qbt_stream_cfg_t *cfg)
+{
+    if (cfg->algo_ops->crypt_ops != RT_NULL)
+    {
+        return cfg->crypt_buf_size;
+    }
+
+    return cfg->cmprs_buf_size;
+}
+
+/**
  * @brief Consumer callback for a decompressed output chunk.
  *
  * @param buf Output data buffer.
@@ -157,9 +237,21 @@ rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_
                                 qbt_stream_proc_t proc, void *proc_ctx)
 {
     /* Track package read position, raw output position, and buffered input length. */
-    rt_uint32_t src_read_pos = (rt_uint32_t)qboot_src_read_pos();
-    rt_uint32_t pkg_size = cfg->fw_info->pkg_size + (rt_uint32_t)qboot_src_read_pos();
+    rt_uint32_t src_base_pos;
+    rt_uint32_t src_read_pos;
+    rt_uint32_t pkg_size = 0;
     rt_uint32_t raw_pos = 0;
+    rt_uint32_t read_buf_len;
+
+    src_base_pos = (rt_uint32_t)qboot_src_read_pos();
+    src_read_pos = src_base_pos;
+    read_buf_len = qbt_stream_read_buf_size(cfg);
+
+    if (!qbt_u32_add_checked(cfg->fw_info->pkg_size, src_base_pos, &pkg_size))
+    {
+        LOG_E("Qboot stream read pkg error. package range overflows.");
+        return RT_FALSE;
+    }
     rt_uint32_t cmprs_len = 0;
 
     /* Continue until the expected raw size has been produced. */
@@ -178,25 +270,20 @@ rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_
         remain_len = pkg_size - src_read_pos;
         if (remain_len > 0)
         {
-            rt_uint32_t free_len = QBOOT_CMPRS_BUF_SIZE - cmprs_len;
-            rt_uint32_t read_len = QBOOT_CMPRS_READ_SIZE;
+            rt_uint32_t free_len;
+            rt_uint32_t read_len;
 
-            if (read_len > remain_len)
+            if (cmprs_len > cfg->cmprs_buf_size)
             {
-                read_len = remain_len;
+                LOG_E("Qboot stream read pkg error. buffered input exceeds capacity.");
+                return RT_FALSE;
             }
-            if (read_len > free_len)
-            {
-                read_len = free_len;
-            }
-
-#ifdef QBOOT_USING_AES
-            if ((cfg->algo_ops->crypt_ops != RT_NULL) &&
-                (cfg->algo_ops->crypt_ops->crypto_id == QBOOT_ALGO_CRYPT_AES))
-            {
-                read_len &= ~((rt_uint32_t)16u - 1u);
-            }
-#endif /* QBOOT_USING_AES */
+            free_len = cfg->cmprs_buf_size - cmprs_len;
+            read_len = qbt_stream_limit_read_len(cfg->algo_ops->crypt_ops,
+                                                 QBOOT_CMPRS_READ_SIZE,
+                                                 remain_len,
+                                                 free_len,
+                                                 read_buf_len);
 
             if (read_len > 0)
             {
@@ -229,27 +316,76 @@ rt_bool_t qbt_fw_stream_process(const qbt_stream_cfg_t *cfg, qbt_stream_purpose_
         /* Enforce strict raw output cap based on remaining expected size. */
         qbt_stream_ctx_t cmprs_ctx = {
             .total = cfg->fw_info->pkg_size,
-            .consumed = (rt_uint32_t)(src_read_pos - qboot_src_read_pos()) - cmprs_len,
+            .consumed = (rt_uint32_t)(src_read_pos - src_base_pos) - cmprs_len,
             .raw_remaining = cfg->fw_info->raw_size - raw_pos,
             .purpose = purpose,
         };
-        qbt_stream_buf_t stream_buf = { cfg->cmprs_buf, cmprs_len, cfg->out_buf, QBOOT_BUF_SIZE };
-        qbt_stream_status_t out = { 0 };
+        qbt_stream_buf_t stream_buf = {cfg->cmprs_buf, cmprs_len, cfg->out_buf, cfg->out_buf_size};
+        qbt_stream_status_t out = {0};
 
         if (purpose == QBT_STREAM_WRITE)
         {
             ((qbt_stream_state_t *)proc_ctx)->raw_pos = raw_pos;
         }
         rt_err_t rst = proc(cfg->algo_ops, &stream_buf, &cmprs_ctx, &out, proc_ctx);
-        if ((rst != RT_EOK && rst != -ENOSPC) || ((out.consumed == 0) && (out.produced == 0)))
+        if (rst == -RT_ENOSPC)
         {
-            LOG_E("Qboot stream process error %d. addr=0X%08X, in_len = %d, out_len = %d", rst, raw_pos, out.consumed, out.produced);
+            cmprs_len = stream_buf.in_len;
+            if ((out.consumed == 0) && (out.produced == 0))
+            {
+                rt_uint32_t readable_len = pkg_size - src_read_pos;
+                rt_uint32_t free_len;
+                rt_uint32_t next_read_len;
+
+                if (cmprs_len > cfg->cmprs_buf_size)
+                {
+                    LOG_E("Qboot stream process error. buffered input exceeds capacity.");
+                    return RT_FALSE;
+                }
+                free_len = cfg->cmprs_buf_size - cmprs_len;
+                next_read_len = qbt_stream_limit_read_len(cfg->algo_ops->crypt_ops,
+                                                          QBOOT_CMPRS_READ_SIZE,
+                                                          readable_len,
+                                                          free_len,
+                                                          read_buf_len);
+                rt_bool_t can_read_more = (next_read_len > 0);
+
+                /* One-shot decompressors may need another read before progress. */
+                if (can_read_more)
+                {
+                    continue;
+                }
+
+                LOG_E("Qboot stream process error %d. raw_pos=0x%08X, consumed_bytes=%d, produced_bytes=%d", rst, raw_pos, out.consumed, out.produced);
+                return RT_FALSE;
+            }
+        }
+        else if ((rst != RT_EOK) || ((out.consumed == 0) && (out.produced == 0)))
+        {
+            LOG_E("Qboot stream process error %d. raw_pos=0x%08X, consumed_bytes=%d, produced_bytes=%d", rst, raw_pos, out.consumed, out.produced);
             return RT_FALSE;
         }
-        cmprs_len = stream_buf.in_len;
+        else
+        {
+            cmprs_len = stream_buf.in_len;
+        }
 
         /* Advance raw output position when the algorithm produced bytes. */
         raw_pos += (rt_uint32_t)out.produced;
+    }
+
+    if (src_read_pos != pkg_size)
+    {
+        LOG_E("Qboot stream process error. package body not fully read. read=%u total=%u",
+              (unsigned int)(src_read_pos - src_base_pos),
+              (unsigned int)cfg->fw_info->pkg_size);
+        return RT_FALSE;
+    }
+    if (cmprs_len != 0)
+    {
+        LOG_E("Qboot stream process error. package body has %u unconsumed bytes.",
+              (unsigned int)cmprs_len);
+        return RT_FALSE;
     }
 
     return RT_TRUE;

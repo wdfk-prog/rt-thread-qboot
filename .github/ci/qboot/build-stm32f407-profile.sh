@@ -150,7 +150,7 @@ export RTT_EXEC_PATH=/usr/bin
 export RTT_ROOT="$GITHUB_WORKSPACE/$build_root"
 
 cd "$RTT_ROOT/$STM32_BSP"
-scons -j2
+scons -j"${QBOOT_STM32_SCONS_JOBS:-2}"
 
 test -f rt-thread.elf
 test -f rtthread.bin

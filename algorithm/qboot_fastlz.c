@@ -68,6 +68,10 @@ int qbt_fastlz_decompress(rt_uint8_t *out_buf, rt_uint32_t out_buf_size, const r
 /**
  * @brief One-shot decompress handler for FastLZ blocks.
  *
+ * This adapter owns the FastLZ block header and output-size checks. The
+ * caller provides bounded buffers and validates the returned stream counters;
+ * it does not re-parse FastLZ payloads or compensate for codec decisions.
+ *
  * @param buf Input/output buffers.
  * @param out [out] Stream results.
  * @param ctx Decompression stream context (unused for FastLZ).
@@ -88,8 +92,11 @@ static rt_err_t qbt_algo_fastlz_decompress(const qbt_stream_buf_t *buf, qbt_stre
     }
 
     block_size = qbt_fastlz_get_block_size(buf->in);
-    need_len = block_size + QBOOT_FASTLZ_BLOCK_HDR_SIZE;
     if (block_size == 0)
+    {
+        return -RT_ERROR;
+    }
+    if (!qbt_u32_add_checked(block_size, QBOOT_FASTLZ_BLOCK_HDR_SIZE, &need_len))
     {
         return -RT_ERROR;
     }
@@ -105,14 +112,16 @@ static rt_err_t qbt_algo_fastlz_decompress(const qbt_stream_buf_t *buf, qbt_stre
         LOG_E("Qboot fastlz decompress error. decomp_len=%d", decomp_len);
         return -RT_ERROR;
     }
-    if (decomp_len > out_cap)
+    if ((rt_uint32_t)decomp_len > out_cap)
     {
-        LOG_W("Qboot fastlz decompress warn. decomp_len=%u > out_len=%u", decomp_len, out_cap);
-        decomp_len = out_cap;
+        LOG_E("Qboot fastlz decompress error. decomp_len=%u > out_len=%u",
+              (unsigned int)decomp_len,
+              (unsigned int)out_cap);
+        return -RT_ERROR;
     }
 
     out->consumed = need_len;
-    out->produced = decomp_len;
+    out->produced = (rt_uint32_t)decomp_len;
     return RT_EOK;
 }
 

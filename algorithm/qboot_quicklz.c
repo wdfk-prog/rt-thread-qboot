@@ -24,6 +24,9 @@
 #include <rtdbg.h>
 
 #define QBOOT_QUICKLZ_BLOCK_HDR_SIZE    4
+#define QBOOT_QUICKLZ_SIZE_SHORT        1
+#define QBOOT_QUICKLZ_SIZE_LONG         4
+#define QBOOT_QUICKLZ_SIZE_FLAG         0x02
 
 /** QuickLZ decompression state for streaming API. */
 static qlz_state_decompress qbt_quicklz_state;
@@ -55,6 +58,69 @@ rt_uint32_t qbt_quicklz_get_block_size(const rt_uint8_t *comp_datas)
 }
 
 /**
+ * @brief Parse a little-endian QuickLZ size field.
+ *
+ * @param data Size field pointer.
+ * @param len  Size field length, either 1 or 4 bytes.
+ *
+ * @return Parsed size value.
+ */
+static rt_uint32_t qbt_quicklz_get_le_size(const rt_uint8_t *data, rt_uint32_t len)
+{
+    rt_uint32_t value = 0;
+    rt_uint32_t i;
+
+    for (i = 0; i < len; i++)
+    {
+        value |= ((rt_uint32_t)data[i] << (8u * i));
+    }
+    return value;
+}
+
+/**
+ * @brief Inspect QuickLZ packet sizes before calling the native decoder.
+ *
+ * @param packet       QuickLZ packet without the QBoot block-size header.
+ * @param packet_len   Packet length from the QBoot block-size header.
+ * @param out_len      Output buffer capacity.
+ * @param expected_raw [out] Expected decompressed length from the packet header.
+ *
+ * @return RT_EOK when sizes are self-consistent and fit @p out_len, -RT_ERROR otherwise.
+ */
+static rt_err_t qbt_quicklz_preflight_packet(const rt_uint8_t *packet,
+                                             rt_uint32_t packet_len,
+                                             rt_uint32_t out_len,
+                                             rt_uint32_t *expected_raw)
+{
+    rt_uint32_t size_len;
+    rt_uint32_t header_len;
+    rt_uint32_t comp_len;
+    rt_uint32_t raw_len;
+
+    if (packet_len == 0)
+    {
+        return -RT_ERROR;
+    }
+
+    size_len = (packet[0] & QBOOT_QUICKLZ_SIZE_FLAG) ? QBOOT_QUICKLZ_SIZE_LONG : QBOOT_QUICKLZ_SIZE_SHORT;
+    header_len = 1u + (2u * size_len);
+    if (packet_len < header_len)
+    {
+        return -RT_ERROR;
+    }
+
+    comp_len = qbt_quicklz_get_le_size(packet + 1u, size_len);
+    raw_len = qbt_quicklz_get_le_size(packet + 1u + size_len, size_len);
+    if ((comp_len != packet_len) || (raw_len == 0) || (raw_len > out_len))
+    {
+        return -RT_ERROR;
+    }
+
+    *expected_raw = raw_len;
+    return RT_EOK;
+}
+
+/**
  * @brief Decompress a QuickLZ block payload (no header).
  *
  * @param out_buf Output buffer for decompressed data.
@@ -70,6 +136,10 @@ rt_uint32_t qbt_quicklz_decompress(rt_uint8_t *out_buf, const rt_uint8_t *in_buf
 /**
  * @brief One-shot decompress handler for QuickLZ blocks.
  *
+ * This adapter owns the QuickLZ block header and output-size checks. The
+ * caller provides bounded buffers and validates the returned stream counters;
+ * it does not re-parse QuickLZ payloads or compensate for codec decisions.
+ *
  * @param buf Input/output buffers.
  * @param out [out] Stream results.
  * @param ctx Decompression stream context (unused for QuickLZ).
@@ -82,6 +152,7 @@ static rt_err_t qbt_algo_quicklz_decompress(const qbt_stream_buf_t *buf, qbt_str
     rt_uint32_t block_size; /**< Compressed block size. */
     rt_uint32_t need_len;
     rt_uint32_t decomp_len;
+    rt_uint32_t expected_raw;
 
     if (buf->in_len < QBOOT_QUICKLZ_BLOCK_HDR_SIZE)
     {
@@ -89,26 +160,37 @@ static rt_err_t qbt_algo_quicklz_decompress(const qbt_stream_buf_t *buf, qbt_str
     }
 
     block_size = qbt_quicklz_get_block_size(buf->in);
-    need_len = block_size + QBOOT_QUICKLZ_BLOCK_HDR_SIZE;
     if (block_size == 0)
     {
         return -RT_ERROR;
     }
-    else if (buf->in_len < need_len)
+    if (!qbt_u32_add_checked(block_size, QBOOT_QUICKLZ_BLOCK_HDR_SIZE, &need_len))
+    {
+        return -RT_ERROR;
+    }
+    if (buf->in_len < need_len)
     {
         return -RT_ENOSPC;
+    }
+    if (qbt_quicklz_preflight_packet(buf->in + QBOOT_QUICKLZ_BLOCK_HDR_SIZE,
+                                     block_size,
+                                     (rt_uint32_t)buf->out_len,
+                                     &expected_raw) != RT_EOK)
+    {
+        return -RT_ERROR;
     }
 
     decomp_len = qbt_quicklz_decompress(buf->out, buf->in + QBOOT_QUICKLZ_BLOCK_HDR_SIZE);
     if (decomp_len == 0)
     {
-        LOG_E("Qboot quicklz decompress error", decomp_len);
+        LOG_E("Qboot quicklz decompress error. decomp_len=%u", (unsigned int)decomp_len);
         return -RT_ERROR;
     }
-    else if (decomp_len > buf->out_len)
+    else if (decomp_len != expected_raw)
     {
-        LOG_W("Qboot quicklz decompress warn. decomp_len=%d > out_len=%u", decomp_len, (rt_uint32_t)buf->out_len);
-        decomp_len = buf->out_len;
+        LOG_W("Qboot quicklz decompress warn. decomp_len=%u != expected_raw=%u",
+              (unsigned int)decomp_len,
+              (unsigned int)expected_raw);
         return -RT_ERROR;
     }
 

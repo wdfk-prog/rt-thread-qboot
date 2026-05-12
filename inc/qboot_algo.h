@@ -33,6 +33,29 @@
 #define QBOOT_ALGO_CMPRS_LAST       QBOOT_ALGO_CMPRS_HPATCHLITE
 #define QBOOT_ALGO_CMPRS_COUNT      ((QBOOT_ALGO_CMPRS_LAST >> 8) + 1)
 
+/**
+ * @brief Add two 32-bit unsigned values with overflow checking.
+ *
+ * @param a   First operand.
+ * @param b   Second operand.
+ * @param out [out] Sum when no overflow occurs.
+ *
+ * @return RT_TRUE when the addition is valid, RT_FALSE on overflow.
+ */
+static inline rt_bool_t qbt_u32_add_checked(rt_uint32_t a, rt_uint32_t b, rt_uint32_t *out)
+{
+    if ((out == RT_NULL) || (a > (~(rt_uint32_t)0 - b)))
+    {
+        return RT_FALSE;
+    }
+
+    *out = a + b;
+    return RT_TRUE;
+}
+
+/**
+ * @brief Crypto operation table.
+ */
 typedef struct
 {
     const char* crypto_name;                    /**< Cryption name. */
@@ -42,10 +65,20 @@ typedef struct
                         const rt_uint8_t *in,   /**< Input ciphertext buffer. */
                         rt_uint32_t len);       /**< Number of bytes to decrypt. */
     rt_err_t (*deinit)(void);                   /**< Optional cleanup called after decrypt stage. */
+    rt_uint32_t (*limit_read_len)(rt_uint32_t desired_len,  /**< Preferred read length. */
+                                  rt_uint32_t readable_len, /**< Remaining source bytes. */
+                                  rt_uint32_t free_len);    /**< Free input buffer capacity. */
 } qboot_crypto_ops_t;
 
 /**
  * @brief Decompression operation table.
+ *
+ * The registered codec owns its package-body format parsing, block boundary
+ * checks, decompressed-size checks, and decompression failure policy. QBoot's
+ * stream layer only supplies buffers, limits the total raw output budget, and
+ * validates the consumed/produced counters returned by this callback. External
+ * storage, MCU, or update-manager adapters must not duplicate codec-specific
+ * decompress logic.
  */
 typedef struct
 {

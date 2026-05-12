@@ -174,8 +174,18 @@
 #endif
 #endif
 
+#if defined(QBOOT_USING_AES) && defined(QBOOT_USING_HPATCHLITE)
+#error "QBOOT_USING_AES and QBOOT_USING_HPATCHLITE cannot be enabled together."
+#endif /* defined(QBOOT_USING_AES) && defined(QBOOT_USING_HPATCHLITE) */
+
 #ifndef QBOOT_CURRENT_FW_VER
-/** @brief Current application version used by optional anti-rollback checks. */
+/**
+ * @brief Product-owned current firmware version string.
+ *
+ * QBoot core records and checks package metadata for integrity, product code,
+ * and target partition, but it does not enforce version ordering or rollback
+ * protection. Keep rollback policy in product code if the product requires it.
+ */
 #define QBOOT_CURRENT_FW_VER ""
 #endif /* QBOOT_CURRENT_FW_VER */
 

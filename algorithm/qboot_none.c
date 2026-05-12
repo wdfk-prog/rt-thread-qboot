@@ -97,6 +97,7 @@ static const qboot_crypto_ops_t qbt_algo_none_crypt_ops = {
     .init = RT_NULL,
     .decrypt = qbt_algo_none_crypt,
     .deinit = RT_NULL,
+    .limit_read_len = RT_NULL,
 };
 
 /**
@@ -106,9 +107,9 @@ static const qboot_crypto_ops_t qbt_algo_none_crypt_ops = {
  */
 rt_err_t qbt_algo_none_register(void)
 {
-    if(qboot_cmprs_register(&qbt_algo_none_cmprs_ops) != RT_EOK)
+    if (qboot_cmprs_register(&qbt_algo_none_cmprs_ops) != RT_EOK)
         return -RT_ERROR;
-    if(qboot_crypto_register(&qbt_algo_none_crypt_ops) != RT_EOK)
+    if (qboot_crypto_register(&qbt_algo_none_crypt_ops) != RT_EOK)
         return -RT_ERROR;
     return RT_EOK;
 }

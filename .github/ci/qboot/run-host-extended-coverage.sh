@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-out_dir="_ci/host-sim"
+out_dir="${QBOOT_HOST_OUT_DIR:-_ci/host-sim}"
 fixture_dir="$out_dir/fixtures"
 log_dir="$out_dir/extended-logs"
 summary="$out_dir/extended_coverage_summary.md"
@@ -89,8 +89,25 @@ fi
 if [ "$hpatch_production_available" = "1" ]; then
   run_release "$runner_hpatch" resource-hpatch-production-malloc-first-fails "$fixture_dir/custom-hpatch-production-full.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" fail --chunk 257 --malloc-fail-after 0
   run_release "$runner_hpatch" resource-hpatch-production-malloc-after-first-succeeds "$fixture_dir/custom-hpatch-production-full.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257 --malloc-fail-after 1
+  run_release "$runner_hpatch" resource-hpatch-production-tinyuz-malloc-first-fails "$fixture_dir/custom-hpatch-production-tuz.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" fail --chunk 257 --malloc-fail-after 0
+  run_release "$runner_hpatch" resource-hpatch-production-tinyuz-malloc-after-first-succeeds "$fixture_dir/custom-hpatch-production-tuz.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257 --malloc-fail-after 1
   if [ -x "$runner_hpatch_storage" ]; then
     run_release "$runner_hpatch_storage" hpatch-storage-swap-full-diff "$fixture_dir/custom-hpatch-production-full.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257
+    run_release "$runner_hpatch_storage" hpatch-storage-swap-old-dependent-delta "$fixture_dir/custom-hpatch-production-delta.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257
+    run_release "$runner_hpatch_storage" hpatch-storage-swap-multi-cover "$fixture_dir/custom-hpatch-production-multi-cover.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_multi_new_app.bin" success --chunk 257
+    run_release "$runner_hpatch_storage" hpatch-storage-swap-truncated-rejected "$fixture_dir/mutation-hpatch-production-multi-cover-truncated.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_multi_new_app.bin" fail --chunk 257
+    run_release "$runner_hpatch_storage" hpatch-storage-swap-output-plus-one-rejected "$fixture_dir/mutation-hpatch-production-output-too-large.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/plus_one_app.bin" fail --chunk 257
+    case_name=hpatch-storage-swap-reset-during-swap-write-replay
+    log_file="$log_dir/$case_name.log"
+    case_count=$((case_count + 1))
+    "$runner_hpatch_storage" --case "$case_name" \
+      --package "$fixture_dir/custom-hpatch-production-full.rbl" \
+      --old-app "$fixture_dir/old_app.bin" \
+      --new-app "$fixture_dir/hpatch_new_app.bin" \
+      --expect-receive 1 --expect-first-success 0 --expect-success 1 \
+      --expect-jump 1 --expect-sign 1 --expect-app new \
+      --chunk 257 --replay true --fail-write swap:0 > "$log_file" 2>&1 || fail_case "$case_name" "$log_file"
+    pass_case "$case_name" "$log_file" "storage swap write fault recovers by replay"
     case_name=resource-hpatch-storage-swap-close-fail-rejected
     log_file="$log_dir/$case_name.log"
     case_count=$((case_count + 1))
@@ -103,7 +120,17 @@ if [ "$hpatch_production_available" = "1" ]; then
       --chunk 257 --fail-close swap:0 > "$log_file" 2>&1 || fail_case "$case_name" "$log_file"
     pass_case "$case_name" "$log_file" "storage swap close failure is propagated after APP write"
   else
-    skip_case hpatch-storage-swap-close-fail "storage-swap HPatchLite runner is missing"
+    for skipped_case in \
+      hpatch-storage-swap-full-diff \
+      hpatch-storage-swap-old-dependent-delta \
+      hpatch-storage-swap-multi-cover \
+      hpatch-storage-swap-truncated-rejected \
+      hpatch-storage-swap-output-plus-one-rejected \
+      hpatch-storage-swap-reset-during-swap-write-replay \
+      resource-hpatch-storage-swap-close-fail-rejected; do
+      case_count=$((case_count + 1))
+      skip_case "$skipped_case" "storage-swap HPatchLite runner is missing"
+    done
   fi
 fi
 run_release "$runner_custom" resource-hpatch-host-adapter-malloc-after-first-succeeds "$fixture_dir/custom-hpatch-host-full-diff.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257 --malloc-fail-after 1
@@ -321,12 +348,19 @@ for fs_case in fs-rename-temp-to-download-fail-current-policy fs-temp-file-power
   "$runner_fs" --mode fs-boundary --case "$fs_case" > "$log_file" 2>&1 || fail_case "$fs_case" "$log_file"
   pass_case "$fs_case" "$log_file" "filesystem atomicity/current-policy"
 done
-for update_case in callback-progress-monotonic callback-progress-final-100-on-success callback-error-code-propagated error-code-update-in-progress error-code-update-not-started; do
+for update_case in callback-progress-monotonic callback-progress-final-100-on-success callback-error-code-propagated error-code-update-in-progress error-code-update-not-started update-mgr-wait-timeout-app-valid-clears-reason update-mgr-wait-timeout-recover-clears-reason update-mgr-idle-timeout-app-valid-clears-reason update-mgr-idle-timeout-recover-clears-reason; do
   log_file="$log_dir/$update_case.log"
   case_count=$((case_count + 1))
   "$runner_custom" --mode update-mgr --case "$update_case" > "$log_file" 2>&1 || fail_case "$update_case" "$log_file"
   pass_case "$update_case" "$log_file" "progress/error-code contract"
 done
+
+
+case_name=resource-repeat-100-upgrades-no-state-growth
+log_file="$log_dir/$case_name.log"
+case_count=$((case_count + 1))
+"$runner_custom" --mode repeat-sequence --case repeat-upgrade-100-none-no-state-growth --fixture-dir "$fixture_dir" > "$log_file" 2>&1 || fail_case "$case_name" "$log_file"
+pass_case "$case_name" "$log_file" "100 in-process repeated releases keep storage/session state reusable"
 
 printf '\nPassed %d/%d QBoot host extended coverage checks; skipped %d optional checks.\n' "$pass_count" "$case_count" "$skip_count" >> "$summary"
 printf 'Passed %d/%d QBoot host extended coverage checks; skipped %d optional checks.\n' "$pass_count" "$case_count" "$skip_count"

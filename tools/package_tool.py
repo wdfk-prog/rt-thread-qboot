@@ -47,6 +47,16 @@ QBOOT_ALGO2_ALGOS = {
 
 # ==================================================
 
+
+def validate_hpatchlite_crypto(crypt: str, cmprs: str) -> None:
+    """Reject encrypted HPatchLite packages unsupported by QBoot firmware."""
+    crypt_name = (crypt or "none").strip().lower()
+    cmprs_name = (cmprs or "none").strip().lower()
+    if cmprs_name == "hpatchlite" and crypt_name != "none":
+        print("Error: hpatchlite packages only support --crypt none")
+        sys.exit(2)
+
+
 def crc32(data: bytes) -> int:
     """Return the unsigned CRC32 value used by the RBL header."""
     return zlib.crc32(data) & 0xFFFFFFFF
@@ -102,6 +112,7 @@ def build_rbl_package(raw_fw: bytes, pkg_obj: bytes, crypt: str = "none",
     """Build RBL bytes and return them with the effective algo fields."""
     crypt_algo = parse_algo_strict("--crypt", crypt, QBOOT_CRYPT_ALGOS)
     cmprs_algo = parse_algo_strict("--cmprs", cmprs, QBOOT_CMPRS_ALGOS)
+    validate_hpatchlite_crypto(crypt, cmprs)
     algo = crypt_algo | cmprs_algo
 
     effective_algo2 = parse_algo_strict("--algo2", algo2, QBOOT_ALGO2_ALGOS)

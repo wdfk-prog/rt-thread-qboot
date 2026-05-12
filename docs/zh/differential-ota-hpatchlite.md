@@ -38,6 +38,9 @@
 至少需要：
 
 - `QBOOT_USING_HPATCHLITE`
+
+不要同时启用 `QBOOT_USING_AES` 和 `QBOOT_USING_HPATCHLITE`。固件编译会拒绝该组合，因为 HPatchLite patch release 明确只支持未加密的 RBL 包体。
+
 - `QBOOT_HPATCH_PATCH_CACHE_SIZE`
 - `QBOOT_HPATCH_DECOMPRESS_CACHE_SIZE`
 
@@ -138,5 +141,6 @@ bootloader | app | factory | swap | download
 1. 先跑通整包升级
 2. 再验证 patch 生成和 PC 侧还原
 3. 最后再启用设备侧 HPatchLite
+4. AES/加密包能力保留在整包升级链路，不放到 HPatchLite 链路
 
 不要直接把差分升级作为第一条升级路径。

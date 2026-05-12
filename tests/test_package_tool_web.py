@@ -20,6 +20,11 @@ CMPRS_ALGOS = ("none", "gzip", "quicklz", "fastlz", "hpatchlite")
 ALGO2_ALGOS = ("none", "crc")
 
 
+def is_unsupported_hpatch_crypto(crypt: str, cmprs: str) -> bool:
+    """Return whether the firmware rejects this HPatchLite crypt pairing."""
+    return cmprs == "hpatchlite" and crypt != "none"
+
+
 def load_module(name: str, path: Path):
     """Load a Python source file as a module."""
     spec = importlib.util.spec_from_file_location(name, path)
@@ -66,6 +71,7 @@ def check_static_files() -> None:
     assert '<option value="tuz">_CompressPlugin_tuz</option>' in index_text
     assert "patchCompress" in app_text
     assert 'isPatchPack ? "hpatchlite"' in app_text
+    assert 'getInput("crypt").value = "none"' in app_text
     assert 'setSectionVisible(section, operation !== "patch-pack")' in app_text
     assert "patch_compress" in app_text
     assert "_CompressPlugin_tuz" in app_text
@@ -111,6 +117,8 @@ def check_web_matches_cli_manual_core() -> None:
 
     for crypt in CRYPT_ALGOS:
         for cmprs in CMPRS_ALGOS:
+            if is_unsupported_hpatch_crypto(crypt, cmprs):
+                continue
             for algo2 in ALGO2_ALGOS:
                 cli_bytes, cli_algo, cli_algo2 = cli.build_rbl_package(
                     raw_fw=raw,
@@ -137,7 +145,14 @@ def check_web_matches_cli_manual_core() -> None:
                 assert web_bytes == cli_bytes
                 rows.append((crypt, cmprs, algo2, cli_algo, cli_algo2))
 
-    assert len(rows) == len(CRYPT_ALGOS) * len(CMPRS_ALGOS) * len(ALGO2_ALGOS)
+    expected_rows = sum(
+        1
+        for crypt in CRYPT_ALGOS
+        for cmprs in CMPRS_ALGOS
+        for _algo2 in ALGO2_ALGOS
+        if not is_unsupported_hpatch_crypto(crypt, cmprs)
+    )
+    assert len(rows) == expected_rows
 
 
 def check_header_parser_and_validation() -> None:
@@ -222,6 +237,7 @@ def check_fastlz_quicklz_and_diff_roundtrip() -> None:
     """Verify FastLZ, QuickLZ, TinyUZ, and differential browser roundtrips."""
     web = load_module("qboot_package_tool_web", WEB_CORE)
     raw = bytes((idx * 29 + 11) & 0xFF for idx in range(1024))
+    large_raw = bytes((idx * 37 + 3) & 0xFF for idx in range(4096 + 257))
 
     for size in (0, 1, 14, 15, 128, 4096):
         payload = bytes((idx * 31 + 19) & 0xFF for idx in range(size))
@@ -234,6 +250,19 @@ def check_fastlz_quicklz_and_diff_roundtrip() -> None:
         assert restored == raw
         assert header["cmprs"] == cmprs
         assert header["pkg_size"] > 4
+
+        split_rbl = web.package_firmware_bytes(large_raw, crypt="none", cmprs=cmprs,
+                                               timestamp=1714473601)
+        split_restored, split_header = web.unpack_rbl_bytes(split_rbl)
+        assert split_restored == large_raw
+        assert split_header["raw_size"] == len(large_raw)
+
+        try:
+            getattr(web, f"{cmprs}_decompress")(b"")
+        except web.PackageToolError as exc:
+            assert "4-byte size header" in str(exc)
+        else:
+            raise AssertionError(f"expected empty {cmprs} block to fail")
 
     old = bytearray(bytes((idx * 17 + 5) & 0xFF for idx in range(768)))
     new_fw = bytearray(old)
@@ -264,6 +293,17 @@ def check_fastlz_quicklz_and_diff_roundtrip() -> None:
         assert "requires old firmware" in str(exc)
     else:
         raise AssertionError("expected hpatchlite one-input packaging to fail")
+
+    for builder, kwargs in (
+        (web.package_rbl_bytes, {"raw_fw": raw, "pkg_obj": bytes(old), "crypt": "aes", "cmprs": "hpatchlite"}),
+        (web.package_hpatchlite_rbl_bytes, {"old_fw": bytes(old), "new_fw": bytes(new_fw), "crypt": "aes"}),
+    ):
+        try:
+            builder(**kwargs)
+        except web.PackageToolError as exc:
+            assert "hpatchlite packages only support crypt=none" in str(exc)
+        else:
+            raise AssertionError("expected AES+HPatchLite packaging to fail")
 
     try:
         web.package_firmware_bytes(raw[:-1], crypt="aes", cmprs="none")
@@ -302,7 +342,13 @@ def write_summary() -> None:
         shutil.copy2(WEB_DIR / filename, site_dir / filename)
 
     summary = {
-        "manual_matrix_cases": len(CRYPT_ALGOS) * len(CMPRS_ALGOS) * len(ALGO2_ALGOS),
+        "manual_matrix_cases": sum(
+            1
+            for crypt in CRYPT_ALGOS
+            for cmprs in CMPRS_ALGOS
+            for _algo2 in ALGO2_ALGOS
+            if not is_unsupported_hpatch_crypto(crypt, cmprs)
+        ),
         "real_browser_transforms": ["none", "gzip", "fastlz", "quicklz", "aes", "hpatchlite"],
         "browser_diff_format": "HPatchLite full-diff with _CompressPlugin_tuz",
         "header_size": 96,

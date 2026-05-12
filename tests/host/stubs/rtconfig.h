@@ -4,6 +4,21 @@
 #define PKG_USING_QBOOT
 #define QBOOT_CI_HOST_TEST
 
+#ifndef QBOOT_HOST_FS_ROOT
+/** @brief Host-test filesystem backend root directory. */
+#define QBOOT_HOST_FS_ROOT "_ci/host-sim/fs"
+#endif /* QBOOT_HOST_FS_ROOT */
+
+#ifndef QBOOT_HOST_FIXTURE_DIR
+/** @brief Host-test fixture directory used by runner defaults. */
+#define QBOOT_HOST_FIXTURE_DIR "_ci/host-sim/fixtures"
+#endif /* QBOOT_HOST_FIXTURE_DIR */
+
+/** @brief Host-test temporary download body path. */
+#define QBOOT_DOWNLOAD_TMP_FILE_PATH       QBOOT_HOST_FS_ROOT "/download.tmp"
+/** @brief Host-test temporary download signature path. */
+#define QBOOT_DOWNLOAD_SIGN_TMP_FILE_PATH  QBOOT_HOST_FS_ROOT "/download.sign.tmp"
+
 #if defined(QBOOT_HOST_BACKEND_NONE)
 /* Intentionally no storage backend: used by config-matrix expected-fail cases. */
 #elif defined(QBOOT_HOST_BACKEND_MIXED)
@@ -19,11 +34,11 @@
 #define QBOOT_APP_FAL_PART_NAME        "app"
 #define QBOOT_DOWNLOAD_FAL_PART_NAME   "download"
 #define QBOOT_FACTORY_FAL_PART_NAME    "factory"
-#define QBOOT_APP_FILE_PATH            "_ci/host-sim/fs/app.bin"
-#define QBOOT_APP_SIGN_FILE_PATH       "_ci/host-sim/fs/app.sign"
-#define QBOOT_DOWNLOAD_FILE_PATH       "_ci/host-sim/fs/download.bin"
-#define QBOOT_DOWNLOAD_SIGN_FILE_PATH  "_ci/host-sim/fs/download.sign"
-#define QBOOT_FACTORY_FILE_PATH        "_ci/host-sim/fs/factory.bin"
+#define QBOOT_APP_FILE_PATH            QBOOT_HOST_FS_ROOT "/app.bin"
+#define QBOOT_APP_SIGN_FILE_PATH       QBOOT_HOST_FS_ROOT "/app.sign"
+#define QBOOT_DOWNLOAD_FILE_PATH       QBOOT_HOST_FS_ROOT "/download.bin"
+#define QBOOT_DOWNLOAD_SIGN_FILE_PATH  QBOOT_HOST_FS_ROOT "/download.sign"
+#define QBOOT_FACTORY_FILE_PATH        QBOOT_HOST_FS_ROOT "/factory.bin"
 #define QBOOT_APP_FLASH_ADDR           0x08020000u
 #define QBOOT_APP_FLASH_LEN            0x00030000u
 #define QBOOT_DOWNLOAD_FLASH_ADDR      0x08060000u
@@ -43,11 +58,11 @@
 #define QBOOT_APP_STORE_FS
 #define QBOOT_DOWNLOAD_STORE_FS
 #define QBOOT_FACTORY_STORE_FS
-#define QBOOT_APP_FILE_PATH            "_ci/host-sim/fs/app.bin"
-#define QBOOT_APP_SIGN_FILE_PATH       "_ci/host-sim/fs/app.sign"
-#define QBOOT_DOWNLOAD_FILE_PATH       "_ci/host-sim/fs/download.bin"
-#define QBOOT_DOWNLOAD_SIGN_FILE_PATH  "_ci/host-sim/fs/download.sign"
-#define QBOOT_FACTORY_FILE_PATH        "_ci/host-sim/fs/factory.bin"
+#define QBOOT_APP_FILE_PATH            QBOOT_HOST_FS_ROOT "/app.bin"
+#define QBOOT_APP_SIGN_FILE_PATH       QBOOT_HOST_FS_ROOT "/app.sign"
+#define QBOOT_DOWNLOAD_FILE_PATH       QBOOT_HOST_FS_ROOT "/download.bin"
+#define QBOOT_DOWNLOAD_SIGN_FILE_PATH  QBOOT_HOST_FS_ROOT "/download.sign"
+#define QBOOT_FACTORY_FILE_PATH        QBOOT_HOST_FS_ROOT "/factory.bin"
 #else
 #ifndef QBOOT_HOST_BACKEND_CUSTOM
 #define QBOOT_HOST_BACKEND_CUSTOM
