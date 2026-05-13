@@ -2,6 +2,7 @@
 """CI checks for the static GitHub Pages package tool."""
 
 import importlib.util
+import inspect
 import json
 from pathlib import Path
 import shutil
@@ -20,6 +21,11 @@ CMPRS_ALGOS = ("none", "gzip", "quicklz", "fastlz", "hpatchlite")
 ALGO2_ALGOS = ("none", "crc")
 
 
+def is_unsupported_hpatch_crypto(crypt: str, cmprs: str) -> bool:
+    """Return whether the firmware rejects this HPatchLite crypt pairing."""
+    return cmprs == "hpatchlite" and crypt != "none"
+
+
 def load_module(name: str, path: Path):
     """Load a Python source file as a module."""
     spec = importlib.util.spec_from_file_location(name, path)
@@ -28,6 +34,25 @@ def load_module(name: str, path: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def extract_python_call_block(text: str, call_name: str) -> str:
+    """Return the first embedded Python call expression from app.js."""
+    marker = f"{call_name}("
+    start = text.find(marker)
+    if start < 0:
+        raise AssertionError(f"missing embedded Python call: {call_name}")
+
+    depth = 0
+    for offset, char in enumerate(text[start:], start=start):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return text[start:offset + 1]
+
+    raise AssertionError(f"unterminated embedded Python call: {call_name}")
 
 
 def check_static_files() -> None:
@@ -66,6 +91,9 @@ def check_static_files() -> None:
     assert '<option value="tuz">_CompressPlugin_tuz</option>' in index_text
     assert "patchCompress" in app_text
     assert 'isPatchPack ? "hpatchlite"' in app_text
+    assert 'getInput("crypt").value = "none"' in app_text
+    assert 'algo2: getInput("algo2").value' in app_text
+    assert 'getInput("algo2").value = "none"' not in app_text
     assert 'setSectionVisible(section, operation !== "patch-pack")' in app_text
     assert "patch_compress" in app_text
     assert "_CompressPlugin_tuz" in app_text
@@ -111,6 +139,8 @@ def check_web_matches_cli_manual_core() -> None:
 
     for crypt in CRYPT_ALGOS:
         for cmprs in CMPRS_ALGOS:
+            if is_unsupported_hpatch_crypto(crypt, cmprs):
+                continue
             for algo2 in ALGO2_ALGOS:
                 cli_bytes, cli_algo, cli_algo2 = cli.build_rbl_package(
                     raw_fw=raw,
@@ -137,7 +167,36 @@ def check_web_matches_cli_manual_core() -> None:
                 assert web_bytes == cli_bytes
                 rows.append((crypt, cmprs, algo2, cli_algo, cli_algo2))
 
-    assert len(rows) == len(CRYPT_ALGOS) * len(CMPRS_ALGOS) * len(ALGO2_ALGOS)
+    expected_rows = sum(
+        1
+        for crypt in CRYPT_ALGOS
+        for cmprs in CMPRS_ALGOS
+        for _algo2 in ALGO2_ALGOS
+        if not is_unsupported_hpatch_crypto(crypt, cmprs)
+    )
+    assert len(rows) == expected_rows
+
+
+def check_pyodide_calls_match_python_api() -> None:
+    """Verify app.js embedded Python calls match the browser API signatures."""
+    web = load_module("qboot_package_tool_web", WEB_CORE)
+    app_text = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+
+    expected_patch_compress = {
+        "package_firmware_bytes": False,
+        "package_hpatchlite_rbl_bytes": True,
+        "unpack_rbl_bytes": False,
+        "unpack_hpatchlite_rbl_bytes": False,
+    }
+    for function_name, should_accept in expected_patch_compress.items():
+        signature = inspect.signature(getattr(web, function_name))
+        assert ("patch_compress" in signature.parameters) is should_accept
+
+        call_block = extract_python_call_block(app_text, function_name)
+        has_patch_compress_arg = "patch_compress=" in call_block
+        assert has_patch_compress_arg is should_accept, (
+            f"{function_name} embedded Pyodide call patch_compress mismatch"
+        )
 
 
 def check_header_parser_and_validation() -> None:
@@ -222,6 +281,7 @@ def check_fastlz_quicklz_and_diff_roundtrip() -> None:
     """Verify FastLZ, QuickLZ, TinyUZ, and differential browser roundtrips."""
     web = load_module("qboot_package_tool_web", WEB_CORE)
     raw = bytes((idx * 29 + 11) & 0xFF for idx in range(1024))
+    large_raw = bytes((idx * 37 + 3) & 0xFF for idx in range(4096 + 257))
 
     for size in (0, 1, 14, 15, 128, 4096):
         payload = bytes((idx * 31 + 19) & 0xFF for idx in range(size))
@@ -235,6 +295,19 @@ def check_fastlz_quicklz_and_diff_roundtrip() -> None:
         assert header["cmprs"] == cmprs
         assert header["pkg_size"] > 4
 
+        split_rbl = web.package_firmware_bytes(large_raw, crypt="none", cmprs=cmprs,
+                                               timestamp=1714473601)
+        split_restored, split_header = web.unpack_rbl_bytes(split_rbl)
+        assert split_restored == large_raw
+        assert split_header["raw_size"] == len(large_raw)
+
+        try:
+            getattr(web, f"{cmprs}_decompress")(b"")
+        except web.PackageToolError as exc:
+            assert "4-byte size header" in str(exc)
+        else:
+            raise AssertionError(f"expected empty {cmprs} block to fail")
+
     old = bytearray(bytes((idx * 17 + 5) & 0xFF for idx in range(768)))
     new_fw = bytearray(old)
     new_fw[32:48] = b"QBOOT-WEB-DIFF!!"
@@ -247,7 +320,7 @@ def check_fastlz_quicklz_and_diff_roundtrip() -> None:
     restored, header = web.unpack_hpatchlite_rbl_bytes(bytes(old), rbl)
     assert restored == bytes(new_fw)
     assert header["cmprs"] == "hpatchlite"
-    assert header["algo2_name"] == "none"
+    assert header["algo2_name"] == "crc"
     assert rbl[web.QBOOT_HEADER_SIZE:web.QBOOT_HEADER_SIZE + 3] == b"hI" + bytes([web.HPATCHLITE_COMPRESS_TUZ])
 
     rbl_none = web.package_hpatchlite_rbl_bytes(bytes(old), bytes(new_fw),
@@ -264,6 +337,17 @@ def check_fastlz_quicklz_and_diff_roundtrip() -> None:
         assert "requires old firmware" in str(exc)
     else:
         raise AssertionError("expected hpatchlite one-input packaging to fail")
+
+    for builder, kwargs in (
+        (web.package_rbl_bytes, {"raw_fw": raw, "pkg_obj": bytes(old), "crypt": "aes", "cmprs": "hpatchlite"}),
+        (web.package_hpatchlite_rbl_bytes, {"old_fw": bytes(old), "new_fw": bytes(new_fw), "crypt": "aes"}),
+    ):
+        try:
+            builder(**kwargs)
+        except web.PackageToolError as exc:
+            assert "hpatchlite packages only support crypt=none" in str(exc)
+        else:
+            raise AssertionError("expected AES+HPatchLite packaging to fail")
 
     try:
         web.package_firmware_bytes(raw[:-1], crypt="aes", cmprs="none")
@@ -302,7 +386,13 @@ def write_summary() -> None:
         shutil.copy2(WEB_DIR / filename, site_dir / filename)
 
     summary = {
-        "manual_matrix_cases": len(CRYPT_ALGOS) * len(CMPRS_ALGOS) * len(ALGO2_ALGOS),
+        "manual_matrix_cases": sum(
+            1
+            for crypt in CRYPT_ALGOS
+            for cmprs in CMPRS_ALGOS
+            for _algo2 in ALGO2_ALGOS
+            if not is_unsupported_hpatch_crypto(crypt, cmprs)
+        ),
         "real_browser_transforms": ["none", "gzip", "fastlz", "quicklz", "aes", "hpatchlite"],
         "browser_diff_format": "HPatchLite full-diff with _CompressPlugin_tuz",
         "header_size": 96,
@@ -327,6 +417,7 @@ def main() -> int:
     check_static_files()
     check_javascript_entrypoint()
     check_web_matches_cli_manual_core()
+    check_pyodide_calls_match_python_api()
     check_header_parser_and_validation()
     check_gzip_pack_unpack_roundtrip()
     check_aes_vectors_and_roundtrip()

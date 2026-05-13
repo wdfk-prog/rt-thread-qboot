@@ -4,6 +4,8 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '0 18 * * *'
 
 permissions:
   contents: read
@@ -21,6 +23,7 @@ env:
   ZLIB_REF: master
   QUICKLZ_REF: master
   FASTLZ_REF: master
+  HPATCHLITE_REF: master
   QLED_REF: master
 
 jobs:
@@ -45,17 +48,22 @@ jobs:
           test -f .github/ci/qboot/profile-list.txt
           test -d .github/ci/qboot/profiles
           test -f .github/ci/qboot/prepare-stm32f407-base.sh
+          test -f .github/ci/qboot/requirements-stm32.txt
+          test -f .github/actions/setup-stm32-qboot-ci/action.yml
           test -f .github/ci/qboot/build-stm32f407-profile.sh
           test -f .github/ci/qboot/build-stm32f407-profiles.sh
           test -f .github/ci/qboot/check-line-endings.sh
           test -f .github/ci/qboot/build-host-sim.sh
           test -f .github/ci/qboot/run-host-sim.sh
+          test -f .github/ci/qboot/generate-host-fixtures.py
           test -f .github/ci/qboot/run-config-matrix.sh
           test -f .github/ci/qboot/run-host-sanitizer.sh
           test -f .github/ci/qboot/run-host-static-checks.sh
+          test -f .github/ci/qboot/prepare-host-codec-packages.sh
+          test -f .github/ci/qboot/run-host-runtime-codecs.sh
           test -f .github/ci/qboot/test-board-smoke-parser.sh
+          test -f .github/ci/qboot/run-board-smoke-template.sh
           test -f .github/ci/qboot/run-host-extended-coverage.sh
-          test -f .github/ci/qboot/check-host-sim-artifacts.sh
           test -f .github/ci/qboot/run-rtthread-scons-matrix.sh
           test -f tools/package_tool.py
           test -f tests/test_package_tool.py
@@ -85,6 +93,9 @@ jobs:
         shell: bash
         run: python3 -S -m py_compile SConscript
 
+      # CI should validate repository behavior and callable entrypoints, not
+      # self-test the harness through artifact inventories or generated
+      # bookkeeping comparisons. Keep harness-only checks out of this workflow.
       - name: Check CI helper syntax
         shell: bash
         run: |
@@ -172,9 +183,9 @@ jobs:
 
 
   host-upgrade-sim:
-    name: Host qboot upgrade simulation
+    name: Host qboot baseline simulation
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 25
     needs:
       - package-check
 
@@ -195,7 +206,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential \
-            cppcheck \
             python3 \
             zlib1g-dev
 
@@ -210,117 +220,502 @@ jobs:
           mkdir -p _ci/host-sim/logs
           bash .github/ci/qboot/run-host-sim.sh | tee _ci/host-sim/logs/run-host-sim-ci.log
 
-      - name: Run host qboot config matrix
+      - name: Pack host qboot baseline artifact
+        if: always()
         shell: bash
-        run: bash .github/ci/qboot/run-config-matrix.sh
+        run: |
+          mkdir -p _ci/host-sim
+          tar -cf _ci/qboot-host-base.tar -C . _ci/host-sim
 
-      - name: Run host qboot sanitizer checks
-        shell: bash
-        run: bash .github/ci/qboot/run-host-sanitizer.sh
-
-      - name: Run host qboot static checks
-        shell: bash
-        run: bash .github/ci/qboot/run-host-static-checks.sh
-
-      - name: Run host qboot extended coverage
-        shell: bash
-        run: bash .github/ci/qboot/run-host-extended-coverage.sh
-
-      - name: Validate board qboot smoke HIL template
-        shell: bash
-        run: QBOOT_BOARD_SMOKE_DRY_RUN=1 bash .github/ci/qboot/run-board-smoke-template.sh
-
-      - name: Check host qboot artifact consistency
-        shell: bash
-        run: bash .github/ci/qboot/check-host-sim-artifacts.sh _ci/host-sim/logs/run-host-sim-ci.log
-
-      - name: Upload host simulation artifacts
+      - name: Upload host qboot baseline artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: qboot-host-sim-artifacts
-          path: |
-            _ci/host-sim/fixtures
-            _ci/host-sim/logs
-            _ci/host-sim/config-matrix
-            _ci/host-sim/sanitizer
-            _ci/host-sim/static-checks
-            _ci/host-sim/extended-logs
-            _ci/host-sim/qboot_host_sim_summary.md
-            _ci/host-sim/extended_coverage_summary.md
-            _ci/host-sim/artifact_check_summary.md
-            _ci/host-sim/qboot_c_header.json
-            _ci/host-sim/qboot_py_header_expected.json
-          if-no-files-found: warn
+          name: qboot-host-base
+          path: _ci/qboot-host-base.tar
+          if-no-files-found: error
 
-  cppcheck-report:
-    name: Static analysis with cppcheck
+  host-qboot-config-matrix:
+    name: Host qboot config matrix
     runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs:
+      - host-upgrade-sim
 
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install cppcheck
+      - name: Install host simulation dependencies
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y cppcheck
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            python3 \
+            zlib1g-dev
 
-      - name: Run cppcheck
+      - name: Download host qboot baseline artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: qboot-host-base
+          path: _ci/artifacts/base
+
+      - name: Restore host qboot baseline artifact
         shell: bash
         run: |
-          set +e
-          cppcheck \
-            --enable=warning,style,performance,portability \
-            --inconclusive \
-            --std=c11 \
-            --force \
-            --quiet \
-            --suppress=missingInclude \
-            --suppress=missingIncludeSystem \
-            -Iinc \
-            -Ialgorithm \
-            -Iplatform \
-            src algorithm platform \
-            2> >(tee cppcheck.txt >&2)
-          status=$?
-          test -f cppcheck.txt || touch cppcheck.txt
-          exit "$status"
+          tar -xf _ci/artifacts/base/qboot-host-base.tar
+          chmod +x _ci/host-sim/qboot_host_runner_* || true
 
-      - name: Upload cppcheck report
+      - name: Run host qboot config matrix
+        shell: bash
+        run: bash .github/ci/qboot/run-config-matrix.sh
+
+      - name: Pack host qboot config matrix artifact
+        if: always()
+        shell: bash
+        run: tar -cf _ci/qboot-host-config-matrix.tar -C . _ci/host-sim/config-matrix
+
+      - name: Upload host qboot config matrix artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cppcheck-report
-          path: cppcheck.txt
+          name: qboot-host-config-matrix
+          path: _ci/qboot-host-config-matrix.tar
+          if-no-files-found: warn
+
+  host-qboot-sanitizer:
+    name: Host qboot sanitizer checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs:
+      - host-upgrade-sim
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install host simulation dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            python3 \
+            zlib1g-dev
+
+      - name: Download host qboot baseline artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: qboot-host-base
+          path: _ci/artifacts/base
+
+      - name: Restore host qboot baseline artifact
+        shell: bash
+        run: |
+          tar -xf _ci/artifacts/base/qboot-host-base.tar
+          chmod +x _ci/host-sim/qboot_host_runner_* || true
+
+      - name: Run host qboot sanitizer checks
+        shell: bash
+        run: bash .github/ci/qboot/run-host-sanitizer.sh
+
+      - name: Pack host qboot sanitizer artifact
+        if: always()
+        shell: bash
+        run: tar -cf _ci/qboot-host-sanitizer.tar -C . _ci/host-sim/sanitizer
+
+      - name: Upload host qboot sanitizer artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qboot-host-sanitizer
+          path: _ci/qboot-host-sanitizer.tar
+          if-no-files-found: warn
+
+  host-qboot-gcc-fanalyzer:
+    name: Host qboot gcc fanalyzer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - package-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install fanalyzer dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            python3 \
+            zlib1g-dev
+
+      - name: Run host qboot gcc fanalyzer
+        shell: bash
+        run: QBOOT_HOST_STATIC_CHECKS=gcc-fanalyzer bash .github/ci/qboot/run-host-static-checks.sh
+
+      - name: Pack host qboot gcc fanalyzer artifact
+        if: always()
+        shell: bash
+        run: tar -cf _ci/qboot-static-gcc-fanalyzer.tar -C . _ci/host-sim/static-checks
+
+      - name: Upload host qboot gcc fanalyzer artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qboot-static-gcc-fanalyzer
+          path: _ci/qboot-static-gcc-fanalyzer.tar
+          if-no-files-found: warn
+
+  host-qboot-cppcheck-core:
+    name: Host qboot cppcheck scan core
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - package-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install cppcheck dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cppcheck
+
+      - name: Run host qboot cppcheck scan core
+        shell: bash
+        run: |
+          QBOOT_HOST_CPPCHECK_JOBS="$(getconf _NPROCESSORS_ONLN)"
+          export QBOOT_HOST_CPPCHECK_JOBS
+          QBOOT_HOST_CPPCHECK_MODE="${{ (github.ref_name == 'master' || github.ref_name == 'main') && 'deep' || 'fast' }}"
+          export QBOOT_HOST_CPPCHECK_MODE
+          QBOOT_HOST_STATIC_CHECKS=cppcheck \
+          QBOOT_HOST_CPPCHECK_NAME=cppcheck-core \
+          QBOOT_HOST_CPPCHECK_PATHS="src algorithm" \
+            bash .github/ci/qboot/run-host-static-checks.sh
+
+      - name: Pack host qboot cppcheck core artifact
+        if: always()
+        shell: bash
+        run: tar -cf _ci/qboot-static-cppcheck-core.tar -C . _ci/host-sim/static-checks
+
+      - name: Upload host qboot cppcheck core artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qboot-static-cppcheck-core
+          path: _ci/qboot-static-cppcheck-core.tar
+          if-no-files-found: warn
+
+  host-qboot-cppcheck-host:
+    name: Host qboot cppcheck scan host tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - package-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install cppcheck dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cppcheck
+
+      - name: Run host qboot cppcheck scan host tests
+        shell: bash
+        run: |
+          QBOOT_HOST_CPPCHECK_JOBS="$(getconf _NPROCESSORS_ONLN)"
+          export QBOOT_HOST_CPPCHECK_JOBS
+          QBOOT_HOST_CPPCHECK_MODE="${{ (github.ref_name == 'master' || github.ref_name == 'main') && 'deep' || 'fast' }}"
+          export QBOOT_HOST_CPPCHECK_MODE
+          QBOOT_HOST_STATIC_CHECKS=cppcheck \
+          QBOOT_HOST_CPPCHECK_NAME=cppcheck-host \
+          QBOOT_HOST_CPPCHECK_PATHS="tests/host" \
+            bash .github/ci/qboot/run-host-static-checks.sh
+
+      - name: Pack host qboot cppcheck host artifact
+        if: always()
+        shell: bash
+        run: tar -cf _ci/qboot-static-cppcheck-host.tar -C . _ci/host-sim/static-checks
+
+      - name: Upload host qboot cppcheck host artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qboot-static-cppcheck-host
+          path: _ci/qboot-static-cppcheck-host.tar
+          if-no-files-found: warn
+
+  host-qboot-cppcheck-hpatchlite:
+    name: Host qboot cppcheck scan hpatchlite
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - package-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install cppcheck dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cppcheck
+
+      - name: Run host qboot cppcheck scan hpatchlite
+        shell: bash
+        run: |
+          QBOOT_HOST_CODEC_PACKAGE_DIR="_ci/host-sim/runtime-codecs/packages"
+          QBOOT_HOST_CODEC_PACKAGES=hpatchlite
+          export QBOOT_HOST_CODEC_PACKAGE_DIR QBOOT_HOST_CODEC_PACKAGES
+          bash .github/ci/qboot/prepare-host-codec-packages.sh
+          QBOOT_HOST_CPPCHECK_JOBS="$(getconf _NPROCESSORS_ONLN)"
+          export QBOOT_HOST_CPPCHECK_JOBS
+          QBOOT_HOST_CPPCHECK_MODE="${{ (github.ref_name == 'master' || github.ref_name == 'main') && 'deep' || 'fast' }}"
+          export QBOOT_HOST_CPPCHECK_MODE
+          QBOOT_HOST_STATIC_CHECKS=cppcheck \
+          QBOOT_HOST_CPPCHECK_NAME=cppcheck-hpatchlite \
+          QBOOT_HOST_CPPCHECK_PATHS="$QBOOT_HOST_CODEC_PACKAGE_DIR/hpatchlite" \
+            bash .github/ci/qboot/run-host-static-checks.sh
+
+      - name: Pack host qboot cppcheck hpatchlite artifact
+        if: always()
+        shell: bash
+        run: tar -cf _ci/qboot-static-cppcheck-hpatchlite.tar -C . _ci/host-sim/static-checks
+
+      - name: Upload host qboot cppcheck hpatchlite artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qboot-static-cppcheck-hpatchlite
+          path: _ci/qboot-static-cppcheck-hpatchlite.tar
+          if-no-files-found: warn
+
+  host-qboot-board-parser:
+    name: Host qboot board parser static check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - package-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run host qboot board parser check
+        shell: bash
+        run: QBOOT_HOST_STATIC_CHECKS=board-parser bash .github/ci/qboot/run-host-static-checks.sh
+
+      - name: Pack host qboot board parser artifact
+        if: always()
+        shell: bash
+        run: tar -cf _ci/qboot-static-board-parser.tar -C . _ci/host-sim/static-checks
+
+      - name: Upload host qboot board parser artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qboot-static-board-parser
+          path: _ci/qboot-static-board-parser.tar
+          if-no-files-found: warn
+
+  host-qboot-static-checks:
+    name: Host qboot static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: always()
+    needs:
+      - host-qboot-gcc-fanalyzer
+      - host-qboot-cppcheck-core
+      - host-qboot-cppcheck-host
+      - host-qboot-cppcheck-hpatchlite
+      - host-qboot-board-parser
+
+    steps:
+      - name: Download host qboot static check artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: qboot-static-*
+          path: _ci/artifacts/static
+
+      # Keep `if: always()` paired with explicit `needs.*.result` checks below:
+      # skipped/cancelled upstream jobs must prevent partial artifact creation.
+      - name: Merge host qboot static check artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf _ci/static-merge _ci/host-sim/static-checks
+          mkdir -p _ci/static-merge _ci/host-sim/static-checks
+          summary="_ci/host-sim/static-checks/static_checks_summary.md"
+          printf '# QBoot Host Static Checks\n\n' > "$summary"
+          for archive in $(find _ci/artifacts/static -name '*.tar' -print | sort); do
+            case_dir="_ci/static-merge/$(basename "$archive" .tar)"
+            mkdir -p "$case_dir"
+            tar -xf "$archive" -C "$case_dir"
+            find "$case_dir" -path '*/static_checks_summary.md' -print | sort | while IFS= read -r partial; do
+              sed -n '/^- /p' "$partial" >> "$summary"
+            done
+            find "$case_dir" -path '*/static-checks/*' -type f ! -name static_checks_summary.md -exec cp -f '{}' _ci/host-sim/static-checks/ \;
+          done
+          test "${{ needs.host-qboot-gcc-fanalyzer.result }}" = "success"
+          test "${{ needs.host-qboot-cppcheck-core.result }}" = "success"
+          test "${{ needs.host-qboot-cppcheck-host.result }}" = "success"
+          test "${{ needs.host-qboot-board-parser.result }}" = "success"
+          case "${{ needs.host-qboot-cppcheck-hpatchlite.result }}" in
+            success) ;;
+            skipped)
+              printf -- '- hpatchlite external cppcheck: SKIPPED (only runs on workflow_dispatch/schedule).\n' >> "$summary"
+              ;;
+            *)
+              echo "host-qboot-cppcheck-hpatchlite result was ${{ needs.host-qboot-cppcheck-hpatchlite.result }}" >&2
+              exit 1
+              ;;
+          esac
+          tar -cf _ci/qboot-host-static-checks.tar -C . _ci/host-sim/static-checks
+
+      - name: Upload host qboot static checks artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qboot-host-static-checks
+          path: _ci/qboot-host-static-checks.tar
           if-no-files-found: error
+
+  host-qboot-runtime-codecs:
+    name: Host qboot runtime codec integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+      - package-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install runtime codec dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            git \
+            python3
+
+      - name: Run host qboot runtime codec integration
+        shell: bash
+        run: bash .github/ci/qboot/run-host-runtime-codecs.sh
+
+      - name: Pack host qboot runtime codec artifact
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p _ci/host-sim/runtime-codecs
+          tar -cf _ci/qboot-host-runtime-codecs.tar -C . _ci/host-sim/runtime-codecs
+
+      - name: Upload host qboot runtime codec artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qboot-host-runtime-codecs
+          path: _ci/qboot-host-runtime-codecs.tar
+          if-no-files-found: warn
+
+  host-qboot-extended-coverage:
+    name: Host qboot extended coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs:
+      - host-upgrade-sim
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download host qboot baseline artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: qboot-host-base
+          path: _ci/artifacts/base
+
+      - name: Restore host qboot baseline artifact
+        shell: bash
+        run: |
+          tar -xf _ci/artifacts/base/qboot-host-base.tar
+          chmod +x _ci/host-sim/qboot_host_runner_* || true
+
+      - name: Run host qboot extended coverage
+        shell: bash
+        run: bash .github/ci/qboot/run-host-extended-coverage.sh
+
+      - name: Pack host qboot extended coverage artifact
+        if: always()
+        shell: bash
+        run: tar -cf _ci/qboot-host-extended-coverage.tar -C . _ci/host-sim/extended-logs _ci/host-sim/extended_coverage_summary.md
+
+      - name: Upload host qboot extended coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qboot-host-extended-coverage
+          path: _ci/qboot-host-extended-coverage.tar
+          if-no-files-found: warn
+
+  host-qboot-board-smoke:
+    name: Host qboot board smoke template
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - package-check
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate board qboot smoke HIL template
+        shell: bash
+        run: |
+          mkdir -p _ci/host-sim/board-smoke
+          QBOOT_BOARD_SMOKE_DRY_RUN=1 bash .github/ci/qboot/run-board-smoke-template.sh \
+            > _ci/host-sim/board-smoke/board-smoke.log 2>&1
+
+      - name: Upload host qboot board smoke artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qboot-host-board-smoke
+          path: _ci/host-sim/board-smoke/board-smoke.log
+          if-no-files-found: warn
+
 
   build-stm32f407:
     name: Build STM32F407 qboot profiles
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     needs:
       - package-check
+    env:
+      QBOOT_STM32_PROFILE_JOBS: 2
+      QBOOT_STM32_SCONS_JOBS: 2
 
     steps:
       - name: Checkout qboot package
         uses: actions/checkout@v5
 
-      - name: Install build dependencies
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            gcc-arm-none-eabi \
-            binutils-arm-none-eabi \
-            libnewlib-arm-none-eabi \
-            git \
-            python3 \
-            python3-pip \
-            rsync \
-            scons
-          arm-none-eabi-gcc --version
-          scons --version
+      - name: Set up STM32 build dependencies
+        uses: ./.github/actions/setup-stm32-qboot-ci
 
       - name: Prepare shared RT-Thread STM32F407 BSP
         shell: bash
@@ -342,5 +737,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: stm32f407-build-logs
-          path: _ci/profile-logs/*.log
+          path: _ci/profile-logs/*
           if-no-files-found: warn

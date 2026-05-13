@@ -124,14 +124,14 @@ static void qboot_host_fs_reset(void)
 {
     mkdir("_ci", 0777);
     mkdir("_ci/host-sim", 0777);
-    mkdir("_ci/host-sim/fs", 0777);
+    mkdir(QBOOT_HOST_FS_ROOT, 0777);
     unlink(QBOOT_APP_FILE_PATH);
     unlink(QBOOT_APP_SIGN_FILE_PATH);
     unlink(QBOOT_DOWNLOAD_FILE_PATH);
     unlink(QBOOT_DOWNLOAD_SIGN_FILE_PATH);
     unlink(QBOOT_FACTORY_FILE_PATH);
-    unlink("_ci/host-sim/fs/download.tmp");
-    unlink("_ci/host-sim/fs/download.sign.tmp");
+    unlink(QBOOT_DOWNLOAD_TMP_FILE_PATH);
+    unlink(QBOOT_DOWNLOAD_SIGN_TMP_FILE_PATH);
 }
 #endif /* QBOOT_HOST_BACKEND_FS */
 

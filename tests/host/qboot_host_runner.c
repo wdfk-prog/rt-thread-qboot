@@ -57,7 +57,8 @@ typedef struct
     rt_bool_t malloc_fail_enabled; /**< Enable rt_malloc failure injection. */
     rt_uint32_t malloc_fail_after; /**< Allocations to pass before rt_malloc failure. */
     rt_bool_t physical_flash;     /**< Enable host custom-flash physical constraints. */
-    rt_bool_t inspect;           /**< Only parse and print package header JSON. */
+    rt_bool_t inspect;           /**< Fully validate and print package header JSON. */
+    rt_bool_t inspect_header;    /**< Print validated RBL header/body metadata only. */
     qboot_host_app_expect_t expect_app; /**< Expected APP content selector. */
     rt_bool_t fault_enabled[QBOOT_HOST_FAULT_COUNT]; /**< Fault flags by operation. */
     qboot_host_fault_target_t fault_target[QBOOT_HOST_FAULT_COUNT]; /**< Fault target. */
@@ -82,6 +83,7 @@ static void qboot_host_usage(const char *prog)
 {
     printf("usage: %s --case NAME --package RBL --old-app BIN --new-app BIN [options]\n", prog);
     printf("       %s --inspect --package RBL\n", prog);
+    printf("       %s --inspect-header --package RBL\n", prog);
     printf("       %s --mode update-mgr --case NAME\n", prog);
     printf("       %s --mode jump-stub|fake-flash|fs-boundary|sign-boundary --case NAME\n", prog);
     printf("       %s --mode repeat-sequence|fault-sequence --case NAME --fixture-dir DIR\n", prog);
@@ -97,7 +99,7 @@ static void qboot_host_args_init(qboot_host_args_t *args)
     rt_memset(args, 0, sizeof(*args));
     args->mode = QBOOT_HOST_MODE_RELEASE;
     args->case_name = "host-case";
-    args->fixture_dir = "_ci/host-sim/fixtures";
+    args->fixture_dir = QBOOT_HOST_FIXTURE_DIR;
     args->receive_mode = "normal";
     args->chunk_size = 256u;
     args->expect_receive = RT_TRUE;
@@ -401,6 +403,105 @@ static rt_bool_t qboot_host_fixture_path(char *dst,
     return (written > 0 && (size_t)written < dst_size) ? RT_TRUE : RT_FALSE;
 }
 
+/**
+ * @brief Print a C string as a JSON string literal.
+ *
+ * @param text NUL-terminated text to print. Non-ASCII bytes, JSON control
+ *             characters, and C0 control bytes are emitted as JSON escapes.
+ */
+static void qboot_host_print_json_string(const char *text)
+{
+    putchar('\"');
+    if (text != RT_NULL)
+    {
+        const unsigned char *pos = (const unsigned char *)text;
+
+        while (*pos != '\0')
+        {
+            unsigned char ch = *pos++;
+
+            switch (ch)
+            {
+            case '\\':
+                fputs("\\\\", stdout);
+                break;
+            case '\"':
+                fputs("\\\"", stdout);
+                break;
+            case '\b':
+                fputs("\\b", stdout);
+                break;
+            case '\f':
+                fputs("\\f", stdout);
+                break;
+            case '\n':
+                fputs("\\n", stdout);
+                break;
+            case '\r':
+                fputs("\\r", stdout);
+                break;
+            case '\t':
+                fputs("\\t", stdout);
+                break;
+            default:
+                if (ch < 0x20u || ch >= 0x7Fu)
+                {
+                    printf("\\u%04x", (unsigned)ch);
+                }
+                else
+                {
+                    putchar((int)ch);
+                }
+                break;
+            }
+        }
+    }
+    putchar('\"');
+}
+
+/**
+ * @brief Print firmware header metadata as JSON for shell-side checks.
+ *
+ * @param info Parsed firmware header.
+ */
+static void qboot_host_print_info_json(const fw_info_t *info)
+{
+    char type[sizeof(info->type) + 1u];
+    char part_name[sizeof(info->part_name) + 1u];
+    char fw_ver[sizeof(info->fw_ver) + 1u];
+    char prod_code[sizeof(info->prod_code) + 1u];
+
+    qboot_host_copy_ascii_field(type, sizeof(type),
+                                info->type, sizeof(info->type));
+    qboot_host_copy_ascii_field(part_name, sizeof(part_name),
+                                info->part_name, sizeof(info->part_name));
+    qboot_host_copy_ascii_field(fw_ver, sizeof(fw_ver),
+                                info->fw_ver, sizeof(info->fw_ver));
+    qboot_host_copy_ascii_field(prod_code, sizeof(prod_code),
+                                info->prod_code, sizeof(info->prod_code));
+
+    printf("{\"type\":");
+    qboot_host_print_json_string(type);
+    printf(",\"algo\":%u,\"algo2\":%u,\"part_name\":",
+           (unsigned)info->algo, (unsigned)info->algo2);
+    qboot_host_print_json_string(part_name);
+    printf(",\"fw_ver\":");
+    qboot_host_print_json_string(fw_ver);
+    printf(",\"prod_code\":");
+    qboot_host_print_json_string(prod_code);
+    printf(",\"pkg_crc\":%u,\"raw_crc\":%u,"
+           "\"raw_size\":%u,\"pkg_size\":%u,\"hdr_crc\":%u}\n",
+           (unsigned)info->pkg_crc, (unsigned)info->raw_crc,
+           (unsigned)info->raw_size, (unsigned)info->pkg_size,
+           (unsigned)info->hdr_crc);
+}
+
+/**
+ * @brief Fully validate a package and print its header metadata.
+ *
+ * @param path RBL package path.
+ * @return Zero on success, non-zero on read, load, or validation failure.
+ */
 static int qboot_host_inspect_package(const char *path)
 {
     rt_uint8_t *pkg = RT_NULL;
@@ -429,23 +530,61 @@ static int qboot_host_inspect_package(const char *path)
     {
         return 4;
     }
-    char part_name[sizeof(info.part_name) + 1u];
-    char fw_ver[sizeof(info.fw_ver) + 1u];
-    char prod_code[sizeof(info.prod_code) + 1u];
-
-    qboot_host_copy_ascii_field(part_name, sizeof(part_name), info.part_name, sizeof(info.part_name));
-    qboot_host_copy_ascii_field(fw_ver, sizeof(fw_ver), info.fw_ver, sizeof(info.fw_ver));
-    qboot_host_copy_ascii_field(prod_code, sizeof(prod_code), info.prod_code, sizeof(info.prod_code));
-    printf("{\"type\":\"%.4s\",\"algo\":%u,\"algo2\":%u,"
-           "\"part_name\":\"%s\",\"fw_ver\":\"%s\",\"prod_code\":\"%s\","
-           "\"pkg_crc\":%u,\"raw_crc\":%u,\"raw_size\":%u,\"pkg_size\":%u,\"hdr_crc\":%u}\n",
-           info.type, (unsigned)info.algo, (unsigned)info.algo2,
-           part_name, fw_ver, prod_code,
-           (unsigned)info.pkg_crc, (unsigned)info.raw_crc,
-           (unsigned)info.raw_size, (unsigned)info.pkg_size,
-           (unsigned)info.hdr_crc);
+    qboot_host_print_info_json(&info);
     return 0;
 }
+
+/**
+ * @brief Validate only RBL header and package-body CRC, then print metadata.
+ *
+ * This mode intentionally skips algorithm registration and raw APP CRC checks so
+ * host CI can confirm package metadata is recognizable without linking optional
+ * external codecs in the baseline host simulation.
+ *
+ * @param path RBL package path.
+ * @return Zero on success, non-zero on read, load, or header/body validation failure.
+ */
+static int qboot_host_inspect_package_header(const char *path)
+{
+    rt_uint8_t *pkg = RT_NULL;
+    rt_uint32_t pkg_size = 0;
+    rt_uint32_t hdr_size = (rt_uint32_t)qboot_src_read_pos();
+    void *handle = RT_NULL;
+    rt_uint32_t part_size = 0;
+    fw_info_t info;
+    int ret = 0;
+
+    if (!qboot_host_read_file(path, &pkg, &pkg_size))
+    {
+        return 2;
+    }
+    qboot_host_flash_reset();
+    if (!qboot_host_flash_load(QBOOT_TARGET_DOWNLOAD, pkg, pkg_size) ||
+        !qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size, QBT_OPEN_READ))
+    {
+        free(pkg);
+        return 3;
+    }
+
+    rt_memset(&info, 0, sizeof(info));
+    if (!qbt_fw_info_read(handle, part_size, &info, RT_FALSE) ||
+        rt_memcmp(info.type, "RBL", sizeof(info.type)) != 0 ||
+        crc32_cal((rt_uint8_t *)&info, hdr_size - sizeof(rt_uint32_t)) != info.hdr_crc ||
+        pkg_size < hdr_size || info.pkg_size > (pkg_size - hdr_size) ||
+        crc32_cal(pkg + hdr_size, info.pkg_size) != info.pkg_crc)
+    {
+        ret = 4;
+    }
+    else
+    {
+        qboot_host_print_info_json(&info);
+    }
+
+    qbt_target_close(handle);
+    free(pkg);
+    return ret;
+}
+
 
 static void qboot_host_apply_faults(const qboot_host_args_t *args)
 {
@@ -733,10 +872,9 @@ static int qboot_host_run_repeat_sequence_case(const char *case_name, const char
         { "custom-none-full.rbl", "old_app.bin", "new_app.bin", RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
         { "repeat-upgrade-c-gzip.rbl", "new_app.bin", "app_c.bin", RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
     };
-    static const qboot_host_repeat_step_t seq_gzip_aes_hpatch[] = {
+    static const qboot_host_repeat_step_t seq_gzip_aes[] = {
         { "custom-gzip.rbl", "old_app.bin", "new_app.bin", RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
         { "custom-aes-gzip-real.rbl", "new_app.bin", "aes_new_app.bin", RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
-        { "custom-hpatch-host-full-diff.rbl", "aes_new_app.bin", "hpatch_new_app.bin", RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
     };
     static const qboot_host_repeat_step_t seq_hpatch_then_none[] = {
         { "custom-hpatch-host-full-diff.rbl", "old_app.bin", "hpatch_new_app.bin", RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
@@ -745,13 +883,31 @@ static int qboot_host_run_repeat_sequence_case(const char *case_name, const char
     const qboot_host_repeat_step_t *steps = RT_NULL;
     rt_uint32_t step_count = 0u;
 
+    if (strcmp(case_name, "repeat-upgrade-100-none-no-state-growth") == 0)
+    {
+        static const qboot_host_repeat_step_t repeated_step = {
+            "custom-none-full.rbl", "old_app.bin", "new_app.bin",
+            RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW
+        };
+
+        for (rt_uint32_t i = 0u; i < 100u; i++)
+        {
+            if (qboot_host_run_repeat_step(case_name, fixture_dir, &repeated_step, i, i == 0u) != 0)
+            {
+                return 1;
+            }
+        }
+        printf("QBOOT_HOST_CASE_PASS %s repeat-sequence-steps=100\n", case_name);
+        return 0;
+    }
+
 #define SELECT_SEQUENCE(name, table)     do { if (strcmp(case_name, (name)) == 0) { steps = (table); step_count = (rt_uint32_t)(sizeof(table) / sizeof((table)[0])); } } while (0)
 
     SELECT_SEQUENCE("repeat-upgrade-a-to-b-to-c", seq_a_to_b_to_c);
     SELECT_SEQUENCE("repeat-upgrade-fail-then-success", seq_fail_then_success);
     SELECT_SEQUENCE("repeat-upgrade-success-then-stale-download-leftover", seq_stale_download);
     SELECT_SEQUENCE("repeat-upgrade-sign-rewritten-each-time", seq_sign_rewritten);
-    SELECT_SEQUENCE("repeat-upgrade-gzip-then-aes-then-hpatch", seq_gzip_aes_hpatch);
+    SELECT_SEQUENCE("repeat-upgrade-gzip-then-aes", seq_gzip_aes);
     SELECT_SEQUENCE("repeat-upgrade-hpatch-then-none", seq_hpatch_then_none);
 #undef SELECT_SEQUENCE
 
@@ -1462,8 +1618,8 @@ static int qboot_host_run_fs_boundary_case(const char *case_name)
         unlink(QBOOT_DOWNLOAD_FILE_PATH);
         unlink(QBOOT_DOWNLOAD_SIGN_FILE_PATH);
         unlink(QBOOT_FACTORY_FILE_PATH);
-        unlink("_ci/host-sim/fs/download.tmp");
-        rmdir("_ci/host-sim/fs");
+        unlink(QBOOT_DOWNLOAD_TMP_FILE_PATH);
+        rmdir(QBOOT_HOST_FS_ROOT);
         opened = qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size,
                                   QBT_OPEN_WRITE | QBT_OPEN_CREATE | QBT_OPEN_TRUNC);
         if (opened)
@@ -1593,7 +1749,7 @@ static int qboot_host_run_fs_boundary_case(const char *case_name)
     }
     else if (strcmp(case_name, "fs-stale-temp-file-cleanup") == 0)
     {
-        FILE *fp = fopen("_ci/host-sim/fs/download.tmp", "wb");
+        FILE *fp = fopen(QBOOT_DOWNLOAD_TMP_FILE_PATH, "wb");
         if (fp == RT_NULL || fwrite(data, 1u, sizeof(data), fp) != sizeof(data))
         {
             if (fp != RT_NULL)
@@ -1605,7 +1761,7 @@ static int qboot_host_run_fs_boundary_case(const char *case_name)
         }
         fclose(fp);
         if (!qboot_host_flash_load(QBOOT_TARGET_DOWNLOAD, data, sizeof(data)) ||
-            access("_ci/host-sim/fs/download.tmp", F_OK) != 0)
+            access(QBOOT_DOWNLOAD_TMP_FILE_PATH, F_OK) != 0)
         {
             printf("QBOOT_HOST_FAIL %s stale temp policy changed\n", case_name);
             return 1;
@@ -1749,7 +1905,7 @@ static int qboot_host_run_fs_boundary_case(const char *case_name)
     else if (strcmp(case_name, "fs-rename-temp-to-download-fail-current-policy") == 0 ||
              strcmp(case_name, "fs-temp-file-power-loss-before-rename") == 0)
     {
-        FILE *fp = fopen("_ci/host-sim/fs/download.tmp", "wb");
+        FILE *fp = fopen(QBOOT_DOWNLOAD_TMP_FILE_PATH, "wb");
         if (fp == RT_NULL || fwrite(data, 1u, sizeof(data), fp) != sizeof(data))
         {
             if (fp != RT_NULL)
@@ -1772,7 +1928,7 @@ static int qboot_host_run_fs_boundary_case(const char *case_name)
     {
         unlink(QBOOT_DOWNLOAD_FILE_PATH);
         unlink(QBOOT_DOWNLOAD_SIGN_FILE_PATH);
-        rmdir("_ci/host-sim/fs");
+        rmdir(QBOOT_HOST_FS_ROOT);
         opened = qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size, QBT_OPEN_READ);
         if (opened)
         {
@@ -1783,7 +1939,7 @@ static int qboot_host_run_fs_boundary_case(const char *case_name)
     }
     else if (strcmp(case_name, "fs-stale-temp-sign-file-ignored") == 0)
     {
-        FILE *fp = fopen("_ci/host-sim/fs/download.sign.tmp", "wb");
+        FILE *fp = fopen(QBOOT_DOWNLOAD_SIGN_TMP_FILE_PATH, "wb");
         if (fp == RT_NULL || fwrite(data, 1u, sizeof(data), fp) != sizeof(data))
         {
             if (fp != RT_NULL)
@@ -1868,7 +2024,7 @@ static int qboot_host_run_fs_boundary_case(const char *case_name)
         qbt_target_close(handle);
         unlink(QBOOT_DOWNLOAD_SIGN_FILE_PATH);
         unlink(QBOOT_DOWNLOAD_FILE_PATH);
-        rmdir("_ci/host-sim/fs");
+        rmdir(QBOOT_HOST_FS_ROOT);
         if (qboot_host_download_has_release_sign())
         {
             printf("QBOOT_HOST_FAIL %s sign survived mount loss\n", case_name);
@@ -2123,6 +2279,82 @@ static int qboot_host_run_update_mgr_case(const char *case_name)
         s_mgr_app_valid = RT_FALSE;
         qbt_update_mgr_register(&s_update_ops, 1000u, 1000u);
         return qboot_host_expect_update_counts(case_name, QBT_UPD_STATE_WAIT, 0, 0, 0, 0);
+    }
+    if (strcmp(case_name, "update-mgr-register-in-progress-persists-wait") == 0)
+    {
+        s_mgr_reason = QBT_UPD_REASON_IN_PROGRESS;
+        qbt_update_mgr_register(&s_update_ops, 1000u, 1000u);
+        if (s_mgr_reason != QBT_UPD_REASON_IN_PROGRESS)
+        {
+            printf("QBOOT_HOST_FAIL %s reason=%u\n", case_name, (unsigned)s_mgr_reason);
+            return 1;
+        }
+        return qboot_host_expect_update_counts(case_name, QBT_UPD_STATE_WAIT, 0, 0, 0, 0);
+    }
+    if (strcmp(case_name, "update-mgr-register-req-persists-wait") == 0)
+    {
+        s_mgr_reason = QBT_UPD_REASON_REQ;
+        qbt_update_mgr_register(&s_update_ops, 1000u, 1000u);
+        if (s_mgr_reason != QBT_UPD_REASON_REQ)
+        {
+            printf("QBOOT_HOST_FAIL %s reason=%u\n", case_name, (unsigned)s_mgr_reason);
+            return 1;
+        }
+        return qboot_host_expect_update_counts(case_name, QBT_UPD_STATE_WAIT, 0, 0, 0, 0);
+    }
+    if (strcmp(case_name, "update-mgr-wait-timeout-app-valid-clears-reason") == 0)
+    {
+        s_mgr_reason = QBT_UPD_REASON_REQ;
+        s_mgr_app_valid = RT_TRUE;
+        qbt_update_mgr_register(&s_update_ops, 1u, 1000u);
+        qbt_update_mgr_poll(1u);
+        if (s_mgr_reason != QBT_UPD_REASON_NONE)
+        {
+            printf("QBOOT_HOST_FAIL %s reason=%u\n", case_name, (unsigned)s_mgr_reason);
+            return 1;
+        }
+        return qboot_host_expect_update_counts(case_name, QBT_UPD_STATE_READY, 0, 0, 1, 0);
+    }
+    if (strcmp(case_name, "update-mgr-wait-timeout-recover-clears-reason") == 0)
+    {
+        s_mgr_reason = QBT_UPD_REASON_REQ;
+        s_mgr_recover_ok = RT_TRUE;
+        qbt_update_mgr_register(&s_update_ops, 1u, 1000u);
+        qbt_update_mgr_poll(1u);
+        if (s_mgr_reason != QBT_UPD_REASON_NONE)
+        {
+            printf("QBOOT_HOST_FAIL %s reason=%u\n", case_name, (unsigned)s_mgr_reason);
+            return 1;
+        }
+        return qboot_host_expect_update_counts(case_name, QBT_UPD_STATE_READY, 0, 0, 1, 0);
+    }
+    if (strcmp(case_name, "update-mgr-idle-timeout-app-valid-clears-reason") == 0)
+    {
+        s_mgr_reason = QBT_UPD_REASON_REQ;
+        s_mgr_app_valid = RT_TRUE;
+        qbt_update_mgr_register(&s_update_ops, 1000u, 1u);
+        qbt_update_mgr_on_start();
+        qbt_update_mgr_poll(1u);
+        if (s_mgr_reason != QBT_UPD_REASON_NONE)
+        {
+            printf("QBOOT_HOST_FAIL %s reason=%u\n", case_name, (unsigned)s_mgr_reason);
+            return 1;
+        }
+        return qboot_host_expect_update_counts(case_name, QBT_UPD_STATE_READY, 1, 0, 1, 0);
+    }
+    if (strcmp(case_name, "update-mgr-idle-timeout-recover-clears-reason") == 0)
+    {
+        s_mgr_reason = QBT_UPD_REASON_REQ;
+        s_mgr_recover_ok = RT_TRUE;
+        qbt_update_mgr_register(&s_update_ops, 1000u, 1u);
+        qbt_update_mgr_on_start();
+        qbt_update_mgr_poll(1u);
+        if (s_mgr_reason != QBT_UPD_REASON_NONE)
+        {
+            printf("QBOOT_HOST_FAIL %s reason=%u\n", case_name, (unsigned)s_mgr_reason);
+            return 1;
+        }
+        return qboot_host_expect_update_counts(case_name, QBT_UPD_STATE_READY, 1, 0, 1, 0);
     }
     if (strcmp(case_name, "update-mgr-start-twice") == 0 ||
         strcmp(case_name, "concurrent-update-start-rejected") == 0)
@@ -2719,6 +2951,7 @@ static rt_bool_t qboot_host_parse_args(int argc, char **argv, qboot_host_args_t 
             else { return RT_FALSE; }
         }
         else if (strcmp(opt, "--inspect") == 0) { args->inspect = RT_TRUE; }
+        else if (strcmp(opt, "--inspect-header") == 0) { args->inspect_header = RT_TRUE; }
         else if (strcmp(opt, "--case") == 0) { NEED_ARG(); args->case_name = argv[++i]; }
         else if (strcmp(opt, "--package") == 0) { NEED_ARG(); args->package_path = argv[++i]; }
         else if (strcmp(opt, "--old-app") == 0) { NEED_ARG(); args->old_app_path = argv[++i]; }
@@ -2764,7 +2997,7 @@ static rt_bool_t qboot_host_parse_args(int argc, char **argv, qboot_host_args_t 
     {
         return RT_FALSE;
     }
-    if (args->inspect)
+    if (args->inspect || args->inspect_header)
     {
         return RT_TRUE;
     }
@@ -2828,6 +3061,10 @@ int main(int argc, char **argv)
     if (args.inspect)
     {
         return qboot_host_inspect_package(args.package_path);
+    }
+    if (args.inspect_header)
+    {
+        return qboot_host_inspect_package_header(args.package_path);
     }
     return qboot_host_run_release_case(&args);
 }

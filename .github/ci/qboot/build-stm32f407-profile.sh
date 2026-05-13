@@ -146,11 +146,12 @@ grep -E '^(#define[[:space:]]+(QBOOT|QBT|PKG_USING|CRCLIB|CRC32|TINY_CRYPT|RT_US
   "$rtconfig" || true
 
 export RTT_CC=gcc
-export RTT_EXEC_PATH=/usr/bin
+export RTT_EXEC_PATH="${QBOOT_STM32_RTT_EXEC_PATH:-/usr/bin}"
+export PATH="$RTT_EXEC_PATH:$PATH"
 export RTT_ROOT="$GITHUB_WORKSPACE/$build_root"
 
 cd "$RTT_ROOT/$STM32_BSP"
-scons -j2
+scons -j"${QBOOT_STM32_SCONS_JOBS:-2}"
 
 test -f rt-thread.elf
 test -f rtthread.bin

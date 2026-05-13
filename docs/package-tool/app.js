@@ -15,7 +15,7 @@ const translations = {
     title: "RBL 打包/解包工具",
     subtitle: "在浏览器本地执行 RBL header 生成、gzip 压缩/解压、AES-CBC 加密/解密和固件还原。文件不会上传到服务器。",
     noticeTitle: "语义说明：",
-    noticeBody: "自动打包模式会按 QBoot 释放链路的反向顺序处理：先压缩，再加密。解包模式会先校验 RBL header 和包体 CRC，再按 header 中算法字段执行解密和解压。当前浏览器端真实处理 none、gzip、fastlz、quicklz、aes；差分模式固定使用 RBL cmprs=hpatchlite，并且差分包体可选择不压缩或使用 HPatchLite 自带的 _CompressPlugin_tuz 压缩/解压。",
+    noticeBody: "自动打包模式会按 QBoot 释放链路的反向顺序处理：先压缩，再加密。解包模式会先校验 RBL header 和包体 CRC，再按 header 中算法字段执行解密和解压。当前浏览器端真实处理 none、gzip、fastlz、quicklz、aes；差分模式固定使用 RBL crypt=none、cmprs=hpatchlite，并且差分包体可选择不压缩或使用 HPatchLite 自带的 _CompressPlugin_tuz 压缩/解压。",
     operation: "操作模式",
     operationPackAuto: "自动处理原始固件并打包",
     operationPackManual: "手动包体打包",
@@ -68,7 +68,7 @@ const translations = {
     title: "RBL Packager / Unpacker",
     subtitle: "Run RBL header generation, gzip compression/decompression, AES-CBC encryption/decryption, and firmware restore locally in your browser. Files are not uploaded to a server.",
     noticeTitle: "Scope note:",
-    noticeBody: "Automatic packaging follows the reverse order of the QBoot release path: compress first, then encrypt. Unpack mode validates the RBL header and body CRC, then decrypts and decompresses according to the header algorithm fields. The browser currently performs real none, gzip, fastlz, quicklz, and aes transforms. Differential mode fixes the RBL cmprs field to hpatchlite, and the patch body can be left uncompressed or compressed through HPatchLite's own _CompressPlugin_tuz path.",
+    noticeBody: "Automatic packaging follows the reverse order of the QBoot release path: compress first, then encrypt. Unpack mode validates the RBL header and body CRC, then decrypts and decompresses according to the header algorithm fields. The browser currently performs real none, gzip, fastlz, quicklz, and aes transforms. Differential mode fixes the RBL crypt field to none and cmprs field to hpatchlite, and the patch body can be left uncompressed or compressed through HPatchLite's own _CompressPlugin_tuz path.",
     operation: "Operation",
     operationPackAuto: "Process raw firmware and package",
     operationPackManual: "Wrap a prepared package body",
@@ -236,7 +236,6 @@ function setSectionVisible(section, visible) {
 
 function updateFormState() {
   const operation = getInput("operation").value;
-  const crypt = getInput("crypt").value;
 
   modeSections.forEach((section) => {
     const modes = section.dataset.modeSection.split(" ");
@@ -250,8 +249,8 @@ function updateFormState() {
   });
 
   if (operation === "patch-pack") {
+    getInput("crypt").value = "none";
     getInput("cmprs").value = "hpatchlite";
-    getInput("algo2").value = "none";
   } else if (operation === "pack-auto" && getInput("cmprs").value === "hpatchlite") {
     getInput("cmprs").value = "none";
   }
@@ -261,6 +260,7 @@ function updateFormState() {
   requireFileInput("pkg-file", operation === "pack-manual");
   requireFileInput("rbl-file", operation === "unpack" || operation === "patch-unpack");
 
+  const crypt = getInput("crypt").value;
   document.querySelectorAll("[data-aes-only]").forEach((section) => {
     setSectionVisible(section, crypt === "aes" || operation === "unpack" || operation === "patch-unpack");
   });
@@ -316,7 +316,7 @@ function getRequest() {
     operation,
     crypt: getInput("crypt").value,
     cmprs: isPatchPack ? "hpatchlite" : getInput("cmprs").value,
-    algo2: isPatchPack ? "none" : getInput("algo2").value,
+    algo2: getInput("algo2").value,
     part: getInput("part").value,
     version: getInput("version").value,
     product: getInput("product").value,
@@ -386,7 +386,6 @@ else:
         product=_request['product'],
         aes_key=_request['aesKey'],
         aes_iv=_request['aesIv'],
-        patch_compress=_request['patchCompress'],
     )
 _header = parse_rbl_header(_rbl)
 Path('/qboot-output.rbl').write_bytes(_rbl)
@@ -427,14 +426,12 @@ if _request['operation'] == 'patch-unpack':
         _rbl,
         aes_key=_request['aesKey'],
         aes_iv=_request['aesIv'],
-        patch_compress=_request['patchCompress'],
     )
 else:
     _raw, _header = unpack_rbl_bytes(
         _rbl,
         aes_key=_request['aesKey'],
         aes_iv=_request['aesIv'],
-        patch_compress=_request['patchCompress'],
     )
 Path('/qboot-restored.bin').write_bytes(_raw)
 json.dumps({

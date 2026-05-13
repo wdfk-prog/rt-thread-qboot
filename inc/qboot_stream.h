@@ -73,9 +73,12 @@ typedef struct
     void *dst_handle;                 /**< Destination handle (optional). */
     const fw_info_t *fw_info;         /**< Firmware info header. */
     const qbt_algo_context_t *algo_ops; /**< Algorithm handler table. */
-    rt_uint8_t *cmprs_buf;            /**< Buffer to accumulate compressed input. */
-    rt_uint8_t *out_buf;              /**< Buffer to hold decompressed output. */
-    rt_uint8_t *crypt_buf;            /**< Scratch buffer for encrypted input. */
+    rt_uint8_t *cmprs_buf;              /**< Buffer to accumulate compressed input. */
+    rt_uint32_t cmprs_buf_size;          /**< Capacity of @ref cmprs_buf in bytes. */
+    rt_uint8_t *out_buf;                 /**< Buffer to hold decompressed output. */
+    rt_uint32_t out_buf_size;            /**< Capacity of @ref out_buf in bytes. */
+    rt_uint8_t *crypt_buf;               /**< Scratch buffer for encrypted input. */
+    rt_uint32_t crypt_buf_size;          /**< Capacity of @ref crypt_buf in bytes. */
 } qbt_stream_cfg_t;
 
 /**
