@@ -58,6 +58,16 @@ QBoot 的配置建议按四层来理解：
 ### 3.2 压缩解压
 可在带宽与存储压力较大时启用。
 
+Codec 责任边界：
+
+- 被选中的压缩后端负责自身包体格式、block header 解析、解压后尺寸
+  校验以及失败策略。
+- QBoot stream 层只提供受限的输入 / 输出缓冲区，根据 RBL header 中的
+  raw size 约束总输出量，并校验后端返回的 consumed / produced 计数。
+- 存储后端、MCU 移植接口和升级接收适配层不得重复实现 codec 专属解析
+  或恢复逻辑。若新 codec 需要额外约束，应在该 codec adapter 内实现并
+  在对应包体格式说明中记录。
+
 ### 3.3 差分升级
 适合希望减少传输量和下载时间的项目，但对数据组织和存储规划要求更高。
 
@@ -119,6 +129,7 @@ QBoot 提供了多系列 MCU 对接接口与可扩展框架。默认行为不适
 ### 7.3 差分升级组合
 - DOWNLOAD + APP
 - HPatchLite
+- 不要同时启用 AES 和 HPatchLite；固件编译会拒绝 `QBOOT_USING_AES` + `QBOOT_USING_HPATCHLITE`。
 - RAM buffer 或 SWAP 规划
 - 正确的擦除对齐与恢复策略
 

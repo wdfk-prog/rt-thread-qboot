@@ -1,12 +1,12 @@
 /**
  * @file qboot_aes.c
- * @brief 
+ * @brief
  * @author wdfk-prog ()
  * @version 1.0
  * @date 2026-01-16
- * 
- * @copyright Copyright (c) 2026  
- * 
+ *
+ * @copyright Copyright (c) 2026
+ *
  * @note :
  * @par Change Log:
  * Date       Version   Author      Description
@@ -95,6 +95,33 @@ static rt_err_t qbt_algo_aes_crypt(rt_uint8_t *out, const rt_uint8_t *in, rt_uin
     return qbt_aes_decrypt(out, in, len);
 }
 
+/**
+ * @brief Limit package read length for AES-CBC input blocks.
+ *
+ * @param desired_len  Preferred read length.
+ * @param readable_len Remaining source bytes available for reading.
+ * @param free_len     Remaining compressed input buffer capacity.
+ *
+ * @return Read length clamped to both limits and aligned down to AES block size.
+ */
+static rt_uint32_t qbt_aes_limit_read_len(rt_uint32_t desired_len,
+                                          rt_uint32_t readable_len,
+                                          rt_uint32_t free_len)
+{
+    rt_uint32_t read_len = desired_len;
+
+    if (read_len > readable_len)
+    {
+        read_len = readable_len;
+    }
+    if (read_len > free_len)
+    {
+        read_len = free_len;
+    }
+
+    return (read_len & ~(QBT_AES_BLOCK_SIZE - 1u));
+}
+
 /** AES crypto ops for Qboot. */
 static const qboot_crypto_ops_t qbt_algo_aes_crypt_ops = {
     .crypto_name = "aes",
@@ -102,6 +129,7 @@ static const qboot_crypto_ops_t qbt_algo_aes_crypt_ops = {
     .init = qbt_algo_aes_init,
     .decrypt = qbt_algo_aes_crypt,
     .deinit = RT_NULL,
+    .limit_read_len = qbt_aes_limit_read_len,
 };
 
 /**
@@ -115,4 +143,3 @@ rt_err_t qbt_algo_aes_register(void)
 }
 
 #endif
-

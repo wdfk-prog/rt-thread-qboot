@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-out_dir="_ci/host-sim"
+out_dir="${QBOOT_HOST_OUT_DIR:-_ci/host-sim}"
+hpatch_pkg_dir="${QBOOT_HOST_HPATCHLITE_PACKAGE_DIR:-.github/ci/qboot/packages/hpatchlite}"
+hpatch_source="${QBOOT_HOST_HPATCHLITE_SOURCE:-$hpatch_pkg_dir/hpatch_impl.c}"
 mkdir -p "$out_dir"
 
 cc=${CC:-gcc}
@@ -15,9 +17,49 @@ common_cflags=(
   -Itests/host/stubs
   -Iinc
   -Ialgorithm
-  -I.github/ci/qboot/packages/hpatchlite
+  -I"$hpatch_pkg_dir"
+  -DQBOOT_HOST_FS_ROOT="\"$out_dir/fs\""
+  -DQBOOT_HOST_FIXTURE_DIR="\"$out_dir/fixtures\""
 )
 common_ldflags=()
+pre_cflags=()
+extra_global_sources=()
+
+append_shell_words() {
+  local -n dst=$1
+  local text=$2
+  local words=()
+
+  if [ -z "$text" ]; then
+    return 0
+  fi
+
+  read -r -a words <<< "$text"
+  dst+=("${words[@]}")
+}
+
+append_lines_from_file() {
+  local -n dst=$1
+  local file_path=$2 line
+
+  if [ -z "$file_path" ]; then
+    return 0
+  fi
+  if [ ! -f "$file_path" ]; then
+    echo "missing argument file: $file_path" >&2
+    exit 1
+  fi
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] || continue
+    dst+=("$line")
+  done < "$file_path"
+}
+
+append_lines_from_file pre_cflags "${QBOOT_HOST_PRE_CFLAGS_FILE:-}"
+append_shell_words pre_cflags "${QBOOT_HOST_PRE_CFLAGS:-}"
+append_lines_from_file extra_global_sources "${QBOOT_HOST_EXTRA_SOURCES_FILE:-}"
+append_shell_words extra_global_sources "${QBOOT_HOST_EXTRA_SOURCES:-}"
 
 if [ "${QBOOT_HOST_SANITIZER:-0}" = "1" ]; then
   common_cflags+=(-fsanitize=address,undefined -fno-omit-frame-pointer)
@@ -26,14 +68,8 @@ fi
 if [ "${QBOOT_HOST_ANALYZER:-0}" = "1" ]; then
   common_cflags+=(-fanalyzer)
 fi
-if [ -n "${QBOOT_HOST_EXTRA_CFLAGS:-}" ]; then
-  # shellcheck disable=SC2206
-  common_cflags+=(${QBOOT_HOST_EXTRA_CFLAGS})
-fi
-if [ -n "${QBOOT_HOST_EXTRA_LDFLAGS:-}" ]; then
-  # shellcheck disable=SC2206
-  common_ldflags+=(${QBOOT_HOST_EXTRA_LDFLAGS})
-fi
+append_shell_words common_cflags "${QBOOT_HOST_EXTRA_CFLAGS:-}"
+append_shell_words common_ldflags "${QBOOT_HOST_EXTRA_LDFLAGS:-}"
 
 common_cflags+=(-O0 -g)
 
@@ -54,7 +90,7 @@ common_sources=(
 )
 
 backend_configs=()
-default_backends="custom custom-smallbuf fal fs custom-helper custom-hpatch-production custom-hpatch-storage-swap"
+default_backends="custom custom-smallbuf fal fs custom-helper custom-hpatch-only fal-hpatch-only fs-hpatch-only custom-hpatch-production custom-hpatch-storage-swap"
 
 add_backend() {
   local name=$1 cflags=$2 sources=$3 excludes=$4 use_package_override=$5
@@ -63,22 +99,22 @@ add_backend() {
 }
 
 add_backend custom-helper \
-  "-DQBOOT_HOST_BACKEND_CUSTOM" \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE" \
   "src/qboot_custom_ops.c" \
   "" \
   0
 add_backend custom \
-  "-DQBOOT_HOST_BACKEND_CUSTOM" \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE" \
   "src/qboot_custom_ops.c" \
   "" \
   1
 add_backend custom-smallbuf \
-  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_BUF_SIZE=16" \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_BUF_SIZE=16 -DQBOOT_HOST_DISABLE_HPATCHLITE" \
   "src/qboot_custom_ops.c" \
   "" \
   1
 add_backend custom-no-gzip \
-  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP" \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_HPATCHLITE" \
   "src/qboot_custom_ops.c" \
   "" \
   1
@@ -97,6 +133,16 @@ add_backend custom-gzip-only \
   "src/qboot_custom_ops.c" \
   "" \
   1
+add_backend custom-codec-runtime \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE -DQBOOT_USING_QUICKLZ -DQBOOT_USING_FASTLZ -Wno-unused-parameter -Wno-format-extra-args -Wno-sign-compare -Wno-discarded-qualifiers -Wno-implicit-fallthrough" \
+  "src/qboot_custom_ops.c algorithm/qboot_quicklz.c algorithm/qboot_fastlz.c" \
+  "tests/host/qboot_host_crc32.c tests/host/qboot_host_tinycrypt.c tests/host/qboot_host_hpatchlite.c" \
+  1
+add_backend custom-codec-runtime-hpatch \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_USING_QUICKLZ -DQBOOT_USING_FASTLZ -Wno-unused-parameter -Wno-format-extra-args -Wno-sign-compare -Wno-discarded-qualifiers -Wno-implicit-fallthrough" \
+  "src/qboot_custom_ops.c algorithm/qboot_quicklz.c algorithm/qboot_fastlz.c algorithm/qboot_hpatchlite.c $hpatch_source" \
+  "tests/host/qboot_host_crc32.c tests/host/qboot_host_tinycrypt.c tests/host/qboot_host_hpatchlite.c" \
+  1
 add_backend custom-aes-gzip-only \
   "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
   "src/qboot_custom_ops.c" \
@@ -109,12 +155,12 @@ add_backend custom-hpatch-only \
   1
 add_backend custom-hpatch-production \
   "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter" \
-  "src/qboot_custom_ops.c algorithm/qboot_hpatchlite.c .github/ci/qboot/packages/hpatchlite/hpatch_impl.c" \
+  "src/qboot_custom_ops.c algorithm/qboot_hpatchlite.c $hpatch_source" \
   "tests/host/qboot_host_hpatchlite.c" \
   1
 add_backend custom-hpatch-storage-swap \
   "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_HPATCH_STORAGE_SWAP -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter" \
-  "src/qboot_custom_ops.c algorithm/qboot_hpatchlite.c .github/ci/qboot/packages/hpatchlite/hpatch_impl.c" \
+  "src/qboot_custom_ops.c algorithm/qboot_hpatchlite.c $hpatch_source" \
   "tests/host/qboot_host_hpatchlite.c" \
   1
 add_backend custom-minimal \
@@ -123,17 +169,17 @@ add_backend custom-minimal \
   "" \
   1
 add_backend mixed-backend \
-  "-DQBOOT_HOST_BACKEND_MIXED" \
+  "-DQBOOT_HOST_BACKEND_MIXED -DQBOOT_HOST_DISABLE_HPATCHLITE" \
   "src/qboot_custom_ops.c src/qboot_fal_ops.c src/qboot_fs_ops.c src/qboot_mux_ops.c tests/host/qboot_host_fal.c" \
   "" \
   1
 add_backend none-disabled \
-  "-DQBOOT_HOST_BACKEND_NONE" \
+  "-DQBOOT_HOST_BACKEND_NONE -DQBOOT_HOST_DISABLE_HPATCHLITE" \
   "" \
   "" \
   1
 add_backend fal \
-  "-DQBOOT_HOST_BACKEND_FAL" \
+  "-DQBOOT_HOST_BACKEND_FAL -DQBOOT_HOST_DISABLE_HPATCHLITE" \
   "src/qboot_fal_ops.c tests/host/qboot_host_fal.c" \
   "" \
   1
@@ -152,8 +198,13 @@ add_backend fal-gzip-only \
   "src/qboot_fal_ops.c tests/host/qboot_host_fal.c" \
   "" \
   1
+add_backend fal-hpatch-only \
+  "-DQBOOT_HOST_BACKEND_FAL -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter" \
+  "src/qboot_fal_ops.c tests/host/qboot_host_fal.c" \
+  "" \
+  1
 add_backend fs \
-  "-DQBOOT_HOST_BACKEND_FS" \
+  "-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_DISABLE_HPATCHLITE" \
   "src/qboot_fs_ops.c" \
   "" \
   1
@@ -172,25 +223,35 @@ add_backend fs-gzip-only \
   "src/qboot_fs_ops.c" \
   "" \
   1
+add_backend fs-hpatch-only \
+  "-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter" \
+  "src/qboot_fs_ops.c" \
+  "" \
+  1
 add_backend fal-missing-package \
-  "-DQBOOT_HOST_BACKEND_FAL" \
+  "-DQBOOT_HOST_BACKEND_FAL -DQBOOT_HOST_DISABLE_HPATCHLITE" \
   "src/qboot_fal_ops.c" \
   "" \
   1
 add_backend fs-missing-dfs \
-  "-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_MISSING_DFS_PACKAGE" \
+  "-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_MISSING_DFS_PACKAGE -DQBOOT_HOST_DISABLE_HPATCHLITE" \
   "src/qboot_fs_ops.c" \
   "" \
   1
 add_backend custom-hpatch-missing-lib \
-  "-DQBOOT_HOST_BACKEND_CUSTOM -Wno-unused-parameter" \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter" \
   "src/qboot_custom_ops.c" \
   "tests/host/qboot_host_hpatchlite.c" \
   1
 add_backend custom-aes-missing-lib \
-  "-DQBOOT_HOST_BACKEND_CUSTOM" \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE" \
   "src/qboot_custom_ops.c" \
   "tests/host/qboot_host_tinycrypt.c" \
+  1
+add_backend custom-aes-hpatch-conflict \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP -Wno-unused-parameter" \
+  "src/qboot_custom_ops.c" \
+  "" \
   1
 
 read_backend_config() {
@@ -271,14 +332,20 @@ build_one() {
   append_backend_sources "$backend_sources"
   append_backend_excludes "$backend_excludes"
   copy_common_sources
+  sources+=("${extra_global_sources[@]}")
 
   if [ "$backend_use_package_override" = "1" ]; then
     extra_cflags=(-DQBOOT_CI_HOST_RBL_PACKAGE_TEST "${extra_cflags[@]}")
   fi
 
-  "$cc" "${common_cflags[@]}" "${extra_cflags[@]}" \
+  local zlib_ldflag=()
+  if [ "${QBOOT_HOST_NO_SYSTEM_ZLIB:-0}" != "1" ]; then
+    zlib_ldflag=(-lz)
+  fi
+
+  "$cc" "${pre_cflags[@]}" "${common_cflags[@]}" "${extra_cflags[@]}" \
     "${sources[@]}" "${extra_sources[@]}" \
-    "${common_ldflags[@]}" -lz -o "$output"
+    "${common_ldflags[@]}" "${zlib_ldflag[@]}" -o "$output"
   echo "Built $output"
 }
 

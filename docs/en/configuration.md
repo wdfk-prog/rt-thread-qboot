@@ -58,6 +58,18 @@ Useful when firmware exposure needs to be controlled.
 ### 3.2 Compression and decompression
 Useful when bandwidth or storage pressure matters.
 
+Codec responsibility boundary:
+
+- The selected compression backend owns its package-body format, block header
+  parsing, decompressed-size validation, and failure policy.
+- QBoot's stream layer only provides bounded input/output buffers, enforces the
+  total raw-image budget from the RBL header, and checks the consumed/produced
+  counters returned by the backend.
+- Storage backends, MCU porting interfaces, and update reception adapters must
+  not duplicate codec-specific parsing or recovery logic. If a new codec needs
+  extra constraints, implement them inside that codec adapter and document the
+  package format there.
+
 ### 3.3 Differential update
 Useful when transfer size and download time need to be reduced, but it requires tighter data and storage planning.
 
@@ -119,6 +131,7 @@ When using a custom backend, define at least:
 ### 7.3 Differential update set
 - DOWNLOAD + APP
 - HPatchLite
+- Do not enable AES and HPatchLite together; firmware compilation rejects `QBOOT_USING_AES` + `QBOOT_USING_HPATCHLITE`.
 - RAM buffer or SWAP planning
 - correct erase-alignment and recovery policy
 

@@ -37,6 +37,9 @@ Use `tools/package_tool.py` to wrap `patch.bin` into a QBoot-readable package.
 At minimum, enable:
 
 - `QBOOT_USING_HPATCHLITE`
+
+Do not enable `QBOOT_USING_AES` together with `QBOOT_USING_HPATCHLITE`. Firmware compilation rejects that combination because HPatchLite patch release is intentionally limited to unencrypted RBL package bodies.
+
 - `QBOOT_HPATCH_PATCH_CACHE_SIZE`
 - `QBOOT_HPATCH_DECOMPRESS_CACHE_SIZE`
 
@@ -137,5 +140,6 @@ When enabling diff OTA for the first time, verify these first:
 1. make full-package upgrade work first
 2. verify patch generation and PC-side reconstruction
 3. enable device-side HPatchLite last
+4. keep AES/encrypted-package support on the full-image upgrade path, not on the HPatchLite path
 
 Do not make diff OTA your first upgrade path.

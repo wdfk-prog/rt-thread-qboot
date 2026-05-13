@@ -25,6 +25,7 @@
 #ifdef QBOOT_USING_HPATCHLITE
 
 #include "hpatch_impl.h"
+#include <limits.h>
 
 // Define ULOG tag and level
 #define DBG_TAG "qboot.hpatch"
@@ -78,6 +79,26 @@ struct hpatchi_instance_t
     rt_uint32_t old_part_erased_end;        /**< Next erase-aligned offset to erase in old partition */
 };
 
+/**
+ * @brief Add two non-negative HPatchLite int values with overflow checking.
+ *
+ * @param a   First operand.
+ * @param b   Second operand.
+ * @param out [out] Sum when no overflow occurs.
+ *
+ * @return hpi_TRUE when valid, hpi_FALSE on negative input or overflow.
+ */
+static hpi_BOOL qbt_hpatch_int_add_checked(int a, int b, int *out)
+{
+    if ((out == RT_NULL) || (a < 0) || (b < 0) || (a > (INT_MAX - b)))
+    {
+        return hpi_FALSE;
+    }
+
+    *out = a + b;
+    return hpi_TRUE;
+}
+
 // -----------------------------------------------------------------------------
 // Common Listener Callbacks
 // -----------------------------------------------------------------------------
@@ -112,7 +133,18 @@ static hpi_BOOL _do_read_patch(hpi_TInputStreamHandle input_stream, hpi_byte *da
         return hpi_TRUE;
     }
 
-    if (_header_io_ops->read(instance->patch_part, instance->patch_file_offset + instance->patch_read_pos, data, *size) != RT_EOK)
+    int read_off;
+
+    if (!qbt_hpatch_int_add_checked(instance->patch_file_offset,
+                                    instance->patch_read_pos,
+                                    &read_off))
+    {
+        LOG_E("Patch read offset overflow for '%s'.", instance->patch_name);
+        *size = 0;
+        return hpi_FALSE;
+    }
+
+    if (_header_io_ops->read(instance->patch_part, read_off, data, *size) != RT_EOK)
     {
         LOG_E("Failed to read patch data from '%s'.", instance->patch_name);
         *size = 0;
@@ -267,7 +299,18 @@ static hpi_BOOL qbt_flash_copy_to_old(hpatchi_instance_t *instance, int size)
  */
 static hpi_BOOL qbt_flash_swap_append(hpatchi_instance_t *instance, const hpi_byte *data, hpi_size_t size)
 {
-    if (_header_io_ops->write(instance->swap->part, QBOOT_HPATCH_SWAP_OFFSET + instance->swap->write_pos, (const uint8_t *)data, size) != RT_EOK)
+    rt_uint32_t write_off;
+
+    if ((instance->swap->write_pos < 0) ||
+        !qbt_u32_add_checked((rt_uint32_t)QBOOT_HPATCH_SWAP_OFFSET,
+                             (rt_uint32_t)instance->swap->write_pos,
+                             &write_off))
+    {
+        LOG_E("Swap %s append offset overflow.", instance->swap->name);
+        return hpi_FALSE;
+    }
+
+    if (_header_io_ops->write(instance->swap->part, write_off, (const uint8_t *)data, size) != RT_EOK)
     {
         return hpi_FALSE;
     }
@@ -461,10 +504,16 @@ static hpi_BOOL qbt_swap_commit(hpatchi_instance_t *instance)
 {
     const qbt_swap_t *ops = instance->swap;
     int used = ops->write_pos;
+    int commit_end;
 
     if (used == 0)
     {
         return hpi_TRUE;
+    }
+    if (!qbt_hpatch_int_add_checked(instance->committed_len, used, &commit_end))
+    {
+        LOG_E("Swap %s commit range overflow.", ops->name);
+        return hpi_FALSE;
     }
 
     if (instance->progress_percent >= 0 && instance->progress_percent < 100)
@@ -472,7 +521,7 @@ static hpi_BOOL qbt_swap_commit(hpatchi_instance_t *instance)
         rt_kprintf("\n");
     }
     LOG_I("\nCommitting %d bytes from %s swap to '%s' partition...", used, ops->name, instance->old_name);
-    if (!qbt_erase_aligned_range(instance, (rt_uint32_t)instance->committed_len, (rt_uint32_t)(instance->committed_len + used), RT_FALSE))
+    if (!qbt_erase_aligned_range(instance, (rt_uint32_t)instance->committed_len, (rt_uint32_t)commit_end, RT_FALSE))
     {
         return hpi_FALSE;
     }
@@ -483,7 +532,7 @@ static hpi_BOOL qbt_swap_commit(hpatchi_instance_t *instance)
         return hpi_FALSE;
     }
 
-    instance->committed_len += used;
+    instance->committed_len = commit_end;
     LOG_I("\nCommit successful. Total committed: %d bytes.", instance->committed_len);
 
     if (!ops->reset(instance))

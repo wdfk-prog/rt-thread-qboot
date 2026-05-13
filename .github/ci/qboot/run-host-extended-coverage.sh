@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-out_dir="_ci/host-sim"
+out_dir="${QBOOT_HOST_OUT_DIR:-_ci/host-sim}"
 fixture_dir="$out_dir/fixtures"
 log_dir="$out_dir/extended-logs"
 summary="$out_dir/extended_coverage_summary.md"
@@ -9,11 +9,12 @@ python_bin="${PYTHON:-python3}"
 runner_custom="$out_dir/qboot_host_runner_custom"
 runner_fal="$out_dir/qboot_host_runner_fal"
 runner_fs="$out_dir/qboot_host_runner_fs"
+runner_hpatch_host="$out_dir/qboot_host_runner_custom-hpatch-only"
 runner_hpatch="$out_dir/qboot_host_runner_custom-hpatch-production"
 runner_hpatch_storage="$out_dir/qboot_host_runner_custom-hpatch-storage-swap"
 
 mkdir -p "$log_dir"
-for runner in "$runner_custom" "$runner_fal" "$runner_fs"; do
+for runner in "$runner_custom" "$runner_fal" "$runner_fs" "$runner_hpatch_host"; do
   test -x "$runner"
 done
 test -f "$fixture_dir/custom-none-full.rbl"
@@ -38,6 +39,7 @@ pass_case() {
 }
 
 skip_case() {
+  case_count=$((case_count + 1))
   skip_count=$((skip_count + 1))
   printf 'QBOOT_HOST_EXTENDED_SKIP %s %s\n' "$1" "$2"
   printf '| %s | SKIP | - | %s |\n' "$1" "$2" >> "$summary"
@@ -69,7 +71,8 @@ if [ -x "$runner_hpatch" ] && [ -f "$fixture_dir/custom-hpatch-production-full.r
    [ -f "$fixture_dir/custom-hpatch-production-multi-cover-tuz.rbl" ] && \
    [ -f "$fixture_dir/mutation-hpatch-production-multi-cover-truncated.rbl" ] && \
    [ -f "$fixture_dir/mutation-hpatch-production-tuz-trailing-byte.rbl" ] && \
-   [ -f "$fixture_dir/mutation-hpatch-production-output-too-large.rbl" ]; then
+   [ -f "$fixture_dir/mutation-hpatch-production-output-too-large.rbl" ] && \
+   [ -f "$fixture_dir/mutation-hpatch-production-raw-crc.rbl" ]; then
   hpatch_production_available=1
   run_release "$runner_hpatch" hpatch-production-full-diff "$fixture_dir/custom-hpatch-production-full.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257
   run_release "$runner_hpatch" hpatch-production-old-dependent-delta "$fixture_dir/custom-hpatch-production-delta.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257
@@ -79,6 +82,17 @@ if [ -x "$runner_hpatch" ] && [ -f "$fixture_dir/custom-hpatch-production-full.r
   run_release "$runner_hpatch" hpatch-production-multi-cover-truncated-rejected "$fixture_dir/mutation-hpatch-production-multi-cover-truncated.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_multi_new_app.bin" fail --chunk 257
   run_release "$runner_hpatch" hpatch-production-tinyuz-trailing-byte-rejected "$fixture_dir/mutation-hpatch-production-tuz-trailing-byte.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" fail --chunk 257
   run_release "$runner_hpatch" hpatch-production-output-plus-one-rejected "$fixture_dir/mutation-hpatch-production-output-too-large.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/plus_one_app.bin" fail --chunk 257
+  case_name=hpatch-production-raw-crc-dest-verify-rejected
+  log_file="$log_dir/$case_name.log"
+  case_count=$((case_count + 1))
+  "$runner_hpatch" --case "$case_name" \
+    --package "$fixture_dir/mutation-hpatch-production-raw-crc.rbl" \
+    --old-app "$fixture_dir/old_app.bin" \
+    --new-app "$fixture_dir/hpatch_new_app.bin" \
+    --expect-receive 1 --expect-first-success 0 --expect-success 0 \
+    --expect-jump 0 --expect-sign 0 --expect-app new \
+    --chunk 257 > "$log_file" 2>&1 || fail_case "$case_name" "$log_file"
+  pass_case "$case_name" "$log_file" "destination APP raw CRC rejects HPatchLite output after restore"
 elif [ "${QBOOT_HOST_ALLOW_HPATCHLITE_SKIP:-0}" = "1" ]; then
   skip_case hpatch-production-real-lib "production HPatchLite runner or fixtures are missing in dependency bootstrap mode"
 else
@@ -89,8 +103,25 @@ fi
 if [ "$hpatch_production_available" = "1" ]; then
   run_release "$runner_hpatch" resource-hpatch-production-malloc-first-fails "$fixture_dir/custom-hpatch-production-full.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" fail --chunk 257 --malloc-fail-after 0
   run_release "$runner_hpatch" resource-hpatch-production-malloc-after-first-succeeds "$fixture_dir/custom-hpatch-production-full.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257 --malloc-fail-after 1
+  run_release "$runner_hpatch" resource-hpatch-production-tinyuz-malloc-first-fails "$fixture_dir/custom-hpatch-production-tuz.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" fail --chunk 257 --malloc-fail-after 0
+  run_release "$runner_hpatch" resource-hpatch-production-tinyuz-malloc-after-first-succeeds "$fixture_dir/custom-hpatch-production-tuz.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257 --malloc-fail-after 1
   if [ -x "$runner_hpatch_storage" ]; then
     run_release "$runner_hpatch_storage" hpatch-storage-swap-full-diff "$fixture_dir/custom-hpatch-production-full.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257
+    run_release "$runner_hpatch_storage" hpatch-storage-swap-old-dependent-delta "$fixture_dir/custom-hpatch-production-delta.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257
+    run_release "$runner_hpatch_storage" hpatch-storage-swap-multi-cover "$fixture_dir/custom-hpatch-production-multi-cover.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_multi_new_app.bin" success --chunk 257
+    run_release "$runner_hpatch_storage" hpatch-storage-swap-truncated-rejected "$fixture_dir/mutation-hpatch-production-multi-cover-truncated.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_multi_new_app.bin" fail --chunk 257
+    run_release "$runner_hpatch_storage" hpatch-storage-swap-output-plus-one-rejected "$fixture_dir/mutation-hpatch-production-output-too-large.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/plus_one_app.bin" fail --chunk 257
+    case_name=hpatch-storage-swap-reset-during-swap-write-replay
+    log_file="$log_dir/$case_name.log"
+    case_count=$((case_count + 1))
+    "$runner_hpatch_storage" --case "$case_name" \
+      --package "$fixture_dir/custom-hpatch-production-full.rbl" \
+      --old-app "$fixture_dir/old_app.bin" \
+      --new-app "$fixture_dir/hpatch_new_app.bin" \
+      --expect-receive 1 --expect-first-success 0 --expect-success 1 \
+      --expect-jump 1 --expect-sign 1 --expect-app new \
+      --chunk 257 --replay true --fail-write swap:0 > "$log_file" 2>&1 || fail_case "$case_name" "$log_file"
+    pass_case "$case_name" "$log_file" "storage swap write fault recovers by replay"
     case_name=resource-hpatch-storage-swap-close-fail-rejected
     log_file="$log_dir/$case_name.log"
     case_count=$((case_count + 1))
@@ -103,10 +134,19 @@ if [ "$hpatch_production_available" = "1" ]; then
       --chunk 257 --fail-close swap:0 > "$log_file" 2>&1 || fail_case "$case_name" "$log_file"
     pass_case "$case_name" "$log_file" "storage swap close failure is propagated after APP write"
   else
-    skip_case hpatch-storage-swap-close-fail "storage-swap HPatchLite runner is missing"
+    for skipped_case in \
+      hpatch-storage-swap-full-diff \
+      hpatch-storage-swap-old-dependent-delta \
+      hpatch-storage-swap-multi-cover \
+      hpatch-storage-swap-truncated-rejected \
+      hpatch-storage-swap-output-plus-one-rejected \
+      hpatch-storage-swap-reset-during-swap-write-replay \
+      resource-hpatch-storage-swap-close-fail-rejected; do
+      skip_case "$skipped_case" "storage-swap HPatchLite runner is missing"
+    done
   fi
 fi
-run_release "$runner_custom" resource-hpatch-host-adapter-malloc-after-first-succeeds "$fixture_dir/custom-hpatch-host-full-diff.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257 --malloc-fail-after 1
+run_release "$runner_hpatch_host" resource-hpatch-host-adapter-malloc-after-first-succeeds "$fixture_dir/custom-hpatch-host-full-diff.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" success --chunk 257 --malloc-fail-after 1
 
 for item in \
   "protocol-total-size-short-rejected-before-finish:protocol-total-size-short" \
@@ -263,15 +303,20 @@ for item in \
   "stream-aes-gzip-chunk-17:custom-aes-gzip-real.rbl:aes_new_app.bin:17" \
   "stream-aes-gzip-chunk-31:custom-aes-gzip-real.rbl:aes_new_app.bin:31" \
   "stream-aes-gzip-chunk-32:custom-aes-gzip-real.rbl:aes_new_app.bin:32" \
-  "stream-hpatch-cross-chunk-15:custom-hpatch-host-full-diff.rbl:hpatch_new_app.bin:15" \
-  "stream-hpatch-cross-chunk-17:custom-hpatch-host-full-diff.rbl:hpatch_new_app.bin:17"; do
+  "stream-hpatch-cross-chunk-15:custom-hpatch-host-full-diff.rbl:hpatch_new_app.bin:15:hpatch" \
+  "stream-hpatch-cross-chunk-17:custom-hpatch-host-full-diff.rbl:hpatch_new_app.bin:17:hpatch"; do
   case_name=${item%%:*}
   rest=${item#*:}
   pkg=${rest%%:*}
   rest=${rest#*:}
   new_img=${rest%%:*}
-  chunk=${rest##*:}
-  run_release "$runner_custom" "$case_name" "$fixture_dir/$pkg" "$fixture_dir/old_app.bin" "$fixture_dir/$new_img" success --chunk "$chunk"
+  rest=${rest#*:}
+  chunk=${rest%%:*}
+  runner="$runner_custom"
+  if [ "${rest#*:}" = "hpatch" ]; then
+    runner="$runner_hpatch_host"
+  fi
+  run_release "$runner" "$case_name" "$fixture_dir/$pkg" "$fixture_dir/old_app.bin" "$fixture_dir/$new_img" success --chunk "$chunk"
 done
 
 for item in \
@@ -321,12 +366,19 @@ for fs_case in fs-rename-temp-to-download-fail-current-policy fs-temp-file-power
   "$runner_fs" --mode fs-boundary --case "$fs_case" > "$log_file" 2>&1 || fail_case "$fs_case" "$log_file"
   pass_case "$fs_case" "$log_file" "filesystem atomicity/current-policy"
 done
-for update_case in callback-progress-monotonic callback-progress-final-100-on-success callback-error-code-propagated error-code-update-in-progress error-code-update-not-started; do
+for update_case in callback-progress-monotonic callback-progress-final-100-on-success callback-error-code-propagated error-code-update-in-progress error-code-update-not-started update-mgr-wait-timeout-app-valid-clears-reason update-mgr-wait-timeout-recover-clears-reason update-mgr-idle-timeout-app-valid-clears-reason update-mgr-idle-timeout-recover-clears-reason; do
   log_file="$log_dir/$update_case.log"
   case_count=$((case_count + 1))
   "$runner_custom" --mode update-mgr --case "$update_case" > "$log_file" 2>&1 || fail_case "$update_case" "$log_file"
   pass_case "$update_case" "$log_file" "progress/error-code contract"
 done
+
+
+case_name=resource-repeat-100-upgrades-no-state-growth
+log_file="$log_dir/$case_name.log"
+case_count=$((case_count + 1))
+"$runner_custom" --mode repeat-sequence --case repeat-upgrade-100-none-no-state-growth --fixture-dir "$fixture_dir" > "$log_file" 2>&1 || fail_case "$case_name" "$log_file"
+pass_case "$case_name" "$log_file" "100 in-process repeated releases keep storage/session state reusable"
 
 printf '\nPassed %d/%d QBoot host extended coverage checks; skipped %d optional checks.\n' "$pass_count" "$case_count" "$skip_count" >> "$summary"
 printf 'Passed %d/%d QBoot host extended coverage checks; skipped %d optional checks.\n' "$pass_count" "$case_count" "$skip_count"

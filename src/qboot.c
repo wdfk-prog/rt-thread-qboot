@@ -228,8 +228,11 @@ static rt_bool_t qbt_app_crc_check(void *src_handle, const char *src_name, fw_in
         .fw_info = fw_info,
         .algo_ops = &algo_ops,
         .cmprs_buf = g_cmprs_buf,
+        .cmprs_buf_size = sizeof(g_cmprs_buf),
         .out_buf = g_decmprs_buf,
+        .out_buf_size = sizeof(g_decmprs_buf),
         .crypt_buf = g_crypt_buf,
+        .crypt_buf_size = sizeof(g_crypt_buf),
     };
 
     ret = qbt_fw_stream_process(&stream_cfg, QBT_STREAM_CRC, qbt_stream_crc_proc, &crc32);
@@ -263,13 +266,17 @@ static rt_bool_t qbt_app_crc_check(void *src_handle, const char *src_name, fw_in
  * @param dst_size   Destination total size.
  * @param dst_name   Destination name.
  * @param src_handle Source package handle.
- * @param src_name   Source name (unused, retained for signature compatibility).
+ * @param src_name   Source name, used by the HPatchLite release path.
  * @param fw_info    Firmware info header.
  *
  * @return RT_TRUE on success, RT_FALSE on error.
  */
 static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const char *dst_name, void *src_handle, const char *src_name, fw_info_t *fw_info)
 {
+#if !defined(QBOOT_USING_HPATCHLITE)
+    RT_UNUSED(src_name);
+#endif /* !defined(QBOOT_USING_HPATCHLITE) */
+
     qbt_algo_context_t algo_ops = {0};
 
     if (qbt_fw_get_algo_context(fw_info, &algo_ops) == RT_FALSE)
@@ -310,8 +317,11 @@ static rt_bool_t qbt_fw_release(void *dst_handle, rt_uint32_t dst_size, const ch
         .fw_info = fw_info,
         .algo_ops = &algo_ops,
         .cmprs_buf = g_cmprs_buf,
+        .cmprs_buf_size = sizeof(g_cmprs_buf),
         .out_buf = g_decmprs_buf,
+        .out_buf_size = sizeof(g_decmprs_buf),
         .crypt_buf = g_crypt_buf,
+        .crypt_buf_size = sizeof(g_crypt_buf),
     };
     qbt_stream_state_t stream_state = {
         .dst_handle = dst_handle,

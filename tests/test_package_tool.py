@@ -42,6 +42,11 @@ ALGO2_ALGOS = {
 }
 
 
+def is_unsupported_hpatch_crypto(crypt: str, cmprs: str) -> bool:
+    """Return whether the firmware rejects this HPatchLite crypt pairing."""
+    return cmprs == "hpatchlite" and crypt != "none"
+
+
 def crc32(data: bytes) -> int:
     """Return the unsigned CRC32 value used by the RBL header."""
     return zlib.crc32(data) & 0xFFFFFFFF
@@ -126,7 +131,7 @@ def assert_valid_package(output: Path, raw: bytes, pkg: bytes, crypt: str,
     data = output.read_bytes()
     header = parse_header(data)
     expected_algo = CRYPT_ALGOS[crypt] | CMPRS_ALGOS[cmprs]
-    expected_algo2 = 0 if cmprs == "hpatchlite" else ALGO2_ALGOS[algo2]
+    expected_algo2 = ALGO2_ALGOS[algo2]
 
     assert header["magic"] == b"RBL\0"
     assert header["algo"] == expected_algo
@@ -198,6 +203,8 @@ def check_algorithm_matrix(module, raw_path: Path, pkg_path: Path,
 
         for crypt, crypt_value in CRYPT_ALGOS.items():
             for cmprs, cmprs_value in CMPRS_ALGOS.items():
+                if is_unsupported_hpatch_crypto(crypt, cmprs):
+                    continue
                 for algo2, algo2_value in ALGO2_ALGOS.items():
                     output = outputs / f"crypt-{crypt}_cmprs-{cmprs}_algo2-{algo2}.rbl"
                     args = make_args(pkg_path, raw_path, output, crypt, cmprs, algo2)
@@ -211,7 +218,7 @@ def check_algorithm_matrix(module, raw_path: Path, pkg_path: Path,
                         cmprs,
                         algo2,
                         f"0x{(crypt_value | cmprs_value):04X}",
-                        f"0x{(0 if cmprs == 'hpatchlite' else algo2_value):04X}",
+                        f"0x{algo2_value:04X}",
                         output.relative_to(OUT_DIR),
                     ])
 
@@ -234,6 +241,8 @@ def check_error_paths(module, raw_path: Path, pkg_path: Path) -> None:
         ("invalid-crypt", "bad", "none", "crc", "invalid --crypt", 2),
         ("invalid-cmprs", "none", "bad", "crc", "invalid --cmprs", 2),
         ("invalid-algo2", "none", "none", "bad", "invalid --algo2", 2),
+        ("aes-hpatchlite", "aes", "hpatchlite", "crc", "hpatchlite packages", 2),
+        ("xor-hpatchlite", "xor", "hpatchlite", "crc", "hpatchlite packages", 2),
     ]
 
     for name, crypt, cmprs, algo2, message, code in cases:
@@ -279,7 +288,7 @@ def write_summary() -> None:
         "- Verified fields: magic, algo, algo2, timestamp, part, version, product, "
         "pkg/raw CRC, pkg/raw size, header CRC, and output payload bytes\n"
         "- Verified error paths: invalid --crypt, invalid --cmprs, "
-        "invalid --algo2, missing --raw\n\n"
+        "invalid --algo2, AES/XOR with hpatchlite, missing --raw\n\n"
         "## Requested smoke cases\n\n"
         + "\n".join(
             f"- crypt={row['crypt']}, cmprs={row['cmprs']}, algo2={row['algo2']} -> {row['output']}"
