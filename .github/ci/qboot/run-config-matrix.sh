@@ -30,9 +30,15 @@ run_valid_build() {
 }
 
 run_expected_build_fail() {
-  local case_name=$1 backends=$2 expected_pattern=$3
+  local case_name=$1
+  local backends=$2
+  local expected_pattern=$3
+  local extra_cflags=${4:-}
   local log_file="$log_dir/$case_name.log"
-  if QBOOT_HOST_OUT_DIR="$host_root" QBOOT_HOST_BACKENDS="$backends" bash .github/ci/qboot/build-host-sim.sh > "$log_file" 2>&1; then
+  if QBOOT_HOST_OUT_DIR="$host_root" \
+      QBOOT_HOST_BACKENDS="$backends" \
+      QBOOT_HOST_EXTRA_CFLAGS="$extra_cflags" \
+      bash .github/ci/qboot/build-host-sim.sh > "$log_file" 2>&1; then
     printf 'QBOOT_CONFIG_MATRIX_FAIL %s unexpected-pass\n' "$case_name"; record "$case_name" invalid FAIL build "$log_file"; exit 1
   fi
   if grep -Eq "$expected_pattern" "$log_file"; then
@@ -52,6 +58,37 @@ run_expected_runtime_reject() {
   fi
 }
 
+
+run_expected_runtime_accept() {
+  local case_name=$1 runner=$2 package=$3 new_app=$4 expect_app=${5:-new}
+  local log_file="$log_dir/$case_name.log"
+  if "$runner" --case "$case_name" --package "$package" --old-app "$fixture_dir/old_app.bin" --new-app "$new_app" --expect-receive 1 --expect-first-success 1 --expect-success 1 --expect-jump 1 --expect-sign 1 --expect-app "$expect_app" > "$log_file" 2>&1; then
+    printf 'QBOOT_CONFIG_MATRIX_PASS %s\n' "$case_name"; record "$case_name" valid PASS runtime "$log_file"
+  else
+    printf 'QBOOT_CONFIG_MATRIX_FAIL %s\n' "$case_name"; cat "$log_file"; record "$case_name" valid FAIL runtime "$log_file"; exit 1
+  fi
+}
+
+run_release_sign_case() {
+  local case_name=$1 runner=$2 runner_case=$3
+  local log_file="$log_dir/$case_name.log"
+  if "$runner" --mode sign-boundary --case "$runner_case" > "$log_file" 2>&1; then
+    printf 'QBOOT_CONFIG_MATRIX_PASS %s\n' "$case_name"; record "$case_name" valid PASS runtime "$log_file"
+  else
+    printf 'QBOOT_CONFIG_MATRIX_FAIL %s\n' "$case_name"; cat "$log_file"; record "$case_name" valid FAIL runtime "$log_file"; exit 1
+  fi
+}
+
+run_app_check_disabled_case() {
+  local case_name=$1 runner=$2
+  local log_file="$log_dir/$case_name.log"
+  if "$runner" --case "$case_name" --package "$fixture_dir/custom-none-full.rbl" --old-app "$fixture_dir/old_app.bin" --new-app "$fixture_dir/new_app.bin" --expect-receive 1 --expect-first-success 1 --expect-success 1 --expect-jump 1 --expect-sign 1 --expect-app any --replay true --corrupt-app-before-replay true > "$log_file" 2>&1; then
+    printf 'QBOOT_CONFIG_MATRIX_PASS %s\n' "$case_name"; record "$case_name" valid PASS runtime "$log_file"
+  else
+    printf 'QBOOT_CONFIG_MATRIX_FAIL %s\n' "$case_name"; cat "$log_file"; record "$case_name" valid FAIL runtime "$log_file"; exit 1
+  fi
+}
+
 run_update_mgr_case() {
   local case_name=$1 runner=$2 runner_case=$3
   local log_file="$log_dir/$case_name.log"
@@ -63,7 +100,7 @@ run_update_mgr_case() {
 }
 
 if [ ! -f "$fixture_dir/custom-none-full.rbl" ]; then
-  QBOOT_HOST_OUT_DIR="$host_root" QBOOT_HOST_BACKENDS="custom custom-smallbuf fal fs custom-helper custom-hpatch-only fal-hpatch-only fs-hpatch-only" bash .github/ci/qboot/build-host-sim.sh > "$log_dir/fixture-build.log" 2>&1
+  QBOOT_HOST_OUT_DIR="$host_root" QBOOT_HOST_BACKENDS="custom custom-smallbuf fal fs custom-helper custom-quicklz-fastlz custom-hpatch-only fal-hpatch-only fs-hpatch-only mixed-backend" bash .github/ci/qboot/build-host-sim.sh > "$log_dir/fixture-build.log" 2>&1
   QBOOT_HOST_OUT_DIR="$host_root" bash .github/ci/qboot/run-host-sim.sh > "$log_dir/fixture-run.log" 2>&1
 fi
 
@@ -72,11 +109,41 @@ run_valid_build config-custom-no-compress-no-crypto-no-patch custom-minimal
 run_valid_build config-custom-gzip-only custom-gzip-only
 run_valid_build config-custom-aes-gzip-only custom-aes-gzip-only
 run_valid_build config-custom-hpatch-only custom-hpatch-only
+run_valid_build config-custom-quicklz-only custom-quicklz-only
+run_valid_build config-custom-fastlz-only custom-fastlz-only
+run_valid_build config-custom-quicklz-fastlz custom-quicklz-fastlz
 run_valid_build config-fal-only fal-minimal
 run_valid_build config-fs-only fs-minimal
 run_valid_build config-fal-gzip fal-gzip-only
 run_valid_build config-fs-gzip fs-gzip-only
 run_valid_build config-all-enabled mixed-backend
+run_valid_build config-product-code-disabled-build custom-product-code-disabled
+run_expected_runtime_accept config-product-code-disabled-accepts-any-product-current-policy "$host_root/qboot_host_runner_custom-product-code-disabled" "$fixture_dir/custom-product-code-mismatch.rbl" "$fixture_dir/new_app.bin"
+run_valid_build config-app-check-disabled-build custom-app-check-disabled
+run_app_check_disabled_case config-app-check-disabled-valid-sign-corrupt-app-current-policy "$host_root/qboot_host_runner_custom-app-check-disabled"
+run_valid_build config-release-sign-align-4-build custom-sign-align-4
+run_release_sign_case config-release-sign-align-4 "$host_root/qboot_host_runner_custom-sign-align-4" sign-align-plus-padding
+run_valid_build config-release-sign-align-16-build custom-sign-align-16
+run_release_sign_case config-release-sign-align-16 "$host_root/qboot_host_runner_custom-sign-align-16" sign-align-plus-padding
+release_sign_align_error='QBOOT_RELEASE_SIGN_ALIGN_SIZE must be 4, 8, or 16'
+run_expected_build_fail \
+  config-release-sign-align-0-expected-fail \
+  custom-minimal \
+  "$release_sign_align_error" \
+  '-DQBOOT_RELEASE_SIGN_ALIGN_SIZE=0'
+run_expected_build_fail \
+  config-release-sign-align-3-expected-fail \
+  custom-minimal \
+  "$release_sign_align_error" \
+  '-DQBOOT_RELEASE_SIGN_ALIGN_SIZE=3'
+run_expected_build_fail \
+  config-release-sign-align-12-expected-fail \
+  custom-minimal \
+  "$release_sign_align_error" \
+  '-DQBOOT_RELEASE_SIGN_ALIGN_SIZE=12'
+run_valid_build config-hpatch-storage-swap-small-copy-buffer custom-hpatch-storage-small-copy
+run_valid_build config-hpatch-ram-buffer-small-build custom-hpatch-ram-small
+run_expected_runtime_reject config-hpatch-ram-buffer-small-expected-fail-or-reject "$host_root/qboot_host_runner_custom-hpatch-ram-small" "$fixture_dir/custom-hpatch-host-full-diff.rbl" "$fixture_dir/hpatch_new_app.bin"
 run_expected_build_fail config-no-backend-expected-fail none-disabled 'QBT_(APP|DOWNLOAD|FACTORY)_(STORE_NAME|FLASH_ADDR|FLASH_LEN|BACKEND)'
 run_valid_build config-multiple-backend-policy mixed-backend
 run_update_mgr_case config-mixed-close-fail-rejected "$host_root/qboot_host_runner_mixed-backend" update-helper-close-fail-rejected
@@ -88,6 +155,8 @@ run_expected_build_fail config-aes-hpatch-mutual-exclusion-expected-fail custom-
 run_expected_build_fail config-aes-enabled-without-tinycrypt-or-aes-lib-expected-fail custom-aes-missing-lib 'undefined reference to .*tiny_aes_(setkey_dec|crypt_cbc)'
 run_valid_build config-gzip-disabled-build custom-no-gzip
 run_expected_runtime_reject config-gzip-disabled-runtime-rejected "$host_root/qboot_host_runner_custom-no-gzip" "$fixture_dir/custom-gzip.rbl" "$fixture_dir/new_app.bin"
+run_expected_runtime_reject config-quicklz-disabled-runtime-rejected "$host_root/qboot_host_runner_custom" "$fixture_dir/custom-quicklz-release.rbl" "$fixture_dir/quickfast_app.bin"
+run_expected_runtime_reject config-fastlz-disabled-runtime-rejected "$host_root/qboot_host_runner_custom" "$fixture_dir/custom-fastlz-release.rbl" "$fixture_dir/quickfast_app.bin"
 run_valid_build config-aes-disabled-build custom-no-aes
 run_expected_runtime_reject config-aes-disabled-runtime-rejected "$host_root/qboot_host_runner_custom-no-aes" "$fixture_dir/custom-aes-gzip-real.rbl" "$fixture_dir/aes_new_app.bin"
 run_valid_build config-hpatch-disabled-build custom-no-hpatch

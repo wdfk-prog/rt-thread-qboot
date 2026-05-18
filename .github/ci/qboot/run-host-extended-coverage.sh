@@ -9,12 +9,18 @@ python_bin="${PYTHON:-python3}"
 runner_custom="$out_dir/qboot_host_runner_custom"
 runner_fal="$out_dir/qboot_host_runner_fal"
 runner_fs="$out_dir/qboot_host_runner_fs"
+runner_quickfast="$out_dir/qboot_host_runner_custom-quicklz-fastlz"
+runner_mixed="$out_dir/qboot_host_runner_mixed-backend"
+runner_fal_hpatch="$out_dir/qboot_host_runner_fal-hpatch-only"
+runner_fs_hpatch="$out_dir/qboot_host_runner_fs-hpatch-only"
+runner_fal_hpatch_prod="$out_dir/qboot_host_runner_fal-hpatch-production"
+runner_fs_hpatch_prod="$out_dir/qboot_host_runner_fs-hpatch-production"
 runner_hpatch_host="$out_dir/qboot_host_runner_custom-hpatch-only"
 runner_hpatch="$out_dir/qboot_host_runner_custom-hpatch-production"
 runner_hpatch_storage="$out_dir/qboot_host_runner_custom-hpatch-storage-swap"
 
 mkdir -p "$log_dir"
-for runner in "$runner_custom" "$runner_fal" "$runner_fs" "$runner_hpatch_host"; do
+for runner in "$runner_custom" "$runner_fal" "$runner_fs" "$runner_quickfast" "$runner_mixed" "$runner_fal_hpatch" "$runner_fs_hpatch" "$runner_hpatch_host"; do
   test -x "$runner"
 done
 test -f "$fixture_dir/custom-none-full.rbl"
@@ -93,6 +99,20 @@ if [ -x "$runner_hpatch" ] && [ -f "$fixture_dir/custom-hpatch-production-full.r
     --expect-jump 0 --expect-sign 0 --expect-app new \
     --chunk 257 > "$log_file" 2>&1 || fail_case "$case_name" "$log_file"
   pass_case "$case_name" "$log_file" "destination APP raw CRC rejects HPatchLite output after restore"
+  if [ -x "$runner_fal_hpatch_prod" ]; then
+    run_release "$runner_fal_hpatch_prod" fal-hpatch-production-multi-cover "$fixture_dir/custom-hpatch-production-multi-cover.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_multi_new_app.bin" success --chunk 257
+    run_release "$runner_fal_hpatch_prod" fal-hpatch-production-tinyuz-trailing-byte-rejected "$fixture_dir/mutation-hpatch-production-tuz-trailing-byte.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" fail --chunk 257
+  else
+    skip_case fal-hpatch-production-multi-cover "FAL production HPatchLite runner is missing"
+    skip_case fal-hpatch-production-tinyuz-trailing-byte-rejected "FAL production HPatchLite runner is missing"
+  fi
+  if [ -x "$runner_fs_hpatch_prod" ]; then
+    run_release "$runner_fs_hpatch_prod" fs-hpatch-production-multi-cover "$fixture_dir/custom-hpatch-production-multi-cover.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_multi_new_app.bin" success --chunk 257
+    run_release "$runner_fs_hpatch_prod" fs-hpatch-production-tinyuz-trailing-byte-rejected "$fixture_dir/mutation-hpatch-production-tuz-trailing-byte.rbl" "$fixture_dir/old_app.bin" "$fixture_dir/hpatch_new_app.bin" fail --chunk 257
+  else
+    skip_case fs-hpatch-production-multi-cover "FS production HPatchLite runner is missing"
+    skip_case fs-hpatch-production-tinyuz-trailing-byte-rejected "FS production HPatchLite runner is missing"
+  fi
 elif [ "${QBOOT_HOST_ALLOW_HPATCHLITE_SKIP:-0}" = "1" ]; then
   skip_case hpatch-production-real-lib "production HPatchLite runner or fixtures are missing in dependency bootstrap mode"
 else
@@ -208,6 +228,103 @@ for fuzz_pkg in "$fixture_dir"/parser-fuzz-seed-*.rbl; do
   fi
   pass_case "$fuzz_name" "$log_file" "parser fuzz package rejected safely"
 done
+
+$python_bin - "$fixture_dir" <<'PYNAMEDFUZZ'
+from pathlib import Path
+import struct, zlib, sys
+root = Path(sys.argv[1])
+hdr = 96
+ALGO_OFF = 4
+FW_VER_OFF = 28
+PROD_OFF = 52
+PKG_CRC_OFF = 76
+RAW_CRC_OFF = 80
+RAW_SIZE_OFF = 84
+PKG_SIZE_OFF = 88
+HDR_CRC_OFF = 92
+def crc32(data): return zlib.crc32(data) & 0xffffffff
+def write_u32(data, off, value): data[off:off + 4] = struct.pack('<I', value)
+def refresh_hdr_crc(data): write_u32(data, HDR_CRC_OFF, crc32(bytes(data[:HDR_CRC_OFF])))
+def update_body(data, body):
+    del data[hdr:]
+    data.extend(body)
+    write_u32(data, PKG_CRC_OFF, crc32(body))
+    write_u32(data, PKG_SIZE_OFF, len(body))
+    refresh_hdr_crc(data)
+def write_from(base_name, name, edit):
+    data = bytearray((root / base_name).read_bytes())
+    edit(data)
+    (root / f'{name}.rbl').write_bytes(data)
+def mutate_hpatch_body_varint(data):
+    code = data[hdr + 3]
+    new_size_len = code & 0x07
+    uncompress_size_len = (code >> 3) & 0x07
+    body_off = hdr + 4 + new_size_len + uncompress_size_len
+    if body_off >= len(data):
+        raise RuntimeError('HPatchLite body is missing')
+    # Corrupt the first body varint after the HPatchLite header. This keeps the
+    # HPatchLite magic, compression type, code field, and size fields valid so
+    # the runner exercises body-varint parsing instead of header rejection.
+    data[body_off:body_off + 4] = b'\xff\xff\xff\xff'
+    write_u32(data, PKG_CRC_OFF, crc32(bytes(data[hdr:])))
+    refresh_hdr_crc(data)
+write_from('custom-none-full.rbl', 'parser-fuzz-header-fields-seed-0', lambda d: d.__setitem__(0, ord('X')))
+write_from('custom-none-full.rbl', 'parser-fuzz-size-fields-seed-0', lambda d: (write_u32(d, PKG_SIZE_OFF, len(d) + 1024), refresh_hdr_crc(d)))
+write_from('custom-none-full.rbl', 'parser-fuzz-product-version-nul-seed-0', lambda d: (d.__setitem__(slice(FW_VER_OFF, FW_VER_OFF + 24), b'v1\0evil'.ljust(24, b'\0')), d.__setitem__(slice(PROD_OFF, PROD_OFF + 24), b'host-product\0evil'.ljust(24, b'\0')), refresh_hdr_crc(d)))
+write_from('custom-hpatch-host-full-diff.rbl', 'parser-fuzz-hpatch-body-varint-seed-0', mutate_hpatch_body_varint)
+write_from('custom-gzip.rbl', 'parser-fuzz-gzip-trailer-seed-0', lambda d: update_body(d, bytes(d[hdr:-8])))
+write_from('custom-quicklz-release.rbl', 'codec-stub-quicklz-fastlz-block-header-rejected', lambda d: (d.__setitem__(slice(hdr, hdr + 4), b'\xff\xff\xff\xff'), write_u32(d, PKG_CRC_OFF, crc32(bytes(d[hdr:]))), refresh_hdr_crc(d)))
+PYNAMEDFUZZ
+for fuzz_name in \
+  parser-fuzz-header-fields-seed-0 \
+  parser-fuzz-size-fields-seed-0 \
+  parser-fuzz-product-version-nul-seed-0 \
+  parser-fuzz-hpatch-body-varint-seed-0 \
+  parser-fuzz-gzip-trailer-seed-0; do
+  log_file="$log_dir/$fuzz_name.log"
+  case_count=$((case_count + 1))
+  runner="$runner_custom"
+  case "$fuzz_name" in
+    parser-fuzz-product-version-nul-seed-0)
+      if ! "$runner_custom" --case "$fuzz_name"         --package "$fixture_dir/$fuzz_name.rbl"         --old-app "$fixture_dir/old_app.bin"         --new-app "$fixture_dir/new_app.bin"         --expect-receive 1 --expect-first-success 0 --expect-success 0         --expect-jump 0 --expect-sign 0 --expect-app old > "$log_file" 2>&1; then
+        fail_case "$fuzz_name" "$log_file"
+      fi
+      pass_case "$fuzz_name" "$log_file" "embedded-NUL product field is rejected by release policy"
+      continue
+      ;;
+    parser-fuzz-hpatch-body-varint-seed-0)
+      if ! "$runner_hpatch_host" --case "$fuzz_name"         --package "$fixture_dir/$fuzz_name.rbl"         --old-app "$fixture_dir/old_app.bin"         --new-app "$fixture_dir/hpatch_new_app.bin"         --expect-receive 1 --expect-first-success 0 --expect-success 0         --expect-jump 0 --expect-sign 0 --expect-app old --chunk 257 > "$log_file" 2>&1; then
+        fail_case "$fuzz_name" "$log_file"
+      fi
+      pass_case "$fuzz_name" "$log_file" "malformed HPatchLite body is rejected during release"
+      continue
+      ;;
+    parser-fuzz-gzip-trailer-seed-0)
+      if ! "$runner_custom" --case "$fuzz_name"         --package "$fixture_dir/$fuzz_name.rbl"         --old-app "$fixture_dir/old_app.bin"         --new-app "$fixture_dir/new_app.bin"         --expect-receive 1 --expect-first-success 0 --expect-success 0         --expect-jump 0 --expect-sign 0 --expect-app old --chunk 257 > "$log_file" 2>&1; then
+        fail_case "$fuzz_name" "$log_file"
+      fi
+      pass_case "$fuzz_name" "$log_file" "malformed gzip trailer is rejected during release"
+      continue
+      ;;
+  esac
+  if "$runner" --inspect --package "$fixture_dir/$fuzz_name.rbl" > "$log_file" 2>&1; then
+    fail_case "$fuzz_name" "$log_file"
+  fi
+  pass_case "$fuzz_name" "$log_file" "named parser fuzz package rejected safely"
+done
+
+stub_case=codec-stub-quicklz-fastlz-block-header-rejected
+log_file="$log_dir/$stub_case.log"
+case_count=$((case_count + 1))
+if ! "$runner_quickfast" --case "$stub_case" \
+    --package "$fixture_dir/$stub_case.rbl" \
+    --old-app "$fixture_dir/old_app.bin" \
+    --new-app "$fixture_dir/quickfast_app.bin" \
+    --expect-receive 1 --expect-first-success 0 --expect-success 0 \
+    --expect-jump 0 --expect-sign 0 --expect-app old --chunk 257 > "$log_file" 2>&1; then
+  fail_case "$stub_case" "$log_file"
+fi
+pass_case "$stub_case" "$log_file" "compile-matrix QuickLZ/FastLZ placeholder rejects malformed package without claiming parser-fuzz coverage"
 
 parser_property_manifest="$fixture_dir/parser-property-manifest.tsv"
 cat > "$parser_property_manifest" <<EOF_PROP
@@ -374,11 +491,92 @@ for update_case in callback-progress-monotonic callback-progress-final-100-on-su
 done
 
 
+for stale_case in \
+  mixed-backend-stale-fal-download-with-valid-sign-rejected \
+  sign-same-size-different-raw-crc-rejected \
+  sign-same-size-different-product-rejected \
+  sign-same-size-different-version-current-policy \
+  sign-valid-marker-stale-download-body-rejected \
+  sign-copied-from-old-package-to-new-package-rejected; do
+  runner="$runner_custom"
+  case "$stale_case" in
+    mixed-*) runner="$runner_mixed" ;;
+  esac
+  log_file="$log_dir/$stale_case.log"
+  case_count=$((case_count + 1))
+  "$runner" --mode stale-sign --case "$stale_case" --fixture-dir "$fixture_dir" > "$log_file" 2>&1 || fail_case "$stale_case" "$log_file"
+  pass_case "$stale_case" "$log_file" "copied release sign cannot skip package validation"
+done
+
+for item in \
+  "fs-fault-sequence-read-write-signread-success:$runner_fs" \
+  "fs-fault-sequence-app-write-retry-current-policy:$runner_fs" \
+  "gzip-fault-sequence-app-write-retry-success:$runner_custom" \
+  "aes-gzip-fault-sequence-read-write-signread-success:$runner_custom" \
+  "hpatch-fault-sequence-app-write-retry-success:$runner_hpatch_host"; do
+  fault_case=${item%%:*}
+  runner=${item#*:}
+  log_file="$log_dir/$fault_case.log"
+  case_count=$((case_count + 1))
+  "$runner" --mode fault-sequence --case "$fault_case" --fixture-dir "$fixture_dir" > "$log_file" 2>&1 || fail_case "$fault_case" "$log_file"
+  pass_case "$fault_case" "$log_file" "named deterministic fault sequence"
+done
+
+fault_case=hpatch-fault-sequence-swap-write-retry-success
+log_file="$log_dir/$fault_case.log"
+if [ -x "$runner_hpatch_storage" ]; then
+  case_count=$((case_count + 1))
+  "$runner_hpatch_storage" --mode fault-sequence --case "$fault_case" --fixture-dir "$fixture_dir" > "$log_file" 2>&1 || fail_case "$fault_case" "$log_file"
+  pass_case "$fault_case" "$log_file" "named deterministic HPatch storage-swap fault sequence"
+else
+  skip_case "$fault_case" "storage-swap HPatchLite runner is missing"
+fi
+
+for item in \
+  "fal-update-helper-abort-clears-session:$runner_fal" \
+  "fs-update-helper-abort-clears-session:$runner_fs" \
+  "mixed-update-helper-abort-clears-session:$runner_mixed" \
+  "fal-update-helper-ready-close-fail-retries-before-ready:$runner_fal" \
+  "fs-update-helper-close-fail-on-reject-propagated:$runner_fs" \
+  "mixed-update-helper-write-fail-then-restart:$runner_mixed"; do
+  update_case=${item%%:*}
+  runner=${item#*:}
+  log_file="$log_dir/$update_case.log"
+  case_count=$((case_count + 1))
+  "$runner" --mode update-mgr --case "$update_case" > "$log_file" 2>&1 || fail_case "$update_case" "$log_file"
+  pass_case "$update_case" "$log_file" "backend-specific update-helper state contract"
+done
+
+for item in \
+  "resource-repeat-50-fail-then-success-no-handle-growth:$runner_custom" \
+  "resource-repeat-50-sign-write-fail-no-sign-leak:$runner_custom" \
+  "resource-repeat-50-fs-open-fail-no-fd-growth:$runner_fs"; do
+  resource_case=${item%%:*}
+  runner=${item#*:}
+  log_file="$log_dir/$resource_case.log"
+  case_count=$((case_count + 1))
+  "$runner" --mode repeat-sequence --case "$resource_case" --fixture-dir "$fixture_dir" > "$log_file" 2>&1 || fail_case "$resource_case" "$log_file"
+  pass_case "$resource_case" "$log_file" "50 in-process repeated failure/recovery checks complete with resource trackers idle"
+done
+
+resource_case=resource-repeat-50-hpatch-malloc-fail-no-swap-leftover
+log_file="$log_dir/$resource_case.log"
+if [ -x "$runner_hpatch_storage" ]; then
+  case_count=$((case_count + 1))
+  "$runner_hpatch_storage" --mode repeat-sequence --case "$resource_case" --fixture-dir "$fixture_dir" > "$log_file" 2>&1 || fail_case "$resource_case" "$log_file"
+  pass_case "$resource_case" "$log_file" "50 in-process HPatch storage-swap malloc-failure checks complete with resource trackers idle"
+else
+  skip_case "$resource_case" "storage-swap HPatchLite runner is missing"
+fi
+
 case_name=resource-repeat-100-upgrades-no-state-growth
 log_file="$log_dir/$case_name.log"
 case_count=$((case_count + 1))
 "$runner_custom" --mode repeat-sequence --case repeat-upgrade-100-none-no-state-growth --fixture-dir "$fixture_dir" > "$log_file" 2>&1 || fail_case "$case_name" "$log_file"
 pass_case "$case_name" "$log_file" "100 in-process repeated releases keep storage/session state reusable"
 
-printf '\nPassed %d/%d QBoot host extended coverage checks; skipped %d optional checks.\n' "$pass_count" "$case_count" "$skip_count" >> "$summary"
-printf 'Passed %d/%d QBoot host extended coverage checks; skipped %d optional checks.\n' "$pass_count" "$case_count" "$skip_count"
+executed_count=$((case_count - skip_count))
+printf '\nPassed %d/%d executed QBoot host extended coverage checks; skipped %d optional checks; enumerated %d total checks.\n' \
+  "$pass_count" "$executed_count" "$skip_count" "$case_count" >> "$summary"
+printf 'Passed %d/%d executed QBoot host extended coverage checks; skipped %d optional checks; enumerated %d total checks.\n' \
+  "$pass_count" "$executed_count" "$skip_count" "$case_count"

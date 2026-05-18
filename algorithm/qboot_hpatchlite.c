@@ -38,7 +38,7 @@ typedef struct
 {
     const char *name;                                                        /**< Swap backend name (for logs). */
     uint8_t *ram_buf;                                                        /**< Swap buffer (RAM mode) or flash copy buffer (FLASH mode). */
-    int ram_buf_size;                                                        /**< Buffer size for RAM or flash copy. */
+    rt_uint32_t ram_buf_size;                                                /**< Buffer size for RAM or flash copy. */
     int write_pos;                                                           /**< Current write position within the swap buffer. */
     int capacity;                                                            /**< Total capacity of the swap buffer. */
 #if defined(QBOOT_HPATCH_USE_STORAGE_SWAP)
@@ -270,7 +270,10 @@ static hpi_BOOL qbt_flash_copy_to_old(hpatchi_instance_t *instance, int size)
 
     while (remaining_len > 0)
     {
-        int chunk_size = (remaining_len > instance->swap->ram_buf_size) ? instance->swap->ram_buf_size : remaining_len;
+        rt_uint32_t copy_size = ((rt_uint32_t)remaining_len > instance->swap->ram_buf_size) ?
+                              instance->swap->ram_buf_size :
+                              (rt_uint32_t)remaining_len;
+        int chunk_size = (int)copy_size;
 
         if (_header_io_ops->read(instance->swap->part, current_src_offset, instance->swap->ram_buf, chunk_size) != RT_EOK)
         {
@@ -360,7 +363,7 @@ static qbt_swap_t g_qbt_swap_ops_flash = {
 static hpi_BOOL qbt_ram_swap_init(hpatchi_instance_t *instance)
 {
     instance->swap->write_pos = 0;
-    instance->swap->capacity = instance->swap->ram_buf_size;
+    instance->swap->capacity = (int)instance->swap->ram_buf_size;
     return hpi_TRUE;
 }
 
@@ -436,7 +439,9 @@ static hpi_BOOL qbt_swap_alloc_buf(hpatchi_instance_t *instance)
     instance->swap->ram_buf = rt_malloc(instance->swap->ram_buf_size);
     if (instance->swap->ram_buf == RT_NULL)
     {
-        LOG_E("Failed to malloc %d bytes for %s buffer.", instance->swap->ram_buf_size, instance->swap->name);
+        LOG_E("Failed to malloc %u bytes for %s buffer.",
+              (unsigned int)instance->swap->ram_buf_size,
+              instance->swap->name);
         return hpi_FALSE;
     }
     return hpi_TRUE;

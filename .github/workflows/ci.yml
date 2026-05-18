@@ -552,7 +552,9 @@ jobs:
           path: _ci/artifacts/static
 
       # Keep `if: always()` paired with explicit `needs.*.result` checks below:
-      # skipped/cancelled upstream jobs must prevent partial artifact creation.
+      # mandatory static-check jobs must succeed; the external HPatchLite scan is
+      # optional outside workflow_dispatch/schedule and may report skipped or
+      # cancelled depending on GitHub Actions dependency propagation.
       - name: Merge host qboot static check artifacts
         shell: bash
         run: |
@@ -578,6 +580,17 @@ jobs:
             success) ;;
             skipped)
               printf -- '- hpatchlite external cppcheck: SKIPPED (only runs on workflow_dispatch/schedule).\n' >> "$summary"
+              ;;
+            cancelled)
+              case "${{ github.event_name }}" in
+                workflow_dispatch|schedule)
+                  echo "host-qboot-cppcheck-hpatchlite result was cancelled" >&2
+                  exit 1
+                  ;;
+                *)
+                  printf -- '- hpatchlite external cppcheck: SKIPPED (only runs on workflow_dispatch/schedule).\n' >> "$summary"
+                  ;;
+              esac
               ;;
             *)
               echo "host-qboot-cppcheck-hpatchlite result was ${{ needs.host-qboot-cppcheck-hpatchlite.result }}" >&2

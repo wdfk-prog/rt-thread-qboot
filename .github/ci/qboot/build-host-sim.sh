@@ -90,7 +90,7 @@ common_sources=(
 )
 
 backend_configs=()
-default_backends="custom custom-smallbuf fal fs custom-helper custom-hpatch-only fal-hpatch-only fs-hpatch-only custom-hpatch-production custom-hpatch-storage-swap"
+default_backends="custom custom-smallbuf fal fs custom-helper custom-quicklz-fastlz custom-hpatch-only fal-hpatch-only fs-hpatch-only mixed-backend custom-hpatch-production custom-hpatch-storage-swap fal-hpatch-production fs-hpatch-production"
 
 add_backend() {
   local name=$1 cflags=$2 sources=$3 excludes=$4 use_package_override=$5
@@ -143,6 +143,21 @@ add_backend custom-codec-runtime-hpatch \
   "src/qboot_custom_ops.c algorithm/qboot_quicklz.c algorithm/qboot_fastlz.c algorithm/qboot_hpatchlite.c $hpatch_source" \
   "tests/host/qboot_host_crc32.c tests/host/qboot_host_tinycrypt.c tests/host/qboot_host_hpatchlite.c" \
   1
+add_backend custom-quicklz-only \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_HPATCHLITE -DQBOOT_USING_QUICKLZ -Wno-unused-parameter -Wno-format-extra-args -Wno-sign-compare -Wno-discarded-qualifiers -Wno-implicit-fallthrough" \
+  "src/qboot_custom_ops.c algorithm/qboot_quicklz.c tests/host/qboot_host_quickfast.c" \
+  "tests/host/qboot_host_tinycrypt.c tests/host/qboot_host_hpatchlite.c" \
+  1
+add_backend custom-fastlz-only \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_HPATCHLITE -DQBOOT_USING_FASTLZ -Wno-unused-parameter -Wno-format-extra-args -Wno-sign-compare -Wno-discarded-qualifiers -Wno-implicit-fallthrough" \
+  "src/qboot_custom_ops.c algorithm/qboot_fastlz.c tests/host/qboot_host_quickfast.c" \
+  "tests/host/qboot_host_tinycrypt.c tests/host/qboot_host_hpatchlite.c" \
+  1
+add_backend custom-quicklz-fastlz \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_HPATCHLITE -DQBOOT_USING_QUICKLZ -DQBOOT_USING_FASTLZ -Wno-unused-parameter -Wno-format-extra-args -Wno-sign-compare -Wno-discarded-qualifiers -Wno-implicit-fallthrough" \
+  "src/qboot_custom_ops.c algorithm/qboot_quicklz.c algorithm/qboot_fastlz.c tests/host/qboot_host_quickfast.c" \
+  "tests/host/qboot_host_tinycrypt.c tests/host/qboot_host_hpatchlite.c" \
+  1
 add_backend custom-aes-gzip-only \
   "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
   "src/qboot_custom_ops.c" \
@@ -167,6 +182,36 @@ add_backend custom-minimal \
   "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -DQBOOT_HOST_DISABLE_HPATCHLITE -Wno-unused-parameter" \
   "src/qboot_custom_ops.c" \
   "" \
+  1
+add_backend custom-product-code-disabled \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE -DQBOOT_HOST_DISABLE_PRODUCT_CODE" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend custom-app-check-disabled \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE -DQBOOT_HOST_DISABLE_APP_CHECK" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend custom-sign-align-4 \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE -DQBOOT_RELEASE_SIGN_ALIGN_SIZE=4" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend custom-sign-align-16 \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_HPATCHLITE -DQBOOT_RELEASE_SIGN_ALIGN_SIZE=16" \
+  "src/qboot_custom_ops.c" \
+  "" \
+  1
+add_backend custom-hpatch-ram-small \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -DQBOOT_HPATCH_RAM_BUFFER_SIZE=0 -Wno-unused-parameter" \
+  "src/qboot_custom_ops.c algorithm/qboot_hpatchlite.c $hpatch_source" \
+  "tests/host/qboot_host_hpatchlite.c" \
+  1
+add_backend custom-hpatch-storage-small-copy \
+  "-DQBOOT_HOST_BACKEND_CUSTOM -DQBOOT_HOST_HPATCH_STORAGE_SWAP -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -DQBOOT_HPATCH_COPY_BUFFER_SIZE=16 -Wno-unused-parameter" \
+  "src/qboot_custom_ops.c algorithm/qboot_hpatchlite.c $hpatch_source" \
+  "tests/host/qboot_host_hpatchlite.c" \
   1
 add_backend mixed-backend \
   "-DQBOOT_HOST_BACKEND_MIXED -DQBOOT_HOST_DISABLE_HPATCHLITE" \
@@ -227,6 +272,16 @@ add_backend fs-hpatch-only \
   "-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter" \
   "src/qboot_fs_ops.c" \
   "" \
+  1
+add_backend fal-hpatch-production \
+  "-DQBOOT_HOST_BACKEND_FAL -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter" \
+  "src/qboot_fal_ops.c tests/host/qboot_host_fal.c algorithm/qboot_hpatchlite.c $hpatch_source" \
+  "tests/host/qboot_host_hpatchlite.c" \
+  1
+add_backend fs-hpatch-production \
+  "-DQBOOT_HOST_BACKEND_FS -DQBOOT_HOST_DISABLE_GZIP -DQBOOT_HOST_DISABLE_AES -Wno-unused-parameter" \
+  "src/qboot_fs_ops.c algorithm/qboot_hpatchlite.c $hpatch_source" \
+  "tests/host/qboot_host_hpatchlite.c" \
   1
 add_backend fal-missing-package \
   "-DQBOOT_HOST_BACKEND_FAL -DQBOOT_HOST_DISABLE_HPATCHLITE" \

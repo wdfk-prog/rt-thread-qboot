@@ -30,6 +30,27 @@
 
 static int g_fs_fds[QBOOT_TARGET_COUNT];
 
+#ifdef QBOOT_CI_HOST_TEST
+/**
+ * @brief Return active filesystem fd slots tracked by the host backend.
+ *
+ * @return Number of targets that currently own an open fd.
+ */
+int qboot_host_fs_open_slot_count(void)
+{
+    int count = 0;
+
+    for (int id = 0; id < QBOOT_TARGET_COUNT; id++)
+    {
+        if (g_fs_fds[id] != 0)
+        {
+            count++;
+        }
+    }
+    return count;
+}
+#endif /* QBOOT_CI_HOST_TEST */
+
 /**
  * @brief Open filesystem-backed target by id.
  *
@@ -266,19 +287,36 @@ static rt_err_t qbt_fs_size(void *handle, rt_uint32_t *out_size)
 }
 
 /**
- * @brief IOCTL is unsupported for filesystem backend.
+ * @brief Handle host-only filesystem backend IOCTL queries.
  *
  * @param handle Encoded target id.
  * @param cmd    IOCTL command.
  * @param arg    Command argument.
  *
- * @return -RT_ENOSYS always.
+ * @return RT_EOK for supported host-only test queries, negative error code
+ *         otherwise.
  */
 static rt_err_t qbt_fs_ioctl(void *handle, int cmd, void *arg)
 {
     RT_UNUSED(handle);
+
+#ifdef QBOOT_CI_HOST_TEST
+    /* FS has no production flash erase geometry; this synthetic alignment is
+     * only for host HPatchLite coverage of the common IO contract.
+     */
+    if (cmd == QBOOT_IO_CMD_GET_ERASE_ALIGN)
+    {
+        if (arg == RT_NULL)
+        {
+            return -RT_ERROR;
+        }
+        *(rt_uint32_t *)arg = QBOOT_FLASH_ERASE_ALIGN;
+        return RT_EOK;
+    }
+#else
     RT_UNUSED(cmd);
     RT_UNUSED(arg);
+#endif /* QBOOT_CI_HOST_TEST */
     return -RT_ENOSYS;
 }
 

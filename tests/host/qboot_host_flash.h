@@ -119,6 +119,13 @@ void qboot_host_fault_set(qboot_host_fault_op_t op,
 void qboot_host_rt_malloc_fail_after(rt_uint32_t after_hits);
 
 /**
+ * @brief Return currently outstanding host-test rt_malloc allocations.
+ *
+ * @return Number of allocations not yet released through qboot_host_rt_free().
+ */
+rt_uint32_t qboot_host_rt_malloc_outstanding(void);
+
+/**
  * @brief Test and consume one fault rule by target id.
  *
  * @param op Operation type to test.
@@ -248,6 +255,15 @@ int qboot_host_jump_count(void);
 /** @brief Reset host FAL partition images. */
 void qboot_host_fal_reset(void);
 #endif /* QBOOT_HOST_BACKEND_FAL */
+
+#ifdef QBOOT_HOST_BACKEND_FS
+/**
+ * @brief Return the number of active filesystem backend fd slots.
+ *
+ * @return Active fd slot count tracked by the filesystem backend.
+ */
+int qboot_host_fs_open_slot_count(void);
+#endif /* QBOOT_HOST_BACKEND_FS */
 
 #ifdef __cplusplus
 }

@@ -357,6 +357,108 @@ def check_fastlz_quicklz_and_diff_roundtrip() -> None:
         raise AssertionError("expected AES unaligned input to fail")
 
 
+
+def check_unpack_negative_corpus() -> None:
+    """Verify web unpack rejects malformed HPatchLite and same-size packages."""
+    web = load_module("qboot_package_tool_web", WEB_CORE)
+    old = bytes((idx * 17 + 5) & 0xFF for idx in range(768))
+    wrong_old = bytes((idx * 19 + 7) & 0xFF for idx in range(768))
+    new_fw = bytearray(old)
+    new_fw[32:48] = b"QBOOT-WEB-DIFF!!"
+    new_fw[300:306] = b"PATCH!"
+    new_fw.extend(b"tail")
+    new_fw = bytes(new_fw)
+
+    def put_u32(data: bytearray, offset: int, value: int) -> None:
+        data[offset:offset + 4] = int(value & 0xFFFFFFFF).to_bytes(4, "little")
+
+    def refresh_package_checksums(data: bytearray) -> None:
+        put_u32(data, 76, web.crc32(bytes(data[web.QBOOT_HEADER_SIZE:])))
+        put_u32(data, 92, web.crc32(bytes(data[:92])))
+
+    def expect_package_error(case_name: str, func) -> None:
+        try:
+            func()
+        except web.PackageToolError:
+            return
+        raise AssertionError(f"expected {case_name} to fail")
+
+    valid_hpatch = web.package_hpatchlite_rbl_bytes(old, new_fw, crypt="none",
+                                                    timestamp=1714473600,
+                                                    patch_compress="none")
+    old_dependent_new_fw = bytes(new_fw[:len(old)])
+    old_dependent_body = bytearray()
+    old_dependent_body.extend(web._hpi_pack_uint(1))
+    old_dependent_body.extend(web._hpi_pack_uint(len(old_dependent_new_fw)))
+    old_dependent_body.append(0)
+    old_dependent_body.extend(web._hpi_pack_uint(0))
+    old_dependent_body.extend(((n - o) & 0xFF) for o, n in zip(old, old_dependent_new_fw))
+    old_dependent_patch = (
+        web.HPATCHLITE_MAGIC
+        + bytes([web.HPATCHLITE_COMPRESS_NONE,
+                 (web.HPATCHLITE_VERSION_CODE << 6) | len(web._hpi_size_bytes(len(old_dependent_new_fw)))])
+        + web._hpi_size_bytes(len(old_dependent_new_fw))
+        + bytes(old_dependent_body)
+    )
+    old_dependent_rbl = web.package_rbl_bytes(raw_fw=old_dependent_new_fw, pkg_obj=old_dependent_patch,
+                                              crypt="none", cmprs="hpatchlite",
+                                              timestamp=1714473600)
+    restored_old_dependent, _ = web.unpack_hpatchlite_rbl_bytes(old, old_dependent_rbl)
+    assert restored_old_dependent == old_dependent_new_fw
+    expect_package_error("package-tool-unpack-hpatch-wrong-old-rejected",
+                         lambda: web.unpack_hpatchlite_rbl_bytes(wrong_old, old_dependent_rbl))
+
+    def corrupt_hpatch_body_varint(data: bytearray) -> None:
+        patch_off = web.QBOOT_HEADER_SIZE
+        code = data[patch_off + 3]
+        new_size_len = code & 0x07
+        uncompress_size_len = (code >> 3) & 0x07
+        body_off = patch_off + 4 + new_size_len + uncompress_size_len
+        if body_off + 5 > len(data):
+            raise AssertionError("HPatchLite body is missing")
+        # Keep the HPatchLite magic, compression, code and size fields valid,
+        # then corrupt the first body varint so unpack exercises integer
+        # overflow handling instead of failing during patch-header parsing.
+        data[body_off:body_off + 5] = b"\x90\x80\x80\x80\x00"
+        refresh_package_checksums(data)
+
+    bad_varint = bytearray(valid_hpatch)
+    corrupt_hpatch_body_varint(bad_varint)
+    expect_package_error("package-tool-unpack-hpatch-varint-overflow-rejected",
+                         lambda: web.unpack_hpatchlite_rbl_bytes(old, bytes(bad_varint)))
+
+    trailing_patch = web.hpatchlite_create_patch(old, new_fw, "tuz") + b"\xA5"
+    trailing_rbl = bytearray(web.package_rbl_bytes(raw_fw=new_fw, pkg_obj=trailing_patch,
+                                                   crypt="none", cmprs="hpatchlite",
+                                                   timestamp=1714473601))
+    expect_package_error("package-tool-unpack-hpatch-tuz-trailing-byte-rejected",
+                         lambda: web.unpack_hpatchlite_rbl_bytes(old, bytes(trailing_rbl)))
+
+    raw = bytes((idx * 23 + 11) & 0xFF for idx in range(256))
+    same_size = bytearray(web.package_firmware_bytes(raw, crypt="none", cmprs="none",
+                                                     algo2="crc", timestamp=1714473602))
+    put_u32(same_size, 80, web.crc32(raw) ^ 0x13572468)
+    put_u32(same_size, 92, web.crc32(bytes(same_size[:92])))
+    expect_package_error("package-tool-unpack-same-size-raw-crc-mismatch-rejected",
+                         lambda: web.unpack_rbl_bytes(bytes(same_size)))
+
+    for case_name, rbl in (
+        ("none", web.package_firmware_bytes(raw, crypt="none", cmprs="none", timestamp=1714473603)),
+        ("gzip", web.package_firmware_bytes(raw, crypt="none", cmprs="gzip", timestamp=1714473604)),
+        ("quicklz", web.package_firmware_bytes(raw, crypt="none", cmprs="quicklz", timestamp=1714473605)),
+        ("fastlz", web.package_firmware_bytes(raw, crypt="none", cmprs="fastlz", timestamp=1714473606)),
+    ):
+        parsed = web.parse_rbl_header(rbl)
+        restored, unpacked = web.unpack_rbl_bytes(rbl)
+        assert restored == raw, f"package-tool-web-python-corpus-parity {case_name}"
+        assert parsed["raw_crc"] == unpacked["raw_crc"]
+        assert parsed["pkg_size"] == unpacked["pkg_size"]
+
+    parsed = web.parse_rbl_header(valid_hpatch)
+    restored, unpacked = web.unpack_hpatchlite_rbl_bytes(old, valid_hpatch)
+    assert restored == new_fw, "package-tool-web-python-corpus-parity hpatchlite"
+    assert parsed["raw_crc"] == unpacked["raw_crc"]
+
 def check_documentation_links() -> None:
     """Verify docs advertise automatic browser processing and limitations."""
     tools_en = (REPO_ROOT / "docs" / "en" / "tools.md").read_text(encoding="utf-8")
@@ -422,6 +524,7 @@ def main() -> int:
     check_gzip_pack_unpack_roundtrip()
     check_aes_vectors_and_roundtrip()
     check_fastlz_quicklz_and_diff_roundtrip()
+    check_unpack_negative_corpus()
     check_documentation_links()
     write_summary()
     print("package_tool web CI tests passed", flush=True)

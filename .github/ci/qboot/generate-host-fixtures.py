@@ -67,6 +67,7 @@ def refresh_hdr_crc(data):
 old_app = pattern(3073, 5, 0x11)
 old_mismatch_app = pattern(len(old_app), 13, 0x55)
 new_app = pattern(4097, 7, 0x23)
+same_size_alt_app = pattern(len(new_app), 41, 0x42)
 rng = random.Random(0)
 aes_new_app = None
 for size in range(4097, 4700):
@@ -103,6 +104,7 @@ paths = {
     'old': root / 'old_app.bin',
     'old_mismatch': root / 'old_mismatch_app.bin',
     'new': root / 'new_app.bin',
+    'same_size_alt': root / 'same_size_alt_app.bin',
     'aes_new': root / 'aes_new_app.bin',
     'hpatch_new': root / 'hpatch_new_app.bin',
     'quickfast': root / 'quickfast_app.bin',
@@ -117,6 +119,7 @@ paths = {
     'app_c': root / 'app_c.bin',
 }
 for key, data in [('old', old_app), ('old_mismatch', old_mismatch_app), ('new', new_app),
+                  ('same_size_alt', same_size_alt_app),
                   ('aes_new', aes_new_app), ('hpatch_new', hpatch_new_app),
                   ('quickfast', quickfast_app),
                   ('hpatch_multi_new', hpatch_multi_new_app), ('large', large_app),
@@ -209,6 +212,7 @@ def update_body(data, body, raw=None):
     refresh_hdr_crc(data)
 
 pkg_none = make_pkg('new_app_pkg_none.bin', new_app)
+pkg_same_size_alt = make_pkg('same_size_alt_pkg_none.bin', same_size_alt_app)
 pkg_gzip = make_pkg('new_app_pkg_gzip.bin', new_app, 'gzip')
 pkg_large_gzip = make_pkg('large_app_pkg_gzip.bin', large_app, 'gzip')
 pkg_exact = make_pkg('exact_fit_pkg_none.bin', exact_fit_app)
@@ -222,6 +226,11 @@ pkg_exact_gzip = make_pkg('exact_fit_pkg_gzip.bin', exact_fit_app, 'gzip')
 pkg_minus_one_gzip = make_pkg('minus_one_pkg_gzip.bin', minus_one_app, 'gzip')
 
 valid_none = make_rbl('custom-none-full.rbl', pkg_none)
+same_size_different_body = make_rbl('same-size-different-body.rbl', pkg_same_size_alt, raw=paths['same_size_alt'])
+same_size_different_body_bad_crc = root / 'same-size-different-body-bad-crc.rbl'
+same_size_different_body_bad_crc_data = bytearray(same_size_different_body.read_bytes())
+same_size_different_body_bad_crc_data[-1] ^= 0xA5
+same_size_different_body_bad_crc.write_bytes(same_size_different_body_bad_crc_data)
 valid_gzip = make_rbl('custom-gzip.rbl', pkg_gzip, cmprs='gzip')
 valid_exact = make_rbl('target-size-exact-fit.rbl', pkg_exact, raw=paths['exact_fit'])
 valid_minus_one = make_rbl('target-size-minus-one.rbl', pkg_minus_one, raw=paths['minus_one'])
@@ -417,6 +426,10 @@ add('fal','backend','fal-custom-none-full',valid_none,paths['new'],note='FAL mai
 add('fal','backend-algo','fal-gzip-full-upgrade',valid_gzip,paths['new'],chunk=257,note='FAL gzip full upgrade')
 add('fal','backend-algo','fal-aes-gzip-full-upgrade',valid_aes_gzip,paths['aes_new'],chunk=257,note='FAL AES+gzip full upgrade')
 add('fal-hpatch-only','backend-algo','fal-hpatch-host-full-diff',valid_hpatch,paths['hpatch_new'],chunk=257,note='FAL HPatchLite host full-diff adapter path')
+add('fal-hpatch-only','backend-algo','fal-hpatch-old-dependent-delta',valid_hpatch_delta,paths['hpatch_new'],old_path=paths['old'],chunk=257,note='FAL HPatchLite old-dependent delta path')
+add('fal-hpatch-only','backend-algo','fal-hpatch-old-image-mismatch-rejected',hpatch_old_mismatch,paths['hpatch_new'],old_path=paths['old_mismatch'],ef=0,es=0,ej=0,esi=0,ea='old',chunk=257,note='FAL HPatchLite old image mismatch rejected')
+add('fal-hpatch-only','backend-algo','fal-hpatch-output-plus-one-rejected',hpatch_output_too_large,paths['plus_one'],old_path=paths['old'],ef=0,es=0,ej=0,esi=0,ea='old',chunk=257,note='FAL HPatchLite output larger than APP rejected')
+add('fal-hpatch-only','backend-algo','fal-hpatch-raw-crc-dest-verify-rejected',hpatch_raw_crc,paths['hpatch_new'],old_path=paths['old'],ef=0,es=0,ej=0,esi=0,ea='old',chunk=257,note='FAL HPatchLite restored image raw CRC rejected')
 add('fal','backend-algo','fal-gzip-reset-during-app-write',valid_gzip,paths['new'],ef=0,replay=1,fw='app:1',chunk=257,note='FAL gzip reset during APP write')
 add('fal','backend-algo','fal-aes-gzip-reset-during-app-write',valid_aes_gzip,paths['aes_new'],ef=0,replay=1,fw='app:1',chunk=257,note='FAL AES+gzip reset during APP write')
 add('fal-hpatch-only','backend-algo','fal-hpatch-reset-during-app-write',valid_hpatch,paths['hpatch_new'],ef=0,replay=1,fw='app:1',chunk=257,note='FAL HPatchLite reset during APP write')
@@ -431,6 +444,10 @@ add('fal','reset','fal-reset-after-app-erase-before-write',valid_none,paths['new
 add('fal','reset','fal-reset-during-app-write',valid_none,paths['new'],ef=0,replay=1,fw='app:1',note='FAL reset during APP write stream')
 add('fal','reset','fal-reset-after-app-write-before-sign',valid_none,paths['new'],ef=0,replay=1,fw='download:0',note='FAL APP written but release sign write failed before reset')
 add('fal','reset','fal-reset-after-partial-sign-write',valid_none,paths['new'],replay=1,cs=1,note='FAL corrupt residual sign is ignored and rewritten')
+add('mixed-backend','backend','mixed-backend-fal-download-to-custom-app-none-full',valid_none,paths['new'],note='mixed backend: FAL DOWNLOAD releases to custom APP')
+add('mixed-backend','backend','mixed-backend-fal-download-to-custom-app-gzip',valid_gzip,paths['new'],chunk=257,note='mixed backend: FAL DOWNLOAD gzip releases to custom APP')
+add('mixed-backend','backend','mixed-backend-fal-download-read-fail-replay-success',valid_none,paths['new'],ef=0,replay=1,fr='download:0',note='mixed backend: failed FAL download read recovers on replay')
+add('mixed-backend','sign-hard-fail','mixed-backend-sign-write-fail-after-app-written-no-jump',valid_none,paths['new'],ef=0,es=0,ej=0,esi=0,ea='new',fw='download:0',note='mixed backend: sign write hard failure after custom APP write does not jump')
 add('custom','sign-hard-fail','custom-sign-write-fail-after-app-written',valid_none,paths['new'],ef=0,es=0,ej=0,esi=0,ea='new',fsw='download:0',note='custom release-sign write hard failure after APP write does not jump')
 add('custom','sign-hard-fail','custom-sign-read-fail-before-jump',valid_none,paths['new'],fsr='download:1',note='custom sign read failure before final sign check is treated as not released')
 add('fal','sign-hard-fail','fal-sign-write-fail-after-app-written',valid_none,paths['new'],ef=0,es=0,ej=0,esi=0,ea='new',fw='download:0',note='FAL release-sign write hard failure after APP write does not jump')
@@ -439,9 +456,13 @@ add('fs','backend','fs-custom-none-full',valid_none,paths['new'],note='FS main p
 add('fs','backend-algo','fs-gzip-full-upgrade',valid_gzip,paths['new'],chunk=257,note='FS gzip full upgrade')
 add('fs','backend-algo','fs-aes-gzip-full-upgrade',valid_aes_gzip,paths['aes_new'],chunk=257,note='FS AES+gzip full upgrade')
 add('fs-hpatch-only','backend-algo','fs-hpatch-host-full-diff',valid_hpatch,paths['hpatch_new'],chunk=257,note='FS HPatchLite host full-diff adapter path')
+add('fs-hpatch-only','backend-algo','fs-hpatch-old-dependent-delta',valid_hpatch_delta,paths['hpatch_new'],old_path=paths['old'],chunk=257,note='FS HPatchLite old-dependent delta path')
+add('fs-hpatch-only','backend-algo','fs-hpatch-old-image-mismatch-rejected',hpatch_old_mismatch,paths['hpatch_new'],old_path=paths['old_mismatch'],ef=0,es=0,ej=0,esi=0,ea='old',chunk=257,note='FS HPatchLite old image mismatch rejected')
+add('fs-hpatch-only','backend-algo','fs-hpatch-output-plus-one-rejected',hpatch_output_too_large,paths['plus_one'],old_path=paths['old'],ef=0,es=0,ej=0,esi=0,ea='old',chunk=257,note='FS HPatchLite output larger than APP rejected')
 add('fs','backend-algo','fs-gzip-reset-during-app-write',valid_gzip,paths['new'],ef=0,es=0,ej=0,esi=0,ea='any',replay=1,fw='app:1',chunk=257,note='FS current policy: gzip partial APP write is not recoverable by replay')
 add('fs','backend-algo','fs-aes-gzip-reset-during-app-write',valid_aes_gzip,paths['aes_new'],ef=0,es=0,ej=0,esi=0,ea='any',replay=1,fw='app:1',chunk=257,note='FS current policy: AES+gzip partial APP write is not recoverable by replay')
 add('fs-hpatch-only','backend-algo','fs-hpatch-reset-during-app-write',valid_hpatch,paths['hpatch_new'],ef=0,es=0,ej=0,esi=0,ea='any',replay=1,fw='app:1',chunk=257,note='FS current policy: HPatchLite partial APP write is not recoverable by replay')
+add('fs-hpatch-only','reset','fs-hpatch-reset-after-sign-before-jump-replay',valid_hpatch,paths['hpatch_new'],ef=0,replay=1,fsw='download:0',chunk=257,note='FS HPatchLite APP written but sign write failed before reset')
 add('fs','backend','fs-open-download-fail',valid_none,paths['new'],ef=0,es=0,ej=0,esi=0,ea='old',fo='download:0',note='FS open download failure')
 add('fs','backend','fs-read-download-fail',valid_none,paths['new'],ef=0,es=0,ej=0,esi=0,ea='old',fr='download:0',note='FS read download failure')
 add('fs','backend','fs-write-download-fail',valid_none,paths['new'],er=0,ef=0,es=0,ej=0,esi=0,ea='old',fw='download:0',fbr=1,note='FS receive write failure')

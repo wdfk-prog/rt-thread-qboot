@@ -13,6 +13,7 @@ static int g_jump_count;                               /**< Host jump-spy count.
 static qboot_host_jump_trace_t g_jump_trace;           /**< Host Cortex-M jump preparation trace. */
 static rt_bool_t g_malloc_fault_enabled;               /**< rt_malloc fault enable flag. */
 static rt_uint32_t g_malloc_fault_remaining;           /**< Allocations to pass before fault. */
+static rt_uint32_t g_malloc_outstanding;               /**< Outstanding host rt_malloc allocations. */
 static rt_bool_t g_flash_physical_enabled;             /**< Physical flash rule enable flag. */
 static rt_uint32_t g_flash_program_unit;                /**< Optional program-unit alignment in bytes. */
 
@@ -169,6 +170,10 @@ void qboot_host_fault_reset(void)
 
 void *qboot_host_rt_malloc(size_t size)
 {
+    if (size == 0u)
+    {
+        return RT_NULL;
+    }
     if (g_malloc_fault_enabled)
     {
         if (g_malloc_fault_remaining > 0u)
@@ -181,12 +186,26 @@ void *qboot_host_rt_malloc(size_t size)
             return RT_NULL;
         }
     }
-    return malloc(size);
+    void *ptr = malloc(size);
+    if (ptr != RT_NULL)
+    {
+        g_malloc_outstanding++;
+    }
+    return ptr;
 }
 
 void qboot_host_rt_free(void *ptr)
 {
+    if (ptr != RT_NULL && g_malloc_outstanding > 0u)
+    {
+        g_malloc_outstanding--;
+    }
     free(ptr);
+}
+
+rt_uint32_t qboot_host_rt_malloc_outstanding(void)
+{
+    return g_malloc_outstanding;
 }
 
 void qboot_host_rt_malloc_fail_after(rt_uint32_t after_hits)
