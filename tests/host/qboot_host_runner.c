@@ -28,7 +28,8 @@ typedef enum
     QBOOT_HOST_MODE_FS_BOUNDARY, /**< Run direct filesystem boundary tests. */
     QBOOT_HOST_MODE_SIGN_BOUNDARY, /**< Run direct release-sign position tests. */
     QBOOT_HOST_MODE_REPEAT_SEQUENCE, /**< Run multi-release sequence tests in one process. */
-    QBOOT_HOST_MODE_FAULT_SEQUENCE /**< Run deterministic multi-fault replay tests. */
+    QBOOT_HOST_MODE_FAULT_SEQUENCE, /**< Run deterministic multi-fault replay tests. */
+    QBOOT_HOST_MODE_STALE_SIGN /**< Run copied/stale release-sign package tests. */
 } qboot_host_mode_t;
 
 /** @brief Parsed runner configuration. */
@@ -86,7 +87,7 @@ static void qboot_host_usage(const char *prog)
     printf("       %s --inspect-header --package RBL\n", prog);
     printf("       %s --mode update-mgr --case NAME\n", prog);
     printf("       %s --mode jump-stub|fake-flash|fs-boundary|sign-boundary --case NAME\n", prog);
-    printf("       %s --mode repeat-sequence|fault-sequence --case NAME --fixture-dir DIR\n", prog);
+    printf("       %s --mode repeat-sequence|fault-sequence|stale-sign --case NAME --fixture-dir DIR\n", prog);
 }
 
 /**
@@ -845,6 +846,195 @@ static int qboot_host_run_repeat_step(const char *sequence_name,
     return qboot_host_run_release_step(&args, index == 0u, load_old_app);
 }
 
+
+/**
+ * @brief Configure one release step for resource-repeat checks.
+ *
+ * @param args         Output release-step arguments.
+ * @param case_name    Case label storage prepared by the caller.
+ * @param package_path Package fixture path.
+ * @param old_app_path Old APP fixture path.
+ * @param new_app_path New APP fixture path.
+ */
+static void qboot_host_prepare_resource_args(qboot_host_args_t *args,
+                                             const char *case_name,
+                                             const char *package_path,
+                                             const char *old_app_path,
+                                             const char *new_app_path)
+{
+    qboot_host_args_init(args);
+    args->case_name = case_name;
+    args->package_path = package_path;
+    args->old_app_path = old_app_path;
+    args->new_app_path = new_app_path;
+    args->expect_sign_set = RT_TRUE;
+}
+
+/**
+ * @brief Check that host resource trackers returned to idle.
+ *
+ * @param case_name Case label for diagnostics.
+ * @return RT_TRUE when all available resource trackers are idle.
+ */
+static rt_bool_t qboot_host_resource_trackers_idle(const char *case_name)
+{
+    if (qboot_host_rt_malloc_outstanding() != 0u)
+    {
+        printf("QBOOT_HOST_FAIL %s rt_malloc outstanding=%u\n",
+               case_name, (unsigned)qboot_host_rt_malloc_outstanding());
+        return RT_FALSE;
+    }
+#ifdef QBOOT_HOST_BACKEND_FS
+    if (qboot_host_fs_open_slot_count() != 0)
+    {
+        printf("QBOOT_HOST_FAIL %s fs fd slots=%d\n",
+               case_name, qboot_host_fs_open_slot_count());
+        return RT_FALSE;
+    }
+#endif /* QBOOT_HOST_BACKEND_FS */
+    return RT_TRUE;
+}
+
+/**
+ * @brief Run one named in-process 50-iteration resource repeat check.
+ *
+ * @param case_name   Repeat case name.
+ * @param fixture_dir Directory that contains generated host fixtures.
+ * @return 0 on pass, non-zero on failure.
+ */
+static int qboot_host_run_resource_repeat_50_case(const char *case_name,
+                                                  const char *fixture_dir)
+{
+    char good_pkg[512];
+    char bad_pkg[512];
+    char hpatch_pkg[512];
+    char old_app[512];
+    char new_app[512];
+    char hpatch_app[512];
+    rt_bool_t hpatch_resource_case =
+        (strcmp(case_name,
+                "resource-repeat-50-hpatch-malloc-fail-no-swap-leftover") == 0) ?
+        RT_TRUE : RT_FALSE;
+
+    if (!qboot_host_fixture_path(good_pkg, sizeof(good_pkg), fixture_dir, "custom-none-full.rbl") ||
+        !qboot_host_fixture_path(bad_pkg, sizeof(bad_pkg), fixture_dir, "custom-bad-crc.rbl") ||
+        !qboot_host_fixture_path(old_app, sizeof(old_app), fixture_dir, "old_app.bin") ||
+        !qboot_host_fixture_path(new_app, sizeof(new_app), fixture_dir, "new_app.bin"))
+    {
+        printf("QBOOT_HOST_FAIL %s resource fixture path\n", case_name);
+        return 1;
+    }
+    if (hpatch_resource_case &&
+        (!qboot_host_fixture_path(hpatch_pkg, sizeof(hpatch_pkg), fixture_dir, "custom-hpatch-production-full.rbl") ||
+         !qboot_host_fixture_path(hpatch_app, sizeof(hpatch_app), fixture_dir, "hpatch_new_app.bin")))
+    {
+        printf("QBOOT_HOST_FAIL %s hpatch resource fixture path\n", case_name);
+        return 1;
+    }
+    if (!qboot_host_resource_trackers_idle(case_name))
+    {
+        return 1;
+    }
+
+    for (rt_uint32_t i = 0u; i < 50u; i++)
+    {
+        qboot_host_args_t args;
+        char step_name[192];
+        int written = snprintf(step_name, sizeof(step_name), "%s-%u", case_name, (unsigned)i);
+
+        if (written <= 0 || (size_t)written >= sizeof(step_name))
+        {
+            printf("QBOOT_HOST_FAIL %s build repeat name\n", case_name);
+            return 1;
+        }
+        qboot_host_prepare_resource_args(&args, step_name, good_pkg, old_app, new_app);
+
+        if (strcmp(case_name, "resource-repeat-50-fail-then-success-no-handle-growth") == 0)
+        {
+            args.package_path = bad_pkg;
+            args.expect_first = RT_FALSE;
+            args.expect_success = RT_FALSE;
+            args.expect_jump = RT_FALSE;
+            args.expect_sign = RT_FALSE;
+            args.expect_app = QBOOT_HOST_APP_EXPECT_OLD;
+            if (qboot_host_run_release_step(&args, RT_TRUE, RT_TRUE) != 0 ||
+                !qboot_host_resource_trackers_idle(case_name))
+            {
+                return 1;
+            }
+            qboot_host_prepare_resource_args(&args, step_name, good_pkg, old_app, new_app);
+            args.expect_sign = RT_TRUE;
+            if (qboot_host_run_release_step(&args, RT_FALSE, RT_FALSE) != 0 ||
+                !qboot_host_resource_trackers_idle(case_name))
+            {
+                return 1;
+            }
+        }
+        else if (strcmp(case_name, "resource-repeat-50-sign-write-fail-no-sign-leak") == 0)
+        {
+            args.expect_first = RT_FALSE;
+            args.expect_success = RT_FALSE;
+            args.expect_jump = RT_FALSE;
+            args.expect_sign = RT_FALSE;
+            args.expect_app = QBOOT_HOST_APP_EXPECT_NEW;
+            args.fault_enabled[QBOOT_HOST_FAULT_SIGN_WRITE] = RT_TRUE;
+            args.fault_target[QBOOT_HOST_FAULT_SIGN_WRITE] = QBOOT_HOST_FAULT_TARGET_DOWNLOAD;
+            args.fault_after[QBOOT_HOST_FAULT_SIGN_WRITE] = 0u;
+            if (qboot_host_run_release_step(&args, RT_TRUE, RT_TRUE) != 0 ||
+                qboot_host_download_has_release_sign() ||
+                !qboot_host_resource_trackers_idle(case_name))
+            {
+                return 1;
+            }
+        }
+#ifdef QBOOT_HOST_BACKEND_FS
+        else if (strcmp(case_name, "resource-repeat-50-fs-open-fail-no-fd-growth") == 0)
+        {
+            args.expect_first = RT_FALSE;
+            args.expect_success = RT_FALSE;
+            args.expect_jump = RT_FALSE;
+            args.expect_sign = RT_FALSE;
+            args.expect_app = QBOOT_HOST_APP_EXPECT_OLD;
+            args.fault_enabled[QBOOT_HOST_FAULT_OPEN] = RT_TRUE;
+            args.fault_target[QBOOT_HOST_FAULT_OPEN] = QBOOT_HOST_FAULT_TARGET_DOWNLOAD;
+            args.fault_after[QBOOT_HOST_FAULT_OPEN] = 0u;
+            if (qboot_host_run_release_step(&args, RT_TRUE, RT_TRUE) != 0 ||
+                !qboot_host_resource_trackers_idle(case_name))
+            {
+                return 1;
+            }
+        }
+#endif /* QBOOT_HOST_BACKEND_FS */
+        else if (strcmp(case_name, "resource-repeat-50-hpatch-malloc-fail-no-swap-leftover") == 0)
+        {
+            args.package_path = hpatch_pkg;
+            args.new_app_path = hpatch_app;
+            args.chunk_size = 257u;
+            args.expect_first = RT_FALSE;
+            args.expect_success = RT_FALSE;
+            args.expect_jump = RT_FALSE;
+            args.expect_sign = RT_FALSE;
+            args.expect_app = QBOOT_HOST_APP_EXPECT_OLD;
+            args.malloc_fail_enabled = RT_TRUE;
+            args.malloc_fail_after = 0u;
+            if (qboot_host_run_release_step(&args, RT_TRUE, RT_TRUE) != 0 ||
+                qboot_host_download_has_release_sign() ||
+                !qboot_host_resource_trackers_idle(case_name))
+            {
+                return 1;
+            }
+        }
+        else
+        {
+            printf("QBOOT_HOST_FAIL unsupported resource repeat case: %s\n", case_name);
+            return 2;
+        }
+    }
+
+    printf("QBOOT_HOST_CASE_PASS %s repeat-sequence-steps=50 resources-idle=1\n", case_name);
+    return 0;
+}
+
 /**
  * @brief Run repeat and stale-state release cases without process-level reset.
  *
@@ -882,6 +1072,11 @@ static int qboot_host_run_repeat_sequence_case(const char *case_name, const char
     };
     const qboot_host_repeat_step_t *steps = RT_NULL;
     rt_uint32_t step_count = 0u;
+
+    if (strncmp(case_name, "resource-repeat-50-", 19) == 0)
+    {
+        return qboot_host_run_resource_repeat_50_case(case_name, fixture_dir);
+    }
 
     if (strcmp(case_name, "repeat-upgrade-100-none-no-state-growth") == 0)
     {
@@ -980,15 +1175,21 @@ static int qboot_host_expect_sequence_app(const char *case_name,
 /**
  * @brief Run deterministic release attempts with multiple sequential faults.
  *
- * @param case_name   Sequence case name.
- * @param fixture_dir Directory that contains generated host fixtures.
- * @param steps       Step descriptors.
- * @param step_count  Number of entries in @p steps.
+ * @param case_name    Sequence case name.
+ * @param fixture_dir  Directory that contains generated host fixtures.
+ * @param package_name Package fixture file name.
+ * @param old_app_name Old APP fixture file name.
+ * @param new_app_name Expected new APP fixture file name.
+ * @param steps        Step descriptors.
+ * @param step_count   Number of entries in @p steps.
  *
  * @return 0 on pass, non-zero on failure.
  */
 static int qboot_host_run_fault_sequence_steps(const char *case_name,
                                                const char *fixture_dir,
+                                               const char *package_name,
+                                               const char *old_app_name,
+                                               const char *new_app_name,
                                                const qboot_host_fault_sequence_step_t *steps,
                                                rt_uint32_t step_count)
 {
@@ -1004,9 +1205,9 @@ static int qboot_host_run_fault_sequence_steps(const char *case_name,
     int exit_code = 1;
 
     if (steps == RT_NULL || step_count == 0u ||
-        !qboot_host_fixture_path(package_path, sizeof(package_path), fixture_dir, "custom-none-full.rbl") ||
-        !qboot_host_fixture_path(old_app_path, sizeof(old_app_path), fixture_dir, "old_app.bin") ||
-        !qboot_host_fixture_path(new_app_path, sizeof(new_app_path), fixture_dir, "new_app.bin") ||
+        !qboot_host_fixture_path(package_path, sizeof(package_path), fixture_dir, package_name) ||
+        !qboot_host_fixture_path(old_app_path, sizeof(old_app_path), fixture_dir, old_app_name) ||
+        !qboot_host_fixture_path(new_app_path, sizeof(new_app_path), fixture_dir, new_app_name) ||
         !qboot_host_read_file(package_path, &pkg, &pkg_size) ||
         !qboot_host_read_file(old_app_path, &old_app, &old_size) ||
         !qboot_host_read_file(new_app_path, &new_app, &new_size))
@@ -1108,30 +1309,90 @@ static int qboot_host_run_fault_sequence_case(const char *case_name, const char 
         { RT_TRUE, QBOOT_HOST_FAULT_SIGN_READ, QBOOT_HOST_FAULT_TARGET_DOWNLOAD, 0u, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
         { RT_FALSE, QBOOT_HOST_FAULT_OPEN, QBOOT_HOST_FAULT_TARGET_ANY, 0u, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
     };
+    static const qboot_host_fault_sequence_step_t fs_app_write_retry_current_policy[] = {
+        { RT_TRUE, QBOOT_HOST_FAULT_WRITE, QBOOT_HOST_FAULT_TARGET_APP, 0u, RT_FALSE, RT_FALSE, RT_FALSE, QBOOT_HOST_APP_EXPECT_ANY },
+        { RT_FALSE, QBOOT_HOST_FAULT_OPEN, QBOOT_HOST_FAULT_TARGET_ANY, 0u, RT_FALSE, RT_FALSE, RT_FALSE, QBOOT_HOST_APP_EXPECT_ANY },
+    };
+    static const qboot_host_fault_sequence_step_t fs_read_signwrite_signread_success[] = {
+        { RT_TRUE, QBOOT_HOST_FAULT_READ, QBOOT_HOST_FAULT_TARGET_DOWNLOAD, 0u, RT_FALSE, RT_FALSE, RT_FALSE, QBOOT_HOST_APP_EXPECT_ANY },
+        { RT_TRUE, QBOOT_HOST_FAULT_SIGN_WRITE, QBOOT_HOST_FAULT_TARGET_DOWNLOAD, 0u, RT_FALSE, RT_FALSE, RT_FALSE, QBOOT_HOST_APP_EXPECT_NEW },
+        { RT_TRUE, QBOOT_HOST_FAULT_SIGN_READ, QBOOT_HOST_FAULT_TARGET_DOWNLOAD, 1u, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
+        { RT_FALSE, QBOOT_HOST_FAULT_OPEN, QBOOT_HOST_FAULT_TARGET_ANY, 0u, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
+    };
+    static const qboot_host_fault_sequence_step_t hpatch_swap_write_retry_success[] = {
+        { RT_TRUE, QBOOT_HOST_FAULT_WRITE, QBOOT_HOST_FAULT_TARGET_SWAP, 0u, RT_FALSE, RT_FALSE, RT_FALSE, QBOOT_HOST_APP_EXPECT_ANY },
+        { RT_FALSE, QBOOT_HOST_FAULT_OPEN, QBOOT_HOST_FAULT_TARGET_ANY, 0u, RT_TRUE, RT_TRUE, RT_TRUE, QBOOT_HOST_APP_EXPECT_NEW },
+    };
 
     if (strcmp(case_name, "fault-sequence-erase-write-sign-success") == 0)
     {
         return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
+                                                   "custom-none-full.rbl", "old_app.bin", "new_app.bin",
                                                    erase_write_sign_success,
                                                    (rt_uint32_t)(sizeof(erase_write_sign_success) / sizeof(erase_write_sign_success[0])));
     }
     if (strcmp(case_name, "fault-sequence-read-write-signread-success") == 0)
     {
         return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
+                                                   "custom-none-full.rbl", "old_app.bin", "new_app.bin",
                                                    read_write_signread_success,
                                                    (rt_uint32_t)(sizeof(read_write_signread_success) / sizeof(read_write_signread_success[0])));
     }
     if (strcmp(case_name, "fault-sequence-app-write-retry-success") == 0)
     {
         return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
+                                                   "custom-none-full.rbl", "old_app.bin", "new_app.bin",
                                                    app_write_retry_success,
                                                    (rt_uint32_t)(sizeof(app_write_retry_success) / sizeof(app_write_retry_success[0])));
     }
     if (strcmp(case_name, "fault-sequence-sign-retry-success") == 0)
     {
         return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
+                                                   "custom-none-full.rbl", "old_app.bin", "new_app.bin",
                                                    sign_retry_success,
                                                    (rt_uint32_t)(sizeof(sign_retry_success) / sizeof(sign_retry_success[0])));
+    }
+    if (strcmp(case_name, "fs-fault-sequence-read-write-signread-success") == 0)
+    {
+        return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
+                                                   "custom-none-full.rbl", "old_app.bin", "new_app.bin",
+                                                   fs_read_signwrite_signread_success,
+                                                   (rt_uint32_t)(sizeof(fs_read_signwrite_signread_success) / sizeof(fs_read_signwrite_signread_success[0])));
+    }
+    if (strcmp(case_name, "fs-fault-sequence-app-write-retry-current-policy") == 0)
+    {
+        return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
+                                                   "custom-none-full.rbl", "old_app.bin", "new_app.bin",
+                                                   fs_app_write_retry_current_policy,
+                                                   (rt_uint32_t)(sizeof(fs_app_write_retry_current_policy) / sizeof(fs_app_write_retry_current_policy[0])));
+    }
+    if (strcmp(case_name, "gzip-fault-sequence-app-write-retry-success") == 0)
+    {
+        return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
+                                                   "custom-gzip.rbl", "old_app.bin", "new_app.bin",
+                                                   app_write_retry_success,
+                                                   (rt_uint32_t)(sizeof(app_write_retry_success) / sizeof(app_write_retry_success[0])));
+    }
+    if (strcmp(case_name, "aes-gzip-fault-sequence-read-write-signread-success") == 0)
+    {
+        return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
+                                                   "custom-aes-gzip-real.rbl", "old_app.bin", "aes_new_app.bin",
+                                                   read_write_signread_success,
+                                                   (rt_uint32_t)(sizeof(read_write_signread_success) / sizeof(read_write_signread_success[0])));
+    }
+    if (strcmp(case_name, "hpatch-fault-sequence-app-write-retry-success") == 0)
+    {
+        return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
+                                                   "custom-hpatch-host-full-diff.rbl", "old_app.bin", "hpatch_new_app.bin",
+                                                   app_write_retry_success,
+                                                   (rt_uint32_t)(sizeof(app_write_retry_success) / sizeof(app_write_retry_success[0])));
+    }
+    if (strcmp(case_name, "hpatch-fault-sequence-swap-write-retry-success") == 0)
+    {
+        return qboot_host_run_fault_sequence_steps(case_name, fixture_dir,
+                                                   "custom-hpatch-production-full.rbl", "old_app.bin", "hpatch_new_app.bin",
+                                                   hpatch_swap_write_retry_success,
+                                                   (rt_uint32_t)(sizeof(hpatch_swap_write_retry_success) / sizeof(hpatch_swap_write_retry_success[0])));
     }
     printf("QBOOT_HOST_FAIL unsupported fault sequence case: %s\n", case_name);
     return 2;
@@ -2067,6 +2328,136 @@ static void qboot_host_make_sign_info(fw_info_t *info, rt_uint32_t pkg_size)
 }
 
 /**
+ * @brief Run copied or stale release-sign package validation cases.
+ *
+ * @param case_name   Test case name.
+ * @param fixture_dir Directory that contains generated host fixtures.
+ * @return 0 on pass, non-zero on failure.
+ */
+static int qboot_host_run_stale_sign_case(const char *case_name, const char *fixture_dir)
+{
+    const char *stale_pkg_name = "custom-bad-crc.rbl";
+    const char *new_app_name = "new_app.bin";
+    rt_bool_t expect_success = RT_FALSE;
+    rt_bool_t expect_jump = RT_FALSE;
+    rt_bool_t expect_sign = RT_TRUE;
+    qboot_host_app_expect_t expect_app = QBOOT_HOST_APP_EXPECT_OLD;
+    char valid_pkg_path[512];
+    char stale_pkg_path[512];
+    char old_app_path[512];
+    char new_app_path[512];
+    rt_uint8_t *valid_pkg = RT_NULL;
+    rt_uint8_t *stale_pkg = RT_NULL;
+    rt_uint8_t *old_app = RT_NULL;
+    rt_uint8_t *new_app = RT_NULL;
+    rt_uint32_t valid_pkg_size = 0u;
+    rt_uint32_t stale_pkg_size = 0u;
+    rt_uint32_t old_size = 0u;
+    rt_uint32_t new_size = 0u;
+    void *handle = RT_NULL;
+    rt_uint32_t part_size = 0u;
+    fw_info_t sign_info;
+    rt_bool_t release_ok;
+    int exit_code = 1;
+
+    if (strcmp(case_name, "sign-same-size-different-raw-crc-rejected") == 0)
+    {
+        stale_pkg_name = "mutation-raw-crc.rbl";
+    }
+    else if (strcmp(case_name, "sign-same-size-different-product-rejected") == 0)
+    {
+        stale_pkg_name = "custom-product-code-mismatch.rbl";
+    }
+    else if (strcmp(case_name, "sign-same-size-different-version-current-policy") == 0)
+    {
+        stale_pkg_name = "custom-version-lower.rbl";
+        expect_success = RT_TRUE;
+        expect_jump = RT_TRUE;
+        expect_sign = RT_TRUE;
+        expect_app = QBOOT_HOST_APP_EXPECT_NEW;
+    }
+    else if (strcmp(case_name, "sign-valid-marker-stale-download-body-rejected") == 0 ||
+             strcmp(case_name, "mixed-backend-stale-fal-download-with-valid-sign-rejected") == 0)
+    {
+        stale_pkg_name = "custom-bad-crc.rbl";
+    }
+    else if (strcmp(case_name, "sign-copied-from-old-package-to-new-package-rejected") == 0)
+    {
+        stale_pkg_name = "same-size-different-body-bad-crc.rbl";
+    }
+    else
+    {
+        printf("QBOOT_HOST_FAIL unsupported stale sign case: %s\n", case_name);
+        return 2;
+    }
+
+    if (!qboot_host_fixture_path(valid_pkg_path, sizeof(valid_pkg_path), fixture_dir, "custom-none-full.rbl") ||
+        !qboot_host_fixture_path(stale_pkg_path, sizeof(stale_pkg_path), fixture_dir, stale_pkg_name) ||
+        !qboot_host_fixture_path(old_app_path, sizeof(old_app_path), fixture_dir, "old_app.bin") ||
+        !qboot_host_fixture_path(new_app_path, sizeof(new_app_path), fixture_dir, new_app_name) ||
+        !qboot_host_read_file(valid_pkg_path, &valid_pkg, &valid_pkg_size) ||
+        !qboot_host_read_file(stale_pkg_path, &stale_pkg, &stale_pkg_size) ||
+        !qboot_host_read_file(old_app_path, &old_app, &old_size) ||
+        !qboot_host_read_file(new_app_path, &new_app, &new_size))
+    {
+        printf("QBOOT_HOST_FAIL %s stale sign fixture setup\n", case_name);
+        goto cleanup;
+    }
+
+    qboot_host_flash_reset();
+    if (!qboot_host_flash_load(QBOOT_TARGET_APP, old_app, old_size) ||
+        !qboot_host_flash_load(QBOOT_TARGET_DOWNLOAD, stale_pkg, stale_pkg_size) ||
+        !qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size, QBT_OPEN_WRITE | QBT_OPEN_READ))
+    {
+        printf("QBOOT_HOST_FAIL %s stale sign setup\n", case_name);
+        goto cleanup;
+    }
+    qboot_host_make_sign_info(&sign_info, valid_pkg_size - (rt_uint32_t)sizeof(fw_info_t));
+    if (!qbt_release_sign_write(handle, QBOOT_DOWNLOAD_PART_NAME, &sign_info))
+    {
+        printf("QBOOT_HOST_FAIL %s stale sign write\n", case_name);
+        goto cleanup;
+    }
+    qbt_target_close(handle);
+    handle = RT_NULL;
+
+    qboot_host_jump_reset();
+    release_ok = qbt_ci_release_from_download(RT_TRUE);
+    if (release_ok)
+    {
+        qbt_jump_to_app();
+    }
+    if (release_ok != expect_success ||
+        ((qboot_host_jump_count() > 0) ? RT_TRUE : RT_FALSE) != expect_jump ||
+        qboot_host_download_has_release_sign() != expect_sign)
+    {
+        printf("QBOOT_HOST_FAIL %s stale sign result\n", case_name);
+        goto cleanup;
+    }
+    if ((expect_app == QBOOT_HOST_APP_EXPECT_OLD &&
+         !qboot_host_expect_target(QBOOT_TARGET_APP, old_app, old_size)) ||
+        (expect_app == QBOOT_HOST_APP_EXPECT_NEW &&
+         !qboot_host_expect_target(QBOOT_TARGET_APP, new_app, new_size)))
+    {
+        printf("QBOOT_HOST_FAIL %s stale sign app content\n", case_name);
+        goto cleanup;
+    }
+    printf("QBOOT_HOST_CASE_PASS %s stale-sign=1\n", case_name);
+    exit_code = 0;
+
+cleanup:
+    if (handle != RT_NULL)
+    {
+        qbt_target_close(handle);
+    }
+    free(valid_pkg);
+    free(stale_pkg);
+    free(old_app);
+    free(new_app);
+    return exit_code;
+}
+
+/**
  * @brief Run direct release-sign position and isolation tests.
  *
  * @param case_name Test case name.
@@ -2225,6 +2616,25 @@ static int qboot_host_run_sign_boundary_case(const char *case_name)
 
 static int qboot_host_run_update_mgr_case(const char *case_name)
 {
+
+    if (strcmp(case_name, "fal-update-helper-abort-clears-session") == 0 ||
+        strcmp(case_name, "fs-update-helper-abort-clears-session") == 0 ||
+        strcmp(case_name, "mixed-update-helper-abort-clears-session") == 0)
+    {
+        case_name = "update-helper-abort-clears-session";
+    }
+    else if (strcmp(case_name, "fal-update-helper-ready-close-fail-retries-before-ready") == 0)
+    {
+        case_name = "update-helper-ready-close-fail-retries-before-ready";
+    }
+    else if (strcmp(case_name, "fs-update-helper-close-fail-on-reject-propagated") == 0)
+    {
+        case_name = "update-helper-close-fail-on-reject-propagated";
+    }
+    else if (strcmp(case_name, "mixed-update-helper-write-fail-then-restart") == 0)
+    {
+        case_name = "update-mgr-write-fail-then-restart";
+    }
     s_mgr_reason = QBT_UPD_REASON_REQ;
     s_mgr_enter_count = 0;
     s_mgr_leave_count = 0;
@@ -2948,6 +3358,7 @@ static rt_bool_t qboot_host_parse_args(int argc, char **argv, qboot_host_args_t 
             else if (strcmp(opt, "sign-boundary") == 0) { args->mode = QBOOT_HOST_MODE_SIGN_BOUNDARY; }
             else if (strcmp(opt, "repeat-sequence") == 0) { args->mode = QBOOT_HOST_MODE_REPEAT_SEQUENCE; }
             else if (strcmp(opt, "fault-sequence") == 0) { args->mode = QBOOT_HOST_MODE_FAULT_SEQUENCE; }
+            else if (strcmp(opt, "stale-sign") == 0) { args->mode = QBOOT_HOST_MODE_STALE_SIGN; }
             else { return RT_FALSE; }
         }
         else if (strcmp(opt, "--inspect") == 0) { args->inspect = RT_TRUE; }
@@ -2989,7 +3400,8 @@ static rt_bool_t qboot_host_parse_args(int argc, char **argv, qboot_host_args_t 
         args->mode == QBOOT_HOST_MODE_FS_BOUNDARY ||
         args->mode == QBOOT_HOST_MODE_SIGN_BOUNDARY ||
         args->mode == QBOOT_HOST_MODE_REPEAT_SEQUENCE ||
-        args->mode == QBOOT_HOST_MODE_FAULT_SEQUENCE)
+        args->mode == QBOOT_HOST_MODE_FAULT_SEQUENCE ||
+        args->mode == QBOOT_HOST_MODE_STALE_SIGN)
     {
         return RT_TRUE;
     }
@@ -3057,6 +3469,10 @@ int main(int argc, char **argv)
     if (args.mode == QBOOT_HOST_MODE_FAULT_SEQUENCE)
     {
         return qboot_host_run_fault_sequence_case(args.case_name, args.fixture_dir);
+    }
+    if (args.mode == QBOOT_HOST_MODE_STALE_SIGN)
+    {
+        return qboot_host_run_stale_sign_case(args.case_name, args.fixture_dir);
     }
     if (args.inspect)
     {

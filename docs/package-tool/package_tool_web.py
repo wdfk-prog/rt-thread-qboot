@@ -592,6 +592,8 @@ def _hpi_unpack_uint(data: bytes, offset: int, initial: int = 0,
         code = data[offset]
         offset += 1
         value = (value << 7) | (code & 0x7F)
+        if value > 0xFFFFFFFF:
+            raise PackageToolError("HPatchLite integer overflow")
         has_next = bool(code >> 7)
     return value, offset
 
@@ -788,6 +790,8 @@ def tuz_decompress(data: bytes, expected_size: int) -> bytes:
             raise PackageToolError("TinyUZ output exceeds expected size")
     if len(output) != expected_size:
         raise PackageToolError("TinyUZ output size does not match HPatchLite header")
+    if reader.offset != len(code):
+        raise PackageToolError("trailing data after TinyUZ stream")
     return bytes(output)
 
 

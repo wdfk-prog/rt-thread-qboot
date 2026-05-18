@@ -40,9 +40,24 @@
 //#define QBOOT_USING_PRODUCT_INFO
 //#define QBOOT_USING_STATUS_LED
 //#define QBOOT_USING_FACTORY_KEY
+#ifndef QBOOT_DISABLE_APP_CHECK
+/** @brief Enable destination APP verification before sign-based release skip. */
 #define QBOOT_USING_APP_CHECK
+#endif /* QBOOT_DISABLE_APP_CHECK */
 
-#define QBOOT_RELEASE_SIGN_ALIGN_SIZE 8//can is 4, 8, 16
+#ifndef QBOOT_RELEASE_SIGN_ALIGN_SIZE
+/** @brief Release-sign alignment size in bytes; valid values are 4, 8, or 16. */
+#define QBOOT_RELEASE_SIGN_ALIGN_SIZE 8
+#endif /* QBOOT_RELEASE_SIGN_ALIGN_SIZE */
+/** @brief Internal predicate for supported release-sign alignment sizes. */
+#define QBOOT_RELEASE_SIGN_ALIGN_VALID \
+    ((QBOOT_RELEASE_SIGN_ALIGN_SIZE == 4) || \
+     (QBOOT_RELEASE_SIGN_ALIGN_SIZE == 8) || \
+     (QBOOT_RELEASE_SIGN_ALIGN_SIZE == 16))
+#if !QBOOT_RELEASE_SIGN_ALIGN_VALID
+#error "QBOOT_RELEASE_SIGN_ALIGN_SIZE must be 4, 8, or 16"
+#endif /* !QBOOT_RELEASE_SIGN_ALIGN_VALID */
+#undef QBOOT_RELEASE_SIGN_ALIGN_VALID
 #define QBOOT_RELEASE_SIGN_WORD       0x5555AAAA
 
 #ifndef QBOOT_BUF_SIZE

@@ -13,6 +13,7 @@ runner_custom_hpatch="$out_dir/qboot_host_runner_custom-hpatch-only"
 runner_fal="$out_dir/qboot_host_runner_fal"
 runner_fal_hpatch="$out_dir/qboot_host_runner_fal-hpatch-only"
 runner_fs="$out_dir/qboot_host_runner_fs"
+runner_mixed="$out_dir/qboot_host_runner_mixed-backend"
 runner_fs_hpatch="$out_dir/qboot_host_runner_fs-hpatch-only"
 runner_custom_helper="$out_dir/qboot_host_runner_custom-helper"
 export QBOOT_HOST_FIXTURE_DIR="$fixture_dir"
@@ -28,6 +29,7 @@ test -x "$runner_custom_hpatch"
 test -x "$runner_fal"
 test -x "$runner_fal_hpatch"
 test -x "$runner_fs"
+test -x "$runner_mixed"
 test -x "$runner_fs_hpatch"
 test -x "$runner_custom_helper"
 
@@ -51,6 +53,7 @@ runner_for_backend() {
     fal) printf '%s\n' "$runner_fal" ;;
     fal-hpatch-only) printf '%s\n' "$runner_fal_hpatch" ;;
     fs) printf '%s\n' "$runner_fs" ;;
+mixed-backend) printf '%s\n' "$runner_mixed" ;;
     fs-hpatch-only) printf '%s\n' "$runner_fs_hpatch" ;;
     *) echo "unsupported backend: $1" >&2; return 1 ;;
   esac
