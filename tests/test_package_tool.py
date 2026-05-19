@@ -100,6 +100,19 @@ def parse_header(data: bytes) -> dict:
     }
 
 
+def parse_header_raw_fields(data: bytes) -> dict:
+    """Return raw fixed-size metadata fields without stripping NUL bytes."""
+    if len(data) < HEADER_SIZE:
+        raise AssertionError(f"output too small: {len(data)} bytes")
+
+    values = struct.unpack("<4sHHI16s24s24sIIIII", data[:HEADER_SIZE])
+    return {
+        "part": values[4],
+        "version": values[5],
+        "product": values[6],
+    }
+
+
 def make_args(pkg_path: Path, raw_path: Path, output: Path, crypt: str = "none",
               cmprs: str = "none", algo2: str = "crc") -> SimpleNamespace:
     """Build a namespace matching the argparse result used by package_rbl()."""
@@ -255,6 +268,15 @@ def check_error_paths(module, raw_path: Path, pkg_path: Path) -> None:
         assert message in text, f"{name}: missing error text"
         assert not output.exists(), f"{name}: output should not exist"
 
+    output = OUT_DIR / "outputs" / "missing-pkg.rbl"
+    text = expect_system_exit(
+        1,
+        module.package_rbl,
+        make_args(OUT_DIR / "inputs" / "missing.pkg", raw_path, output),
+    )
+    assert "--pkg is required and must exist" in text
+    assert not output.exists(), "missing-pkg: output should not exist"
+
     output = OUT_DIR / "outputs" / "missing-raw.rbl"
     text = expect_system_exit(
         1,
@@ -263,6 +285,23 @@ def check_error_paths(module, raw_path: Path, pkg_path: Path) -> None:
     )
     assert "--raw is required and must exist" in text
     assert not output.exists(), "missing-raw: output should not exist"
+
+
+def check_field_boundary_current_policy(module, raw_path: Path, pkg_path: Path) -> None:
+    """Lock fixed-size metadata field truncation and embedded-NUL policy."""
+    output = OUT_DIR / "outputs" / "field-boundary-current-policy.rbl"
+    args = make_args(pkg_path, raw_path, output)
+    args.part = "app-overlength-name"
+    args.version = "v" + "9" * 40
+    args.product = "ci-product\0evil-overlength-field"
+
+    run_package(module, args)
+    raw_fields = parse_header_raw_fields(output.read_bytes())
+
+    assert raw_fields["part"] == b"app-overlength-n"
+    assert raw_fields["version"] == b"v" + b"9" * 23
+    assert raw_fields["product"].startswith(b"ci-product\0evil")
+    assert raw_fields["product"] == b"ci-product\0evil-overleng"
 
 
 def write_summary() -> None:
@@ -288,7 +327,7 @@ def write_summary() -> None:
         "- Verified fields: magic, algo, algo2, timestamp, part, version, product, "
         "pkg/raw CRC, pkg/raw size, header CRC, and output payload bytes\n"
         "- Verified error paths: invalid --crypt, invalid --cmprs, "
-        "invalid --algo2, AES/XOR with hpatchlite, missing --raw\n\n"
+        "invalid --algo2, AES/XOR with hpatchlite, missing --pkg, missing --raw\n\n"
         "## Requested smoke cases\n\n"
         + "\n".join(
             f"- crypt={row['crypt']}, cmprs={row['cmprs']}, algo2={row['algo2']} -> {row['output']}"
@@ -314,6 +353,7 @@ def main() -> int:
     check_default_package(module, raw_path, pkg_path, raw, pkg)
     check_algorithm_matrix(module, raw_path, pkg_path, raw, pkg)
     check_error_paths(module, raw_path, pkg_path)
+    check_field_boundary_current_policy(module, raw_path, pkg_path)
     write_summary()
 
     print("package_tool CI tests passed")

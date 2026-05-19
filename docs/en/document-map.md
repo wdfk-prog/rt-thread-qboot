@@ -61,3 +61,6 @@ Diagram-oriented workflow notes for understanding internal processing and state 
 
 ### [Status LED](reference/status-led.md)
 Status LED behavior and indication meanings. Read this only when the project enables that feature.
+
+### [Storage Backend Contract](reference/storage-backend-contract.md)
+Handle ownership and caller/backend responsibility boundaries for FAL, filesystem, CUSTOM, and mux storage backends.

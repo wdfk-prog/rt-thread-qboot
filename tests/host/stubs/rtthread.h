@@ -102,10 +102,19 @@ static inline void rt_thread_mdelay(rt_int32_t ms)
     RT_UNUSED(ms);
 }
 
+#ifdef QBOOT_CI_HOST_TEST
+/** @brief Host-test CPU reset spy used by boot-flow tests. */
+void qboot_host_cpu_reset(void);
+#endif /* QBOOT_CI_HOST_TEST */
+
 static inline void rt_hw_cpu_reset(void)
 {
+#ifdef QBOOT_CI_HOST_TEST
+    qboot_host_cpu_reset();
+#else
     fprintf(stderr, "rt_hw_cpu_reset called in host test\n");
     abort();
+#endif /* QBOOT_CI_HOST_TEST */
 }
 
 static inline rt_thread_t rt_thread_create(const char *name, void (*entry)(void *parameter),

@@ -6,6 +6,7 @@ import inspect
 import json
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 
@@ -19,6 +20,16 @@ OUT_DIR = REPO_ROOT / "_ci" / "package-tool-web-test"
 CRYPT_ALGOS = ("none", "xor", "aes")
 CMPRS_ALGOS = ("none", "gzip", "quicklz", "fastlz", "hpatchlite")
 ALGO2_ALGOS = ("none", "crc")
+
+
+def raw_metadata_fields(data: bytes) -> dict:
+    """Return raw fixed-size metadata fields without stripping NUL bytes."""
+    values = struct.unpack("<4sHHI16s24s24sIIIII", data[:96])
+    return {
+        "part": values[4],
+        "version": values[5],
+        "product": values[6],
+    }
 
 
 def is_unsupported_hpatch_crypto(crypt: str, cmprs: str) -> bool:
@@ -177,6 +188,43 @@ def check_web_matches_cli_manual_core() -> None:
     assert len(rows) == expected_rows
 
 
+def check_field_boundary_parity() -> None:
+    """Verify CLI and web cores share fixed-size metadata field policy."""
+    cli = load_module("qboot_package_tool", CLI_TOOL)
+    web = load_module("qboot_package_tool_web", WEB_CORE)
+    raw = bytes((idx * 7 + 1) & 0xFF for idx in range(64))
+    pkg = bytes((idx * 9 + 3) & 0xFF for idx in range(32))
+
+    cli_bytes, _, _ = cli.build_rbl_package(
+        raw_fw=raw,
+        pkg_obj=pkg,
+        crypt="none",
+        cmprs="none",
+        algo2="crc",
+        timestamp=1714473607,
+        part_name="app-overlength-name",
+        fw_ver="v" + "8" * 40,
+        prod_code="web-product\0evil-overlength-field",
+    )
+    web_bytes = web.package_rbl_bytes(
+        raw_fw=raw,
+        pkg_obj=pkg,
+        crypt="none",
+        cmprs="none",
+        algo2="crc",
+        part="app-overlength-name",
+        version="v" + "8" * 40,
+        product="web-product\0evil-overlength-field",
+        timestamp=1714473607,
+    )
+
+    assert web_bytes == cli_bytes, "package-tool-cli-web-field-boundary-parity"
+    fields = raw_metadata_fields(web_bytes)
+    assert fields["part"] == b"app-overlength-n"
+    assert fields["version"] == b"v" + b"8" * 23
+    assert fields["product"] == b"web-product\0evil-overlen"
+
+
 def check_pyodide_calls_match_python_api() -> None:
     """Verify app.js embedded Python calls match the browser API signatures."""
     web = load_module("qboot_package_tool_web", WEB_CORE)
@@ -221,6 +269,13 @@ def check_header_parser_and_validation() -> None:
         assert "body CRC" in str(exc)
     else:
         raise AssertionError("expected corrupted body CRC to fail")
+
+    try:
+        web.parse_rbl_header(rbl + b"tail")
+    except web.PackageToolError as exc:
+        assert "body size" in str(exc)
+    else:
+        raise AssertionError("expected package-tool-unpack-extra-tail-rejected-by-web-parser")
 
 
 def check_gzip_pack_unpack_roundtrip() -> None:
@@ -519,6 +574,7 @@ def main() -> int:
     check_static_files()
     check_javascript_entrypoint()
     check_web_matches_cli_manual_core()
+    check_field_boundary_parity()
     check_pyodide_calls_match_python_api()
     check_header_parser_and_validation()
     check_gzip_pack_unpack_roundtrip()

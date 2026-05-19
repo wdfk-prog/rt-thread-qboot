@@ -49,10 +49,32 @@ int qboot_host_fs_open_slot_count(void)
     }
     return count;
 }
+
+/**
+ * @brief Return the current file offset for an open filesystem target.
+ *
+ * @param id Target identifier.
+ * @return Current offset, or -1 when the target has no valid open fd.
+ */
+long qboot_host_fs_current_offset(qbt_target_id_t id)
+{
+    int fd;
+
+    if (id < 0 || id >= QBOOT_TARGET_COUNT || g_fs_fds[id] == 0)
+    {
+        return -1;
+    }
+    fd = g_fs_fds[id] - 1;
+    return (long)lseek(fd, 0, SEEK_CUR);
+}
 #endif /* QBOOT_CI_HOST_TEST */
 
 /**
  * @brief Open filesystem-backed target by id.
+ *
+ * @note The returned handle is backend-owned and valid only until close. Like
+ *       other qboot storage backends, FS callbacks do not normalize non-NULL
+ *       invalid, stale, foreign, or double-closed handles.
  *
  * @param id     Target identifier.
  * @param handle Output handle (encoded target id).
@@ -131,9 +153,11 @@ static rt_err_t qbt_fs_close_fd(qbt_target_id_t id, int fd)
 }
 
 /**
- * @brief Close filesystem handle.
+ * @brief Close filesystem handle opened by qbt_fs_open().
  *
- * @param handle Encoded target id.
+ * @param handle Encoded target id returned by qbt_fs_open(). Non-NULL invalid,
+ *               stale, foreign, or double-closed handles are outside the
+ *               backend contract.
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
@@ -209,7 +233,7 @@ static rt_err_t qbt_fs_erase(void *handle, rt_uint32_t off, rt_uint32_t len)
     {
         offset = (off_t)QBOOT_HPATCH_SWAP_FILE_SIZE;
     }
-#endif
+#endif /* defined(QBOOT_USING_HPATCHLITE) && defined(QBOOT_HPATCH_USE_STORAGE_SWAP) && defined(QBOOT_HPATCH_SWAP_STORE_FS) */
     if (ftruncate(fd, offset) != 0)
     {
         return -RT_ERROR;
@@ -271,7 +295,7 @@ static rt_err_t qbt_fs_size(void *handle, rt_uint32_t *out_size)
         *out_size = (rt_uint32_t)QBOOT_HPATCH_SWAP_FILE_SIZE;
         return RT_EOK;
     }
-#endif
+#endif /* defined(QBOOT_USING_HPATCHLITE) && defined(QBOOT_HPATCH_USE_STORAGE_SWAP) && defined(QBOOT_HPATCH_SWAP_STORE_FS) */
     cur = lseek(fd, 0, SEEK_CUR);
     end = lseek(fd, 0, SEEK_END);
     if (cur >= 0)

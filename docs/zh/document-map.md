@@ -61,3 +61,6 @@
 
 ### [状态指示灯](reference/status-led.md)
 用于查看状态灯功能与指示含义，仅在项目启用该能力时需要阅读。
+
+### [存储后端契约](reference/storage-backend-contract.md)
+用于查看 FAL、文件系统、CUSTOM 和 mux 存储后端的 handle 所有权与调用方/后端责任边界。

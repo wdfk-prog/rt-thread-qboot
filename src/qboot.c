@@ -31,11 +31,13 @@ static rt_err_t qbt_shell_rx_ind(rt_device_t dev, rt_size_t size);
 static rt_bool_t qbt_shell_init(const char *shell_dev_name);
 static rt_bool_t qbt_shell_key_check(void);
 static rt_bool_t qbt_startup_shell(rt_bool_t wait_press_key);
+#endif /* QBOOT_USING_SHELL */
+#if defined(QBOOT_USING_SHELL) || defined(QBOOT_CI_HOST_TEST)
 static rt_bool_t qbt_fw_clone(void *dst_handle, const char *dst_name, void *src_handle, const char *src_name, rt_uint32_t fw_pkg_size);
 static void qbt_fw_info_show(qbt_target_id_t part_id);
 static rt_bool_t qbt_fw_delete(void *handle, const char *name, rt_uint32_t part_size);
 static void qbt_shell_cmd(rt_uint8_t argc, char **argv);
-#endif
+#endif /* defined(QBOOT_USING_SHELL) || defined(QBOOT_CI_HOST_TEST) */
 #ifdef QBOOT_USING_FACTORY_KEY
 #include <rtdevice.h>
 #endif /* QBOOT_USING_FACTORY_KEY */
@@ -1007,6 +1009,20 @@ rt_bool_t qbt_ci_release_from_download(rt_bool_t check_sign)
 {
     return qbt_release_from_part(QBOOT_TARGET_DOWNLOAD, check_sign);
 }
+
+/**
+ * @brief Release firmware from a selected source target for host-side tests.
+ *
+ * @param src_id     Source target identifier.
+ * @param check_sign RT_TRUE to skip an already released package.
+ *
+ * @return RT_TRUE on release success, RT_FALSE otherwise.
+ */
+rt_bool_t qbt_ci_release_from_target(qbt_target_id_t src_id, rt_bool_t check_sign)
+{
+    return qbt_release_from_part(src_id, check_sign);
+}
+
 #endif /* QBOOT_CI_HOST_TEST */
 
 /**
@@ -1097,6 +1113,20 @@ static void qbt_thread_entry(void *params)
     rt_hw_cpu_reset();
 }
 
+#ifdef QBOOT_CI_HOST_TEST
+/**
+ * @brief Run one qboot startup pass synchronously for host-side boot-flow tests.
+ *
+ * The host runner wraps this call with jump/reset guards so the normally
+ * non-returning platform jump or CPU reset can be observed without aborting the
+ * test process.
+ */
+void qbt_ci_run_boot_once(void)
+{
+    qbt_thread_entry(RT_NULL);
+}
+#endif /* QBOOT_CI_HOST_TEST */
+
 /**
  * @brief Create and start qboot thread.
  *
@@ -1123,7 +1153,7 @@ static int qbt_startup(void)
 }
 INIT_APP_EXPORT(qbt_startup);
 
-#ifdef QBOOT_USING_SHELL
+#if defined(QBOOT_USING_SHELL) || defined(QBOOT_CI_HOST_TEST)
 /**
  * @brief Clone firmware from source to destination.
  *
@@ -1265,7 +1295,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
 
     if (argc < 2)
     {
-        for (int i = 0; i < sizeof(cmd_info) / sizeof(char *); i++)
+        for (rt_size_t i = 0; i < sizeof(cmd_info) / sizeof(cmd_info[0]); i++)
         {
             rt_kprintf(cmd_info[i]);
         }
@@ -1473,5 +1503,20 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
 
     rt_kprintf("No supported command.\n");
 }
+#ifdef QBOOT_CI_HOST_TEST
+/**
+ * @brief Execute the qboot shell command handler from host-side tests.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ */
+void qbt_ci_shell_cmd(rt_uint8_t argc, char **argv)
+{
+    qbt_shell_cmd(argc, argv);
+}
+#endif /* QBOOT_CI_HOST_TEST */
+
+#ifdef QBOOT_USING_SHELL
 MSH_CMD_EXPORT_ALIAS(qbt_shell_cmd, qboot, Quick bootloader test commands);
-#endif
+#endif /* QBOOT_USING_SHELL */
+#endif /* defined(QBOOT_USING_SHELL) || defined(QBOOT_CI_HOST_TEST) */

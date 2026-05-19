@@ -104,7 +104,7 @@ for update_case in update-mgr-start-finish update-mgr-abort update-mgr-finish-fa
   fi
 done
 
-for helper_case in update-helper-backend-size-smoke update-helper-abort-clears-session; do
+for helper_case in update-helper-backend-size-smoke update-helper-abort-clears-session update-helper-write-offset-at-size-rejected update-helper-write-offset-plus-size-overflow-rejected update-helper-write-cross-end-rejected update-helper-write-after-finish-rejected update-helper-write-after-abort-rejected update-helper-begin-erase-fail-cleans-handle update-helper-begin-open-fail-keeps-idle; do
   case_count=$((case_count + 1))
   log_file="$log_dir/$helper_case.log"
   if "$runner_custom_helper" --mode update-mgr --case "$helper_case" > "$log_file" 2>&1; then
@@ -163,7 +163,7 @@ for sign_backend in custom fal; do
   done
 done
 
-for fs_case in fs-mount-missing fs-read-short-count fs-size-after-truncate-zero fs-close-reopen-readback fs-write-short-count fs-no-space-left fs-path-too-long fs-download-path-readonly fs-sign-path-readonly fs-download-and-sign-same-path fs-stale-temp-file-cleanup fs-existing-sign-file-shorter-than-sign fs-existing-sign-file-longer-than-sign fs-existing-download-file-longer-than-package fs-reopen-fail-after-write-current-policy fs-write-fail-after-download-write-current-policy fs-write-fail-after-download-overwrite-current-policy fs-write-fail-after-download-retry-current-policy fs-rename-temp-to-download-fail-current-policy fs-temp-file-power-loss-before-rename fs-mount-lost-during-release fs-unmount-before-replay fs-directory-missing-created-or-rejected-policy fs-stale-temp-sign-file-ignored fs-valid-download-survives-close-reopen fs-sign-clear-removes-marker fs-mount-lost-after-sign-current-policy; do
+for fs_case in fs-mount-missing fs-read-short-count fs-size-after-truncate-zero fs-close-reopen-readback fs-write-short-count fs-no-space-left fs-path-too-long fs-download-path-readonly fs-sign-path-readonly fs-download-and-sign-same-path fs-stale-temp-file-cleanup fs-existing-sign-file-shorter-than-sign fs-existing-sign-file-longer-than-sign fs-existing-download-file-longer-than-package fs-reopen-fail-after-write-current-policy fs-write-fail-after-download-write-current-policy fs-write-fail-after-download-overwrite-current-policy fs-write-fail-after-download-retry-current-policy fs-rename-temp-to-download-fail-current-policy fs-temp-file-power-loss-before-rename fs-mount-lost-during-release fs-unmount-before-replay fs-directory-missing-created-or-rejected-policy fs-stale-temp-sign-file-ignored fs-valid-download-survives-close-reopen fs-sign-clear-removes-marker fs-mount-lost-after-sign-current-policy fs-open-app-then-download-independent-fds fs-size-lseek-current-position-restored; do
   case_count=$((case_count + 1))
   log_file="$log_dir/$fs_case.log"
   if "$runner_fs" --mode fs-boundary --case "$fs_case" > "$log_file" 2>&1; then
@@ -176,9 +176,47 @@ for fs_case in fs-mount-missing fs-read-short-count fs-size-after-truncate-zero 
     exit 1
   fi
 done
+for mux_case in mux-name-to-id-all-roles mux-open-app-download-factory-dispatches-correct-backend mux-sign-write-goes-to-source-backend-only mux-destination-write-failure-does-not-touch-source mux-release-download-to-custom-app-wrapper-success; do
+  case_count=$((case_count + 1))
+  log_file="$log_dir/$mux_case.log"
+  if "$runner_mixed" --mode mux-contract --case "$mux_case" --fixture-dir "$fixture_dir" > "$log_file" 2>&1; then
+    pass_count=$((pass_count + 1))
+    printf 'QBOOT_HOST_CASE_PASS %s\n' "$mux_case"
+    printf '| mixed-backend | mux-contract | %s | PASS | - | - | - | - | - | - | - | direct | `%s` | direct mux backend dispatch/wrapper test |\n' "$mux_case" "$log_file" >> "$summary"
+  else
+    printf 'QBOOT_HOST_CASE_FAIL %s\n' "$mux_case"
+    cat "$log_file"
+    exit 1
+  fi
+done
 
+for boot_case in boot-flow-valid-download-releases-and-jumps-once boot-flow-storage-register-fail-no-jump; do
+  case_count=$((case_count + 1))
+  log_file="$log_dir/$boot_case.log"
+  if "$runner_custom" --mode boot-flow --case "$boot_case" --fixture-dir "$fixture_dir" > "$log_file" 2>&1; then
+    pass_count=$((pass_count + 1))
+    printf 'QBOOT_HOST_CASE_PASS %s\n' "$boot_case"
+    printf '| custom | boot-flow | %s | PASS | - | - | - | - | - | - | - | direct | `%s` | qboot startup-flow orchestration test |\n' "$boot_case" "$log_file" >> "$summary"
+  else
+    printf 'QBOOT_HOST_CASE_FAIL %s\n' "$boot_case"
+    cat "$log_file"
+    exit 1
+  fi
+done
 
-
+for shell_case in shell-cmd-usage-no-args shell-cmd-release-download-success shell-cmd-release-invalid-part-rejected shell-cmd-clone-download-to-factory-byte-exact shell-cmd-verify-corrupt-app-rejected shell-cmd-del-download-clears-package shell-cmd-jump-current-policy; do
+  case_count=$((case_count + 1))
+  log_file="$log_dir/$shell_case.log"
+  if "$runner_custom" --mode shell-cmd --case "$shell_case" --fixture-dir "$fixture_dir" > "$log_file" 2>&1; then
+    pass_count=$((pass_count + 1))
+    printf 'QBOOT_HOST_CASE_PASS %s\n' "$shell_case"
+    printf '| custom | shell-cmd | %s | PASS | - | - | - | - | - | - | - | direct | `%s` | qboot shell command contract test |\n' "$shell_case" "$log_file" >> "$summary"
+  else
+    printf 'QBOOT_HOST_CASE_FAIL %s\n' "$shell_case"
+    cat "$log_file"
+    exit 1
+  fi
+done
 
 run_named_release_case() {
   local backend=$1 case_name=$2 package=$3 old_app=$4 new_app=$5 log_file=$6

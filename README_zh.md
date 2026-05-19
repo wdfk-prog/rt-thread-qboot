@@ -40,6 +40,7 @@ QBoot 是一个面向嵌入式产品工程的可裁剪 bootloader 组件框架�
 - [命令参考](docs/zh/reference/command-reference.md)
 - [工作流程参考](docs/zh/reference/workflow.md)
 - [状态指示灯](docs/zh/reference/status-led.md)
+- [存储后端契约](docs/zh/reference/storage-backend-contract.md)
 
 ## 建议阅读顺序
 

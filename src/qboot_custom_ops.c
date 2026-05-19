@@ -118,8 +118,13 @@ static rt_bool_t qbt_custom_range_check(const qboot_store_desc_t *desc, rt_uint3
 /**
  * @brief Open custom backend by id.
  *
+ * @note The returned handle is backend-owned and valid only until close. Like
+ *       other qboot storage backends, CUSTOM callbacks do not normalize
+ *       non-NULL invalid, stale, foreign, or double-closed handles.
+ *
  * @param id     Target identifier.
  * @param handle Output handle.
+ * @param flags  Open flags requested by the caller.
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
@@ -127,6 +132,12 @@ static rt_err_t qbt_custom_open(qbt_target_id_t id, void **handle, int flags)
 {
     RT_UNUSED(flags);
     const qboot_store_desc_t *desc = qbt_custom_find_desc(id);
+#ifdef QBOOT_CI_HOST_TEST
+    if (qboot_host_fault_check_id(QBOOT_HOST_FAULT_OPEN, id))
+    {
+        return -RT_ERROR;
+    }
+#endif /* QBOOT_CI_HOST_TEST */
     if (desc == RT_NULL || desc->flash_len == 0)
     {
         LOG_E("CUSTOM open id %d fail.", id);
@@ -139,7 +150,8 @@ static rt_err_t qbt_custom_open(qbt_target_id_t id, void **handle, int flags)
 /**
  * @brief Close custom backend handle.
  *
- * @param handle Backend handle.
+ * @param handle Backend handle returned by qbt_custom_open(). Other non-NULL
+ *               handles are outside the backend contract.
  *
  * @return RT_EOK on success, negative error code otherwise.
  */

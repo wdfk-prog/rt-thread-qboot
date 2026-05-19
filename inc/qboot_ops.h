@@ -120,28 +120,34 @@ typedef struct
 #define QBOOT_IO_CMD_GET_ERASE_ALIGN 1
 
 /**
- * @brief Common IO operations shared by sources and targets. must be non-NULL
+ * @brief Common IO operations shared by sources and targets. must be non-NULL.
+ *
+ * Backend handles are opaque and backend-owned. Callers must pass only
+ * handles returned by the matching open() callback and must not reuse handles
+ * after close(). FAL, FS, and CUSTOM backends intentionally do not validate
+ * non-NULL invalid, stale, foreign, or double-closed handles; such calls are
+ * outside the qboot_io_ops_t contract and must be prevented by callers.
  */
 typedef struct
 {
     rt_err_t (*open)(qbt_target_id_t id,          /**< Target identifier (APP/DOWNLOAD/FACTORY). */
-                     void **handle,              /**< [out] Output handle for the opened target. */
+                     void **handle,              /**< [out] Backend-owned handle for the opened target. */
                      int flags);                 /**< Open flags (QBT_OPEN_*). */
-    rt_err_t (*close)(void *handle);              /**< Handle to close. */
-    rt_err_t (*read)(void *handle,                /**< Handle to read from. */
+    rt_err_t (*close)(void *handle);              /**< Open handle from the same backend. */
+    rt_err_t (*read)(void *handle,                /**< Open handle from the same backend. */
                      rt_uint32_t off,             /**< Byte offset to read. */
                      void *buf,                   /**< Destination buffer. */
                      rt_uint32_t len);            /**< Number of bytes to read. */
-    rt_err_t (*erase)(void *handle,               /**< Handle to erase on. */
+    rt_err_t (*erase)(void *handle,               /**< Open handle from the same backend. */
                       rt_uint32_t off,            /**< Byte offset to erase. */
                       rt_uint32_t len);           /**< Number of bytes to erase. */
-    rt_err_t (*write)(void *handle,               /**< Handle to write to. */
+    rt_err_t (*write)(void *handle,               /**< Open handle from the same backend. */
                       rt_uint32_t off,            /**< Byte offset to write. */
                       const void *buf,            /**< Source buffer to write. */
                       rt_uint32_t len);           /**< Number of bytes to write. */
-    rt_err_t (*size)(void *handle,                /**< Handle to query size for. */
+    rt_err_t (*size)(void *handle,                /**< Open handle from the same backend. */
                      rt_uint32_t *out_size);      /**< [out] Total size in bytes. */
-    rt_err_t (*ioctl)(void *handle,               /**< Handle to query/set. */
+    rt_err_t (*ioctl)(void *handle,               /**< Open handle from the same backend. */
                       int cmd,                    /**< Command selector. */
                       void *arg);                 /**< Command argument. */
 } qboot_io_ops_t;
@@ -183,7 +189,25 @@ rt_bool_t qbt_release_sign_check(void *handle, const char *name, fw_info_t *fw_i
 rt_bool_t qbt_release_sign_write(void *handle, const char *name, fw_info_t *fw_info);
 rt_bool_t qbt_release_sign_clear(void *handle, const char *name, fw_info_t *fw_info);
 
+/**
+ * @brief Open a target through the registered storage backend.
+ *
+ * @param id       Target identifier.
+ * @param handle   [out] Backend-owned handle; valid only until qbt_target_close().
+ * @param out_size [out] Optional total size query after open.
+ * @param flags    Open flags from QBT_OPEN_*.
+ * @return RT_TRUE on success, RT_FALSE otherwise.
+ */
 rt_bool_t qbt_target_open(qbt_target_id_t id, void **handle, rt_uint32_t *out_size, int flags);
+
+/**
+ * @brief Close a target handle returned by qbt_target_open().
+ *
+ * @param handle Handle from qbt_target_open(); RT_NULL is accepted as a no-op.
+ *               Non-NULL invalid, stale, foreign, or double-closed handles are
+ *               outside the backend contract.
+ * @return RT_EOK on success, negative error code otherwise.
+ */
 rt_err_t qbt_target_close(void *handle);
 const qboot_store_desc_t *qbt_target_desc(qbt_target_id_t id);
 qbt_target_id_t qbt_name_to_id(const char *name);
