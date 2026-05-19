@@ -30,6 +30,7 @@ HEADER_SIZE = 96
 app_use_limit = app_limit - HEADER_SIZE
 product = 'host-product'
 ALGO_OFF = 4
+PART_OFF = 12
 FW_VER_OFF = 28
 PROD_OFF = 52
 PKG_CRC_OFF = 76
@@ -134,10 +135,10 @@ def make_pkg(name, data, cmprs='none'):
     return out
 
 def make_rbl(name, pkg, raw=paths['new'], crypt='none', cmprs='none', product_code=product,
-             part='app', version='v-ci-host'):
+             part='app', version='v-ci-host', algo2='crc'):
     out = root / name
     out.write_bytes(ptw.package_rbl_bytes(raw.read_bytes(), pkg.read_bytes(),
-                                          crypt=crypt, cmprs=cmprs, algo2='crc',
+                                          crypt=crypt, cmprs=cmprs, algo2=algo2,
                                           part=part, version=version,
                                           product=product_code,
                                           timestamp=1700000100))
@@ -298,6 +299,20 @@ version_lower = make_rbl('custom-version-lower.rbl', pkg_none, version='v-ci-000
 version_higher = make_rbl('custom-version-higher.rbl', pkg_none, version='v-ci-9999')
 invalid_target = make_rbl('custom-invalid-target.rbl', pkg_none, part='missing')
 
+algo2_none = make_rbl('custom-algo2-none-full.rbl', pkg_none, algo2='none')
+algo2_none_extra_tail = root / 'custom-algo2-none-extra-tail.rbl'
+algo2_none_extra_tail.write_bytes(algo2_none.read_bytes() + b'EXTRA-TAIL')
+target_embedded_nul = mutate_from(valid_none, 'metadata-target-embedded-nul-current-policy.rbl',
+                                  lambda d: (put_field(d, PART_OFF, 16, b'app\0evil'), refresh_hdr_crc(d)))
+target_prefix_no_nul = mutate_from(valid_none, 'metadata-target-prefix-no-nul-rejected.rbl',
+                                   lambda d: (d.__setitem__(slice(PART_OFF, PART_OFF + 16), b'app' + b'X' * 13), refresh_hdr_crc(d)))
+target_full_no_nul = mutate_from(valid_none, 'metadata-target-full-field-no-nul-rejected.rbl',
+                                 lambda d: (d.__setitem__(slice(PART_OFF, PART_OFF + 16), b'A' * 16), refresh_hdr_crc(d)))
+target_trailing_nonzero = mutate_from(valid_none, 'metadata-target-trailing-nonzero-current-policy.rbl',
+                                      lambda d: (d.__setitem__(slice(PART_OFF, PART_OFF + 16), b'app\0' + b'Z' * 12), refresh_hdr_crc(d)))
+target_download = make_rbl('metadata-target-download-current-policy.rbl', pkg_none, part='download')
+target_factory = make_rbl('metadata-target-factory-current-policy.rbl', pkg_none, part='factory')
+
 bad_crc = root / 'custom-bad-crc.rbl'
 data = bytearray(valid_none.read_bytes()); data[-1] ^= 0x5A; bad_crc.write_bytes(data)
 mutation_bad_magic = mutate_from(valid_none, 'mutation-bad-magic.rbl', lambda d: d.__setitem__(0, ord('X')))
@@ -340,6 +355,17 @@ def add(backend, group, case, package, new_path, old_path=paths['old'], er=1, ef
 
 # Baseline, reset, fault, receive, boundary, policy, mutation, app, resource.
 add('custom','baseline','custom-none-full',valid_none,paths['new'],note='main path with byte-exact APP check')
+
+add('custom','algo2-policy','policy-algo2-none-release-success-current-policy',algo2_none,paths['new'],note='algo2=none release succeeds and records current verification policy')
+add('custom','algo2-policy','policy-algo2-none-dest-corrupt-skip-current-policy',algo2_none,paths['new'],replay=1,ca=1,ea='any',note='algo2=none release sign fast path skips destination CRC by current policy')
+add('custom','algo2-policy','policy-algo2-none-replay-after-app-corrupt-current-policy',algo2_none,paths['new'],replay=1,ca=1,ea='any',note='algo2=none replay after APP corruption follows release-sign current policy')
+add('custom','algo2-policy','policy-algo2-none-extra-tail-current-policy',algo2_none_extra_tail,paths['new'],note='extra package tail ignored because header pkg_size is authoritative by current policy')
+add('custom','target-metadata','metadata-target-embedded-nul-current-policy',target_embedded_nul,paths['new'],note='embedded NUL after app is accepted by current strcmp policy')
+add('custom','target-metadata','metadata-target-prefix-no-nul-rejected',target_prefix_no_nul,paths['new'],ef=0,es=0,ej=0,esi=0,ea='old',note='non-NUL padded app prefix does not exactly match target role')
+add('custom','target-metadata','metadata-target-full-field-no-nul-rejected',target_full_no_nul,paths['new'],ef=0,es=0,ej=0,esi=0,ea='old',note='full fixed-width target without terminator is rejected')
+add('custom','target-metadata','metadata-target-trailing-nonzero-current-policy',target_trailing_nonzero,paths['new'],note='trailing bytes after NUL are ignored by current strcmp policy')
+add('custom','target-metadata','metadata-target-download-current-policy',target_download,paths['new'],ef=0,es=0,ej=0,esi=0,ea='old',note='download target package is not an APP release candidate in this source flow')
+add('custom','target-metadata','metadata-target-factory-current-policy',target_factory,paths['new'],ea='old',note='factory target is a valid destination by current generic release policy; APP stays unchanged')
 add('custom','baseline','app-content-byte-exact',valid_none,paths['new'],note='APP content is compared byte-for-byte')
 add('custom','baseline','custom-bad-crc',bad_crc,paths['new'],ef=0,es=0,ej=0,esi=0,ea='old',note='bad package crc rejected')
 add('custom','baseline','custom-download-interrupt',valid_none,paths['new'],ef=0,es=0,ej=0,esi=0,ea='old',limit=43,note='truncated download rejected')

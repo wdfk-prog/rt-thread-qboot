@@ -4,12 +4,18 @@
  */
 #include "qboot_host_flash.h"
 #include <qboot_update.h>
+#include <setjmp.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 static rt_uint8_t g_host_flash[QBOOT_HOST_FLASH_SIZE]; /**< Simulated custom flash bytes. */
 static int g_jump_count;                               /**< Host jump-spy count. */
+static int g_cpu_reset_count;                          /**< Host CPU-reset spy count. */
+static jmp_buf g_boot_guard_env;                       /**< Non-local exit guard for boot-flow tests. */
+static rt_bool_t g_boot_guard_active;                  /**< Boot-flow guard activation flag. */
+static rt_bool_t g_boot_guard_stop_on_jump;            /**< Whether guarded jumps stop the boot-flow run. */
 static qboot_host_jump_trace_t g_jump_trace;           /**< Host Cortex-M jump preparation trace. */
 static rt_bool_t g_malloc_fault_enabled;               /**< rt_malloc fault enable flag. */
 static rt_uint32_t g_malloc_fault_remaining;           /**< Allocations to pass before fault. */
@@ -147,6 +153,8 @@ void qboot_host_flash_reset(void)
 #endif /* QBOOT_HOST_BACKEND_FS */
     qboot_host_fault_reset();
     qboot_host_jump_reset();
+    qboot_host_cpu_reset_reset();
+    g_boot_guard_active = RT_FALSE;
     g_flash_physical_enabled = RT_FALSE;
     g_flash_program_unit = 0u;
 }
@@ -698,6 +706,47 @@ int qboot_host_jump_count(void)
     return g_jump_count;
 }
 
+void qboot_host_cpu_reset_reset(void)
+{
+    g_cpu_reset_count = 0;
+}
+
+int qboot_host_cpu_reset_count(void)
+{
+    return g_cpu_reset_count;
+}
+
+int qboot_host_boot_guard_run(qboot_host_boot_entry_t entry, rt_bool_t stop_on_jump)
+{
+    int guard;
+
+    if (entry == RT_NULL)
+    {
+        return -1;
+    }
+    g_boot_guard_active = RT_TRUE;
+    g_boot_guard_stop_on_jump = stop_on_jump;
+    guard = setjmp(g_boot_guard_env);
+    if (guard == 0)
+    {
+        entry();
+    }
+    g_boot_guard_active = RT_FALSE;
+    return guard;
+}
+
+void qboot_host_cpu_reset(void)
+{
+    g_cpu_reset_count++;
+    if (g_boot_guard_active)
+    {
+        longjmp(g_boot_guard_env, QBOOT_HOST_BOOT_EXIT_RESET);
+    }
+
+    fprintf(stderr, "rt_hw_cpu_reset called outside boot guard\n");
+    abort();
+}
+
 #ifdef QBOOT_HOST_BACKEND_CUSTOM
 rt_err_t qbt_custom_flash_read(rt_uint32_t addr, void *buf, rt_uint32_t len)
 {
@@ -780,4 +829,8 @@ rt_err_t qbt_custom_flash_erase(rt_uint32_t addr, rt_uint32_t len)
 void qbt_jump_to_app(void)
 {
     g_jump_count++;
+    if (g_boot_guard_active && g_boot_guard_stop_on_jump)
+    {
+        longjmp(g_boot_guard_env, QBOOT_HOST_BOOT_EXIT_JUMP);
+    }
 }

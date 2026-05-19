@@ -40,6 +40,7 @@ See the detailed [Overview](docs/en/overview.md).
 - [Command Reference](docs/en/reference/command-reference.md)
 - [Workflow Reference](docs/en/reference/workflow.md)
 - [Status LED](docs/en/reference/status-led.md)
+- [Storage Backend Contract](docs/en/reference/storage-backend-contract.md)
 
 ## Recommended reading order
 

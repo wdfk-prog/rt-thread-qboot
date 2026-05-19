@@ -135,6 +135,9 @@ def build_rbl_package(raw_fw: bytes, pkg_obj: bytes, crypt: str = "none",
 
 def package_rbl(args):
     # -------- read pkg --------
+    if not args.pkg or not os.path.exists(args.pkg):
+        print("Error: --pkg is required and must exist")
+        sys.exit(1)
     with open(args.pkg, "rb") as f:
         pkg_obj = f.read()
 

@@ -24,6 +24,9 @@
 
 const qboot_header_parser_ops_t *_header_parser_ops = RT_NULL;
 const qboot_io_ops_t *_header_io_ops = RT_NULL;
+#ifdef QBOOT_CI_HOST_TEST
+static rt_bool_t g_ci_storage_register_fail; /**< Host-test forced storage registration failure flag. */
+#endif /* QBOOT_CI_HOST_TEST */
 
 #if defined(QBOOT_APP_STORE_FAL)
 #define QBT_APP_BACKEND    QBT_STORE_BACKEND_FAL
@@ -318,6 +321,18 @@ qbt_target_id_t qbt_name_to_id(const char *name)
     return QBOOT_TARGET_COUNT;
 }
 
+#ifdef QBOOT_CI_HOST_TEST
+/**
+ * @brief Force qboot_register_storage_ops() to fail in host-side tests.
+ *
+ * @param enable RT_TRUE to force failure, RT_FALSE to restore normal behavior.
+ */
+void qbt_ci_storage_register_fail_set(rt_bool_t enable)
+{
+    g_ci_storage_register_fail = enable;
+}
+#endif /* QBOOT_CI_HOST_TEST */
+
 /**
  * @brief Get target descriptor by id.
  *
@@ -337,7 +352,7 @@ const qboot_store_desc_t *qbt_target_desc(qbt_target_id_t id)
  * @brief Open target by id and optionally query size.
  *
  * @param id       Target identifier.
- * @param handle   Output opaque handle.
+ * @param handle   [out] Backend-owned handle; valid until qbt_target_close().
  * @param out_size Output total size; ignored if NULL.
  * @param flags    Open flags forwarded to the storage backend.
  *
@@ -363,7 +378,9 @@ rt_bool_t qbt_target_open(qbt_target_id_t id, void **handle, rt_uint32_t *out_si
 /**
  * @brief Close target handle opened by qbt_target_open.
  *
- * @param handle Target handle.
+ * @param handle Target handle from qbt_target_open(); RT_NULL is accepted as a
+ *               no-op. Non-NULL invalid, stale, foreign, or double-closed
+ *               handles are outside the storage-backend contract.
  *
  * @return RT_EOK on success, negative error code otherwise.
  */
@@ -449,6 +466,12 @@ rt_err_t qbt_erase_with_feed(void *handle, rt_uint32_t off, rt_uint32_t len)
  */
 rt_err_t qboot_register_storage_ops(void)
 {
+#ifdef QBOOT_CI_HOST_TEST
+    if (g_ci_storage_register_fail)
+    {
+        return -RT_ERROR;
+    }
+#endif /* QBOOT_CI_HOST_TEST */
 #if (QBT_BACKEND_COUNT == 0)
     LOG_E("No storage backend enabled.");
     return -RT_ERROR;

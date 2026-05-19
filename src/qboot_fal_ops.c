@@ -27,6 +27,10 @@
 /**
  * @brief Open FAL partition by target id.
  *
+ * @note The returned handle is backend-owned and valid only until close. Like
+ *       other qboot storage backends, FAL callbacks do not normalize non-NULL
+ *       invalid, stale, foreign, or double-closed handles.
+ *
  * @param id      Target identifier.
  * @param handle  Output partition handle.
  *
@@ -53,7 +57,8 @@ static rt_err_t qbt_fal_open(qbt_target_id_t id, void **handle, int flags)
 /**
  * @brief Close FAL partition handle.
  *
- * @param handle Partition handle.
+ * @param handle Partition handle returned by qbt_fal_open(). Other non-NULL
+ *               handles are outside the backend contract.
  *
  * @return RT_EOK on success, negative error code otherwise.
  */

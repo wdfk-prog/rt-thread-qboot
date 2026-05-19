@@ -245,11 +245,36 @@ rt_bool_t qboot_host_jump_stub_run(rt_uint32_t stack_ptr,
 /** @brief Return the recorded host Cortex-M jump preparation trace. */
 const qboot_host_jump_trace_t *qboot_host_jump_stub_trace(void);
 
+/** @brief Boot-flow guard result when APP jump stops the guarded run. */
+#define QBOOT_HOST_BOOT_EXIT_JUMP  1
+/** @brief Boot-flow guard result when CPU reset stops the guarded run. */
+#define QBOOT_HOST_BOOT_EXIT_RESET 2
+
 /** @brief Reset the host jump spy state. */
 void qboot_host_jump_reset(void);
 
 /** @brief Return the number of recorded jump calls. */
 int qboot_host_jump_count(void);
+
+/** @brief Reset the host CPU-reset spy state. */
+void qboot_host_cpu_reset_reset(void);
+
+/** @brief Return the number of recorded CPU reset calls. */
+int qboot_host_cpu_reset_count(void);
+
+/** @brief Boot-flow entry function used by qboot_host_boot_guard_run(). */
+typedef void (*qboot_host_boot_entry_t)(void);
+
+/**
+ * @brief Run a boot-flow entry under a non-local jump/reset guard.
+ *
+ * @param entry        Entry function to run.
+ * @param stop_on_jump RT_TRUE to stop at APP jump, RT_FALSE to continue until
+ *                     CPU reset or normal return.
+ * @return Zero on normal return, QBOOT_HOST_BOOT_EXIT_* after jump/reset, or
+ *         a negative value for invalid arguments.
+ */
+int qboot_host_boot_guard_run(qboot_host_boot_entry_t entry, rt_bool_t stop_on_jump);
 
 #ifdef QBOOT_HOST_BACKEND_FAL
 /** @brief Reset host FAL partition images. */
@@ -263,6 +288,14 @@ void qboot_host_fal_reset(void);
  * @return Active fd slot count tracked by the filesystem backend.
  */
 int qboot_host_fs_open_slot_count(void);
+
+/**
+ * @brief Return the current file offset for an open filesystem target.
+ *
+ * @param id Target identifier.
+ * @return Current offset, or -1 when the target has no valid open fd.
+ */
+long qboot_host_fs_current_offset(qbt_target_id_t id);
 #endif /* QBOOT_HOST_BACKEND_FS */
 
 #ifdef __cplusplus

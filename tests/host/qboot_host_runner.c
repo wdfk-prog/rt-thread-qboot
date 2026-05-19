@@ -29,7 +29,10 @@ typedef enum
     QBOOT_HOST_MODE_SIGN_BOUNDARY, /**< Run direct release-sign position tests. */
     QBOOT_HOST_MODE_REPEAT_SEQUENCE, /**< Run multi-release sequence tests in one process. */
     QBOOT_HOST_MODE_FAULT_SEQUENCE, /**< Run deterministic multi-fault replay tests. */
-    QBOOT_HOST_MODE_STALE_SIGN /**< Run copied/stale release-sign package tests. */
+    QBOOT_HOST_MODE_STALE_SIGN, /**< Run copied/stale release-sign package tests. */
+    QBOOT_HOST_MODE_MUX_CONTRACT, /**< Run mux backend dispatch contract tests. */
+    QBOOT_HOST_MODE_BOOT_FLOW, /**< Run qboot startup-flow orchestration tests. */
+    QBOOT_HOST_MODE_SHELL_CMD /**< Run qboot shell command contract tests. */
 } qboot_host_mode_t;
 
 /** @brief Parsed runner configuration. */
@@ -87,6 +90,8 @@ static void qboot_host_usage(const char *prog)
     printf("       %s --inspect-header --package RBL\n", prog);
     printf("       %s --mode update-mgr --case NAME\n", prog);
     printf("       %s --mode jump-stub|fake-flash|fs-boundary|sign-boundary --case NAME\n", prog);
+    printf("       %s --mode mux-contract --case NAME --fixture-dir DIR\n", prog);
+    printf("       %s --mode boot-flow|shell-cmd --case NAME --fixture-dir DIR\n", prog);
     printf("       %s --mode repeat-sequence|fault-sequence|stale-sign --case NAME --fixture-dir DIR\n", prog);
 }
 
@@ -2292,6 +2297,79 @@ static int qboot_host_run_fs_boundary_case(const char *case_name)
             return 1;
         }
     }
+    else if (strcmp(case_name, "fs-open-app-then-download-independent-fds") == 0)
+    {
+        void *download_handle = RT_NULL;
+        rt_uint8_t app_byte = 0xA1u;
+        rt_uint8_t download_byte = 0xD1u;
+        rt_uint8_t app_back = 0u;
+        rt_uint8_t download_back = 0u;
+
+        if (!qbt_target_open(QBOOT_TARGET_APP, &handle, &part_size,
+                             QBT_OPEN_WRITE | QBT_OPEN_READ | QBT_OPEN_CREATE | QBT_OPEN_TRUNC) ||
+            !qbt_target_open(QBOOT_TARGET_DOWNLOAD, &download_handle, &part_size,
+                             QBT_OPEN_WRITE | QBT_OPEN_READ | QBT_OPEN_CREATE | QBT_OPEN_TRUNC))
+        {
+            if (handle != RT_NULL)
+            {
+                qbt_target_close(handle);
+            }
+            if (download_handle != RT_NULL)
+            {
+                qbt_target_close(download_handle);
+            }
+            printf("QBOOT_HOST_FAIL %s open app/download\n", case_name);
+            return 1;
+        }
+        if (qboot_host_fs_open_slot_count() != 2 ||
+            _header_io_ops->write(handle, 0u, &app_byte, 1u) != RT_EOK ||
+            _header_io_ops->write(download_handle, 0u, &download_byte, 1u) != RT_EOK ||
+            _header_io_ops->read(handle, 0u, &app_back, 1u) != RT_EOK ||
+            _header_io_ops->read(download_handle, 0u, &download_back, 1u) != RT_EOK ||
+            app_back != app_byte || download_back != download_byte)
+        {
+            qbt_target_close(download_handle);
+            qbt_target_close(handle);
+            printf("QBOOT_HOST_FAIL %s fd isolation\n", case_name);
+            return 1;
+        }
+        qbt_target_close(download_handle);
+        qbt_target_close(handle);
+    }
+    else if (strcmp(case_name, "fs-size-lseek-current-position-restored") == 0)
+    {
+        rt_uint32_t size = 0u;
+        long before_size;
+        long after_size;
+
+        if (!qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size,
+                             QBT_OPEN_WRITE | QBT_OPEN_READ | QBT_OPEN_CREATE | QBT_OPEN_TRUNC))
+        {
+            printf("QBOOT_HOST_FAIL %s open size-offset\n", case_name);
+            return 1;
+        }
+        if (_header_io_ops->write(handle, 3u, data, 1u) != RT_EOK)
+        {
+            qbt_target_close(handle);
+            printf("QBOOT_HOST_FAIL %s write size-offset\n", case_name);
+            return 1;
+        }
+        before_size = qboot_host_fs_current_offset(QBOOT_TARGET_DOWNLOAD);
+        if (_header_io_ops->size(handle, &size) != RT_EOK)
+        {
+            qbt_target_close(handle);
+            printf("QBOOT_HOST_FAIL %s size query\n", case_name);
+            return 1;
+        }
+        after_size = qboot_host_fs_current_offset(QBOOT_TARGET_DOWNLOAD);
+        qbt_target_close(handle);
+        if (size != 4u || before_size != 4 || after_size != before_size)
+        {
+            printf("QBOOT_HOST_FAIL %s size=%u before=%ld after=%ld\n",
+                   case_name, (unsigned)size, before_size, after_size);
+            return 1;
+        }
+    }
     else
     {
         printf("QBOOT_HOST_FAIL unsupported fs boundary case: %s\n", case_name);
@@ -2904,6 +2982,127 @@ static int qboot_host_run_update_mgr_case(const char *case_name)
         }
         return qboot_host_expect_update_counts(case_name, QBT_UPD_STATE_WAIT, 1, 1, 0, 1);
     }
+    if (strcmp(case_name, "update-helper-write-offset-at-size-rejected") == 0 ||
+        strcmp(case_name, "update-helper-write-offset-plus-size-overflow-rejected") == 0 ||
+        strcmp(case_name, "update-helper-write-cross-end-rejected") == 0)
+    {
+        const qboot_store_desc_t *desc = qbt_target_desc(QBOOT_TARGET_DOWNLOAD);
+        rt_uint8_t payload[2] = {0xA5u, 0x5Au};
+        rt_uint32_t offset;
+        rt_uint32_t size;
+
+        if (desc == RT_NULL || desc->flash_len < 2u)
+        {
+            printf("QBOOT_HOST_FAIL %s missing download descriptor\n", case_name);
+            return 1;
+        }
+        if (strcmp(case_name, "update-helper-write-offset-at-size-rejected") == 0)
+        {
+            offset = desc->flash_len;
+            size = 1u;
+        }
+        else if (strcmp(case_name, "update-helper-write-offset-plus-size-overflow-rejected") == 0)
+        {
+            offset = 0xFFFFFFFFu;
+            size = 2u;
+        }
+        else
+        {
+            offset = desc->flash_len - 1u;
+            size = 2u;
+        }
+
+        qboot_host_flash_reset();
+        qbt_update_mgr_register(&s_update_ops, 1000u, 1000u);
+        if (!qbt_update_mgr_download_begin())
+        {
+            printf("QBOOT_HOST_FAIL %s begin helper download\n", case_name);
+            return 1;
+        }
+        if (qbt_update_mgr_download_write(offset, payload, size))
+        {
+            printf("QBOOT_HOST_FAIL %s invalid helper write accepted\n", case_name);
+            (void)qbt_update_mgr_download_finish(RT_FALSE);
+            return 1;
+        }
+        if (qbt_update_mgr_download_write(0u, payload, 1u))
+        {
+            printf("QBOOT_HOST_FAIL %s helper write accepted after failed write cleanup\n", case_name);
+            return 1;
+        }
+        return qboot_host_expect_update_counts(case_name, QBT_UPD_STATE_WAIT, 1, 1, 0, 1);
+    }
+    if (strcmp(case_name, "update-helper-write-after-finish-rejected") == 0)
+    {
+        rt_uint8_t payload[2] = {0x33u, 0x44u};
+
+        qboot_host_flash_reset();
+        qbt_update_mgr_register(&s_update_ops, 1000u, 1000u);
+        if (!qbt_update_mgr_download_begin())
+        {
+            printf("QBOOT_HOST_FAIL %s begin helper download\n", case_name);
+            return 1;
+        }
+        if (!qbt_update_mgr_download_write(0u, payload, 1u) ||
+            qbt_update_mgr_download_finish(RT_TRUE) != RT_EOK)
+        {
+            printf("QBOOT_HOST_FAIL %s finish helper download\n", case_name);
+            return 1;
+        }
+        if (qbt_update_mgr_download_write(0u, payload, 1u))
+        {
+            printf("QBOOT_HOST_FAIL %s write accepted after finish\n", case_name);
+            return 1;
+        }
+        return qboot_host_expect_update_counts(case_name, QBT_UPD_STATE_READY, 1, 1, 1, 0);
+    }
+    if (strcmp(case_name, "update-helper-write-after-abort-rejected") == 0)
+    {
+        rt_uint8_t payload[2] = {0x55u, 0x66u};
+
+        qboot_host_flash_reset();
+        qbt_update_mgr_register(&s_update_ops, 1000u, 1000u);
+        if (!qbt_update_mgr_download_begin())
+        {
+            printf("QBOOT_HOST_FAIL %s begin helper download\n", case_name);
+            return 1;
+        }
+        qbt_update_mgr_on_abort();
+        if (qbt_update_mgr_download_write(0u, payload, 1u))
+        {
+            printf("QBOOT_HOST_FAIL %s write accepted after abort\n", case_name);
+            return 1;
+        }
+        return qboot_host_expect_update_counts(case_name, QBT_UPD_STATE_WAIT, 1, 1, 0, 0);
+    }
+    if (strcmp(case_name, "update-helper-begin-erase-fail-cleans-handle") == 0 ||
+        strcmp(case_name, "update-helper-begin-open-fail-keeps-idle") == 0)
+    {
+        rt_uint8_t payload = 0x99u;
+
+        qboot_host_flash_reset();
+        qbt_update_mgr_register(&s_update_ops, 1000u, 1000u);
+        if (strcmp(case_name, "update-helper-begin-erase-fail-cleans-handle") == 0)
+        {
+            qboot_host_fault_set(QBOOT_HOST_FAULT_ERASE, QBOOT_HOST_FAULT_TARGET_DOWNLOAD, 0u);
+        }
+        else
+        {
+            qboot_host_fault_set(QBOOT_HOST_FAULT_OPEN, QBOOT_HOST_FAULT_TARGET_DOWNLOAD, 0u);
+        }
+        if (qbt_update_mgr_download_begin())
+        {
+            printf("QBOOT_HOST_FAIL %s begin helper unexpectedly succeeded\n", case_name);
+            (void)qbt_update_mgr_download_finish(RT_FALSE);
+            return 1;
+        }
+        if (qbt_update_mgr_download_write(0u, &payload, 1u))
+        {
+            printf("QBOOT_HOST_FAIL %s inactive helper session accepted write\n", case_name);
+            return 1;
+        }
+        return qboot_host_expect_update_counts(case_name, QBT_UPD_STATE_WAIT, 0, 0, 0, 0);
+    }
     if (strcmp(case_name, "update-helper-backend-size-smoke") == 0)
     {
         rt_uint8_t payload[37];
@@ -3331,6 +3530,469 @@ static int qboot_host_run_update_mgr_case(const char *case_name)
     return 2;
 }
 
+
+
+#if (QBT_BACKEND_COUNT > 1)
+/**
+ * @brief Run one direct mux-backend dispatch contract case.
+ *
+ * @param case_name   Mux contract case name.
+ * @param fixture_dir Directory that contains generated host fixtures.
+ * @return 0 on pass, non-zero on failure.
+ */
+static int qboot_host_run_mux_contract_case(const char *case_name,
+                                            const char *fixture_dir)
+{
+    const qboot_store_desc_t *app_desc = qbt_target_desc(QBOOT_TARGET_APP);
+    const qboot_store_desc_t *download_desc = qbt_target_desc(QBOOT_TARGET_DOWNLOAD);
+    const qboot_store_desc_t *factory_desc = qbt_target_desc(QBOOT_TARGET_FACTORY);
+    rt_uint8_t payload[4] = {0x4Du, 0x55u, 0x58u, 0x21u};
+    rt_uint8_t readback[4] = {0};
+    void *handle = RT_NULL;
+    rt_uint32_t part_size = 0u;
+    fw_info_t info = {0};
+
+    qboot_host_flash_reset();
+    if (app_desc == RT_NULL || download_desc == RT_NULL || factory_desc == RT_NULL)
+    {
+        printf("QBOOT_HOST_FAIL %s missing target descriptor\n", case_name);
+        return 1;
+    }
+
+    if (strcmp(case_name, "mux-name-to-id-all-roles") == 0)
+    {
+        if (qbt_name_to_id(app_desc->role_name) != QBOOT_TARGET_APP ||
+            qbt_name_to_id(download_desc->role_name) != QBOOT_TARGET_DOWNLOAD ||
+            qbt_name_to_id(factory_desc->role_name) != QBOOT_TARGET_FACTORY)
+        {
+            printf("QBOOT_HOST_FAIL %s role name mapping\n", case_name);
+            return 1;
+        }
+    }
+    else if (strcmp(case_name, "mux-open-app-download-factory-dispatches-correct-backend") == 0)
+    {
+        if (app_desc->backend != QBT_STORE_BACKEND_CUSTOM ||
+            download_desc->backend != QBT_STORE_BACKEND_FAL ||
+            factory_desc->backend != QBT_STORE_BACKEND_FS)
+        {
+            printf("QBOOT_HOST_FAIL %s backend map app=%d download=%d factory=%d\n",
+                   case_name, app_desc->backend, download_desc->backend,
+                   factory_desc->backend);
+            return 1;
+        }
+        if (!qbt_target_open(QBOOT_TARGET_APP, &handle, &part_size,
+                             QBT_OPEN_WRITE | QBT_OPEN_CREATE) ||
+            _header_io_ops->write(handle, 0u, payload, sizeof(payload)) != RT_EOK)
+        {
+            printf("QBOOT_HOST_FAIL %s app custom dispatch\n", case_name);
+            return 1;
+        }
+        qbt_target_close(handle);
+        handle = RT_NULL;
+        if (!qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size,
+                             QBT_OPEN_WRITE | QBT_OPEN_READ | QBT_OPEN_CREATE) ||
+            _header_io_ops->write(handle, 0u, payload, sizeof(payload)) != RT_EOK ||
+            _header_io_ops->read(handle, 0u, readback, sizeof(readback)) != RT_EOK ||
+            rt_memcmp(payload, readback, sizeof(payload)) != 0)
+        {
+            if (handle != RT_NULL)
+            {
+                qbt_target_close(handle);
+            }
+            printf("QBOOT_HOST_FAIL %s download fal dispatch\n", case_name);
+            return 1;
+        }
+        qbt_target_close(handle);
+        handle = RT_NULL;
+        if (!qbt_target_open(QBOOT_TARGET_FACTORY, &handle, &part_size,
+                             QBT_OPEN_WRITE | QBT_OPEN_READ | QBT_OPEN_CREATE | QBT_OPEN_TRUNC) ||
+            _header_io_ops->write(handle, 0u, payload, sizeof(payload)) != RT_EOK ||
+            _header_io_ops->read(handle, 0u, readback, sizeof(readback)) != RT_EOK ||
+            rt_memcmp(payload, readback, sizeof(payload)) != 0)
+        {
+            if (handle != RT_NULL)
+            {
+                qbt_target_close(handle);
+            }
+            printf("QBOOT_HOST_FAIL %s factory fs dispatch\n", case_name);
+            return 1;
+        }
+        qbt_target_close(handle);
+    }
+    else if (strcmp(case_name, "mux-sign-write-goes-to-source-backend-only") == 0)
+    {
+        if (!qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size,
+                             QBT_OPEN_WRITE | QBT_OPEN_READ | QBT_OPEN_CREATE))
+        {
+            printf("QBOOT_HOST_FAIL %s open download\n", case_name);
+            return 1;
+        }
+        qboot_host_make_sign_info(&info, 0u);
+        if (!qbt_release_sign_write(handle, download_desc->role_name, &info) ||
+            !qbt_release_sign_check(handle, download_desc->role_name, &info))
+        {
+            qbt_target_close(handle);
+            printf("QBOOT_HOST_FAIL %s mux sign dispatch\n", case_name);
+            return 1;
+        }
+        qbt_target_close(handle);
+    }
+    else if (strcmp(case_name, "mux-destination-write-failure-does-not-touch-source") == 0)
+    {
+        if (!qboot_host_flash_load(QBOOT_TARGET_DOWNLOAD, payload, sizeof(payload)))
+        {
+            printf("QBOOT_HOST_FAIL %s load source\n", case_name);
+            return 1;
+        }
+        qboot_host_fault_set(QBOOT_HOST_FAULT_WRITE, QBOOT_HOST_FAULT_TARGET_APP, 0u);
+        if (!qbt_target_open(QBOOT_TARGET_APP, &handle, &part_size,
+                             QBT_OPEN_WRITE | QBT_OPEN_CREATE) ||
+            _header_io_ops->write(handle, 0u, payload, sizeof(payload)) == RT_EOK)
+        {
+            if (handle != RT_NULL)
+            {
+                qbt_target_close(handle);
+            }
+            printf("QBOOT_HOST_FAIL %s destination write fault\n", case_name);
+            return 1;
+        }
+        qbt_target_close(handle);
+        if (!qboot_host_flash_read_target(QBOOT_TARGET_DOWNLOAD, 0u,
+                                          readback, sizeof(readback)) ||
+            rt_memcmp(payload, readback, sizeof(payload)) != 0)
+        {
+            printf("QBOOT_HOST_FAIL %s source changed\n", case_name);
+            return 1;
+        }
+    }
+    else if (strcmp(case_name, "mux-release-download-to-custom-app-wrapper-success") == 0)
+    {
+        char pkg_path[512];
+        char old_app_path[512];
+        char new_app_path[512];
+        rt_uint8_t *pkg = RT_NULL;
+        rt_uint8_t *old_app = RT_NULL;
+        rt_uint8_t *new_app = RT_NULL;
+        rt_uint32_t pkg_size = 0u;
+        rt_uint32_t old_size = 0u;
+        rt_uint32_t new_size = 0u;
+        int result = 1;
+
+        if (!qboot_host_fixture_path(pkg_path, sizeof(pkg_path), fixture_dir,
+                                     "custom-none-full.rbl") ||
+            !qboot_host_fixture_path(old_app_path, sizeof(old_app_path), fixture_dir,
+                                     "old_app.bin") ||
+            !qboot_host_fixture_path(new_app_path, sizeof(new_app_path), fixture_dir,
+                                     "new_app.bin") ||
+            !qboot_host_read_file(pkg_path, &pkg, &pkg_size) ||
+            !qboot_host_read_file(old_app_path, &old_app, &old_size) ||
+            !qboot_host_read_file(new_app_path, &new_app, &new_size))
+        {
+            printf("QBOOT_HOST_FAIL %s fixture read\n", case_name);
+            goto mux_release_cleanup;
+        }
+        if (!qboot_host_flash_load(QBOOT_TARGET_APP, old_app, old_size) ||
+            !qboot_host_flash_load(QBOOT_TARGET_DOWNLOAD, pkg, pkg_size) ||
+            !qbt_ci_release_from_target(QBOOT_TARGET_DOWNLOAD, RT_FALSE) ||
+            !qboot_host_expect_target(QBOOT_TARGET_APP, new_app, new_size))
+        {
+            printf("QBOOT_HOST_FAIL %s release wrapper result\n", case_name);
+            goto mux_release_cleanup;
+        }
+        result = 0;
+
+mux_release_cleanup:
+        free(pkg);
+        free(old_app);
+        free(new_app);
+        if (result != 0)
+        {
+            return result;
+        }
+    }
+    else
+    {
+        printf("QBOOT_HOST_FAIL unsupported mux contract case: %s\n", case_name);
+        return 2;
+    }
+
+    printf("QBOOT_HOST_CASE_PASS %s mux-contract=1\n", case_name);
+    return 0;
+}
+#else
+static int qboot_host_run_mux_contract_case(const char *case_name,
+                                            const char *fixture_dir)
+{
+    RT_UNUSED(case_name);
+    RT_UNUSED(fixture_dir);
+    return 2;
+}
+#endif /* QBT_BACKEND_COUNT > 1 */
+
+/**
+ * @brief Build a fixture path and read the complete file.
+ *
+ * @param fixture_dir Fixture directory.
+ * @param name        Fixture file name.
+ * @param data        Output file buffer.
+ * @param size        Output file size.
+ * @return RT_TRUE on success, RT_FALSE otherwise.
+ */
+static rt_bool_t qboot_host_read_fixture(const char *fixture_dir,
+                                         const char *name,
+                                         rt_uint8_t **data,
+                                         rt_uint32_t *size)
+{
+    char path[512];
+
+    if (!qboot_host_fixture_path(path, sizeof(path), fixture_dir, name))
+    {
+        return RT_FALSE;
+    }
+    return qboot_host_read_file(path, data, size);
+}
+
+/**
+ * @brief Run qbt_ci_run_boot_once() under the host jump/reset guard.
+ *
+ * @param stop_on_jump RT_TRUE to stop at first APP jump, RT_FALSE to continue
+ *                     until CPU reset or function return.
+ * @return Guard exit code: 0, QBOOT_HOST_BOOT_EXIT_JUMP, or
+ *         QBOOT_HOST_BOOT_EXIT_RESET.
+ */
+static int qboot_host_run_guarded_boot(rt_bool_t stop_on_jump)
+{
+    return qboot_host_boot_guard_run(qbt_ci_run_boot_once, stop_on_jump);
+}
+
+/**
+ * @brief Validate one named qboot startup flow case.
+ *
+ * @param case_name   Test case name.
+ * @param fixture_dir Directory that contains generated host fixtures.
+ * @return 0 on pass, non-zero on failure.
+ */
+static int qboot_host_run_boot_flow_case(const char *case_name,
+                                         const char *fixture_dir)
+{
+    rt_uint8_t *pkg = RT_NULL;
+    rt_uint8_t *old_app = RT_NULL;
+    rt_uint8_t *new_app = RT_NULL;
+    rt_uint32_t pkg_size = 0u;
+    rt_uint32_t old_size = 0u;
+    rt_uint32_t new_size = 0u;
+    int exit_code = 1;
+    int guard = 0;
+
+    if (!qboot_host_read_fixture(fixture_dir, "custom-none-full.rbl", &pkg, &pkg_size) ||
+        !qboot_host_read_fixture(fixture_dir, "old_app.bin", &old_app, &old_size) ||
+        !qboot_host_read_fixture(fixture_dir, "new_app.bin", &new_app, &new_size))
+    {
+        printf("QBOOT_HOST_FAIL %s read base fixtures\n", case_name);
+        goto cleanup;
+    }
+
+    qboot_host_flash_reset();
+
+    if (strcmp(case_name, "boot-flow-valid-download-releases-and-jumps-once") == 0)
+    {
+        if (!qboot_host_flash_load(QBOOT_TARGET_APP, old_app, old_size) ||
+            !qboot_host_flash_load(QBOOT_TARGET_DOWNLOAD, pkg, pkg_size))
+        {
+            printf("QBOOT_HOST_FAIL %s setup\n", case_name);
+            goto cleanup;
+        }
+        guard = qboot_host_run_guarded_boot(RT_TRUE);
+        if (guard != QBOOT_HOST_BOOT_EXIT_JUMP || qboot_host_jump_count() != 1 ||
+            qboot_host_cpu_reset_count() != 0 || !qboot_host_download_has_release_sign() ||
+            !qboot_host_expect_target(QBOOT_TARGET_APP, new_app, new_size))
+        {
+            printf("QBOOT_HOST_FAIL %s guard=%d jump=%d reset=%d sign=%d\n",
+                   case_name, guard, qboot_host_jump_count(),
+                   qboot_host_cpu_reset_count(), qboot_host_download_has_release_sign());
+            goto cleanup;
+        }
+    }
+    else if (strcmp(case_name, "boot-flow-storage-register-fail-no-jump") == 0)
+    {
+        qbt_ci_storage_register_fail_set(RT_TRUE);
+        guard = qboot_host_run_guarded_boot(RT_FALSE);
+        qbt_ci_storage_register_fail_set(RT_FALSE);
+        if (guard != QBOOT_HOST_BOOT_EXIT_RESET || qboot_host_jump_count() != 0 ||
+            qboot_host_cpu_reset_count() != 1)
+        {
+            printf("QBOOT_HOST_FAIL %s guard=%d jump=%d reset=%d\n",
+                   case_name, guard, qboot_host_jump_count(),
+                   qboot_host_cpu_reset_count());
+            goto cleanup;
+        }
+    }
+    else
+    {
+        printf("QBOOT_HOST_FAIL unsupported boot-flow case: %s\n", case_name);
+        exit_code = 2;
+        goto cleanup;
+    }
+
+    printf("QBOOT_HOST_CASE_PASS %s boot-flow guard=%d jump=%d reset=%d\n",
+           case_name, guard, qboot_host_jump_count(), qboot_host_cpu_reset_count());
+    exit_code = 0;
+
+cleanup:
+    qbt_ci_storage_register_fail_set(RT_FALSE);
+    free(pkg);
+    free(old_app);
+    free(new_app);
+    return exit_code;
+}
+
+/**
+ * @brief Run one named qboot shell-command host test.
+ *
+ * @param case_name   Test case name.
+ * @param fixture_dir Directory that contains generated host fixtures.
+ * @return 0 on pass, non-zero on failure.
+ */
+static int qboot_host_run_shell_cmd_case(const char *case_name,
+                                         const char *fixture_dir)
+{
+    rt_uint8_t *pkg = RT_NULL;
+    rt_uint8_t *old_app = RT_NULL;
+    rt_uint8_t *new_app = RT_NULL;
+    rt_uint32_t pkg_size = 0u;
+    rt_uint32_t old_size = 0u;
+    rt_uint32_t new_size = 0u;
+    int exit_code = 1;
+    char *usage_argv[] = { "qboot" };
+    char *release_argv[] = { "qboot", "release", "download" };
+    char *bad_release_argv[] = { "qboot", "release", "missing" };
+    char *clone_argv[] = { "qboot", "clone", "download", "factory" };
+    char *verify_argv[] = { "qboot", "verify", "app" };
+    char *del_argv[] = { "qboot", "del", "download" };
+    char *jump_argv[] = { "qboot", "jump" };
+    rt_uint8_t ff = 0u;
+
+    if (!qboot_host_read_fixture(fixture_dir, "custom-none-full.rbl", &pkg, &pkg_size) ||
+        !qboot_host_read_fixture(fixture_dir, "old_app.bin", &old_app, &old_size) ||
+        !qboot_host_read_fixture(fixture_dir, "new_app.bin", &new_app, &new_size))
+    {
+        printf("QBOOT_HOST_FAIL %s read fixtures\n", case_name);
+        goto cleanup;
+    }
+
+    qboot_host_flash_reset();
+
+    if (strcmp(case_name, "shell-cmd-usage-no-args") == 0)
+    {
+        qbt_ci_shell_cmd(1u, usage_argv);
+        if (qboot_host_jump_count() != 0 || qboot_host_cpu_reset_count() != 0)
+        {
+            printf("QBOOT_HOST_FAIL %s side effect\n", case_name);
+            goto cleanup;
+        }
+    }
+    else if (strcmp(case_name, "shell-cmd-release-download-success") == 0)
+    {
+        if (!qboot_host_flash_load(QBOOT_TARGET_APP, old_app, old_size) ||
+            !qboot_host_flash_load(QBOOT_TARGET_DOWNLOAD, pkg, pkg_size))
+        {
+            printf("QBOOT_HOST_FAIL %s setup\n", case_name);
+            goto cleanup;
+        }
+        qbt_ci_shell_cmd(3u, release_argv);
+        if (!qboot_host_download_has_release_sign() ||
+            !qboot_host_expect_target(QBOOT_TARGET_APP, new_app, new_size))
+        {
+            printf("QBOOT_HOST_FAIL %s release side effect\n", case_name);
+            goto cleanup;
+        }
+    }
+    else if (strcmp(case_name, "shell-cmd-release-invalid-part-rejected") == 0)
+    {
+        if (!qboot_host_flash_load(QBOOT_TARGET_APP, old_app, old_size))
+        {
+            printf("QBOOT_HOST_FAIL %s setup\n", case_name);
+            goto cleanup;
+        }
+        qbt_ci_shell_cmd(3u, bad_release_argv);
+        if (!qboot_host_expect_target(QBOOT_TARGET_APP, old_app, old_size) ||
+            qboot_host_download_has_release_sign() || qboot_host_jump_count() != 0)
+        {
+            printf("QBOOT_HOST_FAIL %s invalid release changed state\n", case_name);
+            goto cleanup;
+        }
+    }
+    else if (strcmp(case_name, "shell-cmd-clone-download-to-factory-byte-exact") == 0)
+    {
+        if (!qboot_host_flash_load(QBOOT_TARGET_DOWNLOAD, pkg, pkg_size))
+        {
+            printf("QBOOT_HOST_FAIL %s setup\n", case_name);
+            goto cleanup;
+        }
+        qbt_ci_shell_cmd(4u, clone_argv);
+        if (!qboot_host_expect_target(QBOOT_TARGET_FACTORY, pkg, pkg_size))
+        {
+            printf("QBOOT_HOST_FAIL %s clone mismatch\n", case_name);
+            goto cleanup;
+        }
+    }
+    else if (strcmp(case_name, "shell-cmd-verify-corrupt-app-rejected") == 0)
+    {
+        if (!qboot_host_flash_load(QBOOT_TARGET_APP, new_app, new_size) ||
+            !qboot_host_corrupt_target_byte(QBOOT_TARGET_APP, 0u))
+        {
+            printf("QBOOT_HOST_FAIL %s setup\n", case_name);
+            goto cleanup;
+        }
+        qbt_ci_shell_cmd(3u, verify_argv);
+        if (qboot_host_jump_count() != 0 || qboot_host_cpu_reset_count() != 0)
+        {
+            printf("QBOOT_HOST_FAIL %s verify side effect\n", case_name);
+            goto cleanup;
+        }
+    }
+    else if (strcmp(case_name, "shell-cmd-del-download-clears-package") == 0)
+    {
+        if (!qboot_host_flash_load(QBOOT_TARGET_DOWNLOAD, pkg, pkg_size))
+        {
+            printf("QBOOT_HOST_FAIL %s setup\n", case_name);
+            goto cleanup;
+        }
+        qbt_ci_shell_cmd(3u, del_argv);
+        if (!qboot_host_flash_read_target(QBOOT_TARGET_DOWNLOAD, 0u, &ff, 1u) || ff != 0xFFu)
+        {
+            printf("QBOOT_HOST_FAIL %s delete did not erase\n", case_name);
+            goto cleanup;
+        }
+    }
+    else if (strcmp(case_name, "shell-cmd-jump-current-policy") == 0)
+    {
+        qbt_ci_shell_cmd(2u, jump_argv);
+        if (qboot_host_jump_count() != 1 || qboot_host_cpu_reset_count() != 0)
+        {
+            printf("QBOOT_HOST_FAIL %s jump=%d reset=%d\n", case_name,
+                   qboot_host_jump_count(), qboot_host_cpu_reset_count());
+            goto cleanup;
+        }
+    }
+    else
+    {
+        printf("QBOOT_HOST_FAIL unsupported shell command case: %s\n", case_name);
+        exit_code = 2;
+        goto cleanup;
+    }
+
+    printf("QBOOT_HOST_CASE_PASS %s shell-cmd jump=%d reset=%d\n",
+           case_name, qboot_host_jump_count(), qboot_host_cpu_reset_count());
+    exit_code = 0;
+
+cleanup:
+    free(pkg);
+    free(old_app);
+    free(new_app);
+    return exit_code;
+}
+
 static rt_bool_t qboot_host_parse_args(int argc, char **argv, qboot_host_args_t *args)
 {
     qboot_host_fault_target_t fault_target;
@@ -3359,6 +4021,9 @@ static rt_bool_t qboot_host_parse_args(int argc, char **argv, qboot_host_args_t 
             else if (strcmp(opt, "repeat-sequence") == 0) { args->mode = QBOOT_HOST_MODE_REPEAT_SEQUENCE; }
             else if (strcmp(opt, "fault-sequence") == 0) { args->mode = QBOOT_HOST_MODE_FAULT_SEQUENCE; }
             else if (strcmp(opt, "stale-sign") == 0) { args->mode = QBOOT_HOST_MODE_STALE_SIGN; }
+            else if (strcmp(opt, "mux-contract") == 0) { args->mode = QBOOT_HOST_MODE_MUX_CONTRACT; }
+            else if (strcmp(opt, "boot-flow") == 0) { args->mode = QBOOT_HOST_MODE_BOOT_FLOW; }
+            else if (strcmp(opt, "shell-cmd") == 0) { args->mode = QBOOT_HOST_MODE_SHELL_CMD; }
             else { return RT_FALSE; }
         }
         else if (strcmp(opt, "--inspect") == 0) { args->inspect = RT_TRUE; }
@@ -3401,7 +4066,10 @@ static rt_bool_t qboot_host_parse_args(int argc, char **argv, qboot_host_args_t 
         args->mode == QBOOT_HOST_MODE_SIGN_BOUNDARY ||
         args->mode == QBOOT_HOST_MODE_REPEAT_SEQUENCE ||
         args->mode == QBOOT_HOST_MODE_FAULT_SEQUENCE ||
-        args->mode == QBOOT_HOST_MODE_STALE_SIGN)
+        args->mode == QBOOT_HOST_MODE_STALE_SIGN ||
+        args->mode == QBOOT_HOST_MODE_MUX_CONTRACT ||
+        args->mode == QBOOT_HOST_MODE_BOOT_FLOW ||
+        args->mode == QBOOT_HOST_MODE_SHELL_CMD)
     {
         return RT_TRUE;
     }
@@ -3473,6 +4141,18 @@ int main(int argc, char **argv)
     if (args.mode == QBOOT_HOST_MODE_STALE_SIGN)
     {
         return qboot_host_run_stale_sign_case(args.case_name, args.fixture_dir);
+    }
+    if (args.mode == QBOOT_HOST_MODE_MUX_CONTRACT)
+    {
+        return qboot_host_run_mux_contract_case(args.case_name, args.fixture_dir);
+    }
+    if (args.mode == QBOOT_HOST_MODE_BOOT_FLOW)
+    {
+        return qboot_host_run_boot_flow_case(args.case_name, args.fixture_dir);
+    }
+    if (args.mode == QBOOT_HOST_MODE_SHELL_CMD)
+    {
+        return qboot_host_run_shell_cmd_case(args.case_name, args.fixture_dir);
     }
     if (args.inspect)
     {
