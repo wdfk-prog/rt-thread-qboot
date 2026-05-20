@@ -21,6 +21,7 @@ OUT_DIR = Path(
     os.environ.get("QBOOT_PACKAGE_TOOL_TEST_OUT", REPO_ROOT / "_ci" / "package-tool-test")
 )
 HEADER_SIZE = 96
+RUN_CURRENT_POLICY_TESTS = os.environ.get("QBOOT_RUN_CURRENT_POLICY_TESTS") == "1"
 
 CRYPT_ALGOS = {
     "none": 0x0000,
@@ -249,7 +250,7 @@ def expect_system_exit(code: int, func, *args) -> str:
 
 
 def check_error_paths(module, raw_path: Path, pkg_path: Path) -> None:
-    """Verify intentional failure paths return non-zero status."""
+    """Verify intentional failure paths return stable non-zero status and diagnostics."""
     cases = [
         ("invalid-crypt", "bad", "none", "crc", "invalid --crypt", 2),
         ("invalid-cmprs", "none", "bad", "crc", "invalid --cmprs", 2),
@@ -296,12 +297,16 @@ def check_field_boundary_current_policy(module, raw_path: Path, pkg_path: Path) 
     args.product = "ci-product\0evil-overlength-field"
 
     run_package(module, args)
-    raw_fields = parse_header_raw_fields(output.read_bytes())
+    data = output.read_bytes()
+    raw_fields = parse_header_raw_fields(data)
 
+    header = parse_header(data)
     assert raw_fields["part"] == b"app-overlength-n"
     assert raw_fields["version"] == b"v" + b"9" * 23
-    assert raw_fields["product"].startswith(b"ci-product\0evil")
     assert raw_fields["product"] == b"ci-product\0evil-overleng"
+    assert header["magic"] == b"RBL\0"
+    assert header["pkg_crc"] == crc32(pkg_path.read_bytes())
+    assert header["raw_crc"] == crc32(raw_path.read_bytes())
 
 
 def write_summary() -> None:
@@ -326,8 +331,8 @@ def write_summary() -> None:
         "- Covered algo2 values: none, crc\n"
         "- Verified fields: magic, algo, algo2, timestamp, part, version, product, "
         "pkg/raw CRC, pkg/raw size, header CRC, and output payload bytes\n"
-        "- Verified error paths: invalid --crypt, invalid --cmprs, "
-        "invalid --algo2, AES/XOR with hpatchlite, missing --pkg, missing --raw\n\n"
+        "- Verified error paths: invalid algorithm selections and missing inputs "
+        "reject without output artifacts\n\n"
         "## Requested smoke cases\n\n"
         + "\n".join(
             f"- crypt={row['crypt']}, cmprs={row['cmprs']}, algo2={row['algo2']} -> {row['output']}"
@@ -353,7 +358,8 @@ def main() -> int:
     check_default_package(module, raw_path, pkg_path, raw, pkg)
     check_algorithm_matrix(module, raw_path, pkg_path, raw, pkg)
     check_error_paths(module, raw_path, pkg_path)
-    check_field_boundary_current_policy(module, raw_path, pkg_path)
+    if RUN_CURRENT_POLICY_TESTS:
+        check_field_boundary_current_policy(module, raw_path, pkg_path)
     write_summary()
 
     print("package_tool CI tests passed")

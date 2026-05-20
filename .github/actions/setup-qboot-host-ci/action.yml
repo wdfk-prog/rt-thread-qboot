@@ -1,0 +1,19 @@
+name: Set up qboot host CI dependencies
+description: Install host-side qboot simulation dependencies.
+runs:
+  using: composite
+  steps:
+    - name: Install host simulation dependencies
+      shell: bash
+      run: |
+        sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+          -o Acquire::Retries=5 \
+          -o Acquire::http::Timeout=30 \
+          -o Acquire::https::Timeout=30
+        timeout 20m sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+          -o Acquire::Retries=5 \
+          -o Acquire::http::Timeout=30 \
+          -o Acquire::https::Timeout=30 \
+          build-essential \
+          python3 \
+          zlib1g-dev

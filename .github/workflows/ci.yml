@@ -37,57 +37,7 @@ jobs:
 
       - name: Check required package files
         shell: bash
-        run: |
-          set -euo pipefail
-          test -f Kconfig
-          test -f SConscript
-          test -d inc
-          test -d src
-          test -d algorithm
-          test -d platform
-          test -f .github/ci/qboot/profile-list.txt
-          test -d .github/ci/qboot/profiles
-          test -f .github/ci/qboot/prepare-stm32f407-base.sh
-          test -f .github/ci/qboot/requirements-stm32.txt
-          test -f .github/actions/setup-stm32-qboot-ci/action.yml
-          test -f .github/ci/qboot/build-stm32f407-profile.sh
-          test -f .github/ci/qboot/build-stm32f407-profiles.sh
-          test -f .github/ci/qboot/check-line-endings.sh
-          test -f .github/ci/qboot/build-host-sim.sh
-          test -f .github/ci/qboot/run-host-sim.sh
-          test -f .github/ci/qboot/generate-host-fixtures.py
-          test -f .github/ci/qboot/run-config-matrix.sh
-          test -f .github/ci/qboot/run-host-sanitizer.sh
-          test -f .github/ci/qboot/run-host-static-checks.sh
-          test -f .github/ci/qboot/prepare-host-codec-packages.sh
-          test -f .github/ci/qboot/run-host-runtime-codecs.sh
-          test -f .github/ci/qboot/test-board-smoke-parser.sh
-          test -f .github/ci/qboot/run-board-smoke-template.sh
-          test -f .github/ci/qboot/run-host-extended-coverage.sh
-          test -f .github/ci/qboot/run-rtthread-scons-matrix.sh
-          test -f tools/package_tool.py
-          test -f tests/test_package_tool.py
-          test -f tests/test_package_tool_web.py
-          test -f tests/host/qboot_host_runner.c
-          test -f tests/host/qboot_host_flash.c
-          test -f tests/host/qboot_host_flash.h
-          test -f tests/host/qboot_host_crc32.c
-          test -f tests/host/qboot_host_tinycrypt.c
-          test -f tests/host/qboot_host_hpatchlite.c
-          test -f tests/host/stubs/dfs_romfs.h
-          test -f tests/host/stubs/dfs_file.h
-          test -f tests/host/stubs/dfs_fs.h
-          test -f tests/host/stubs/fal.h
-          test -f tests/host/qboot_host_fal.c
-          test -f tests/host/stubs/rtthread.h
-          test -f tests/host/stubs/rtconfig.h
-          test -f tests/host/stubs/rtdbg.h
-          test -f tests/host/stubs/crc32.h
-          test -f tests/host/stubs/tinycrypt.h
-          test -f docs/package-tool/index.html
-          test -f docs/package-tool/app.js
-          test -f docs/package-tool/style.css
-          test -f docs/package-tool/package_tool_web.py
+        run: bash .github/ci/qboot/check-package-files.sh
 
       - name: Check SConscript syntax
         shell: bash
@@ -106,12 +56,7 @@ jobs:
 
       - name: Check package tool syntax
         shell: bash
-        run: |
-          python3 -S -m py_compile \
-            tools/package_tool.py \
-            docs/package-tool/package_tool_web.py \
-            tests/test_package_tool.py \
-            tests/test_package_tool_web.py
+        run: bash .github/ci/qboot/check-package-tool-syntax.sh
 
       - name: Check package tool web JavaScript syntax
         shell: bash
@@ -137,49 +82,11 @@ jobs:
 
       - name: Check profile fragments
         shell: bash
-        run: |
-          set -euo pipefail
-          while IFS= read -r profile; do
-            case "$profile" in
-              ''|'#'*) continue ;;
-            esac
-            test -f ".github/ci/qboot/profiles/$profile.h"
-          done < .github/ci/qboot/profile-list.txt
+        run: bash .github/ci/qboot/check-profile-fragments.sh
 
       - name: Check Kconfig block balance
         shell: bash
-        run: |
-          python3 -S - <<'PY'
-          from pathlib import Path
-
-          stack = []
-          pairs = {
-              'if': 'endif',
-              'menu': 'endmenu',
-              'choice': 'endchoice',
-          }
-          closers = {value: key for key, value in pairs.items()}
-
-          for lineno, raw in enumerate(Path('Kconfig').read_text(encoding='utf-8').splitlines(), 1):
-              line = raw.strip()
-              if not line or line.startswith('#'):
-                  continue
-              keyword = line.split()[0]
-              if keyword in pairs:
-                  stack.append((keyword, lineno))
-              elif keyword in closers:
-                  if not stack:
-                      raise SystemExit(f'Kconfig:{lineno}: unmatched {keyword}')
-                  opener, opener_lineno = stack.pop()
-                  if opener != closers[keyword]:
-                      raise SystemExit(
-                          f'Kconfig:{lineno}: {keyword} closes {opener} from line {opener_lineno}'
-                      )
-
-          if stack:
-              opener, opener_lineno = stack[-1]
-              raise SystemExit(f'Kconfig:{opener_lineno}: unclosed {opener}')
-          PY
+        run: python3 -S .github/ci/qboot/check-kconfig-balance.py
 
 
   host-upgrade-sim:
@@ -200,14 +107,8 @@ jobs:
             .github/ci/qboot/*.sh \
             .github/workflows/*.yml
 
-      - name: Install host simulation dependencies
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            python3 \
-            zlib1g-dev
+      - name: Set up host simulation dependencies
+        uses: ./.github/actions/setup-qboot-host-ci
 
       - name: Build host qboot simulator
         shell: bash
@@ -235,6 +136,61 @@ jobs:
           path: _ci/qboot-host-base.tar
           if-no-files-found: error
 
+
+  host-qboot-current-policy:
+    name: Host qboot current-policy informational (${{ matrix.current-policy-step }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    continue-on-error: true
+    needs:
+      - host-upgrade-sim
+    strategy:
+      fail-fast: false
+      matrix:
+        current-policy-step:
+          - build-host-sim
+          - host-sim
+          - host-extended
+          - config-matrix
+          - package-tool
+          - package-tool-web
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up host simulation dependencies
+        uses: ./.github/actions/setup-qboot-host-ci
+
+      - name: Download host qboot baseline artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: qboot-host-base
+          path: _ci/artifacts/base
+
+      - name: Restore host qboot baseline artifact
+        shell: bash
+        run: |
+          tar -xf _ci/artifacts/base/qboot-host-base.tar
+          chmod +x _ci/host-sim/qboot_host_runner_* || true
+
+      - name: Run host qboot current-policy informational check
+        shell: bash
+        run: bash .github/ci/qboot/run-current-policy-informational.sh "${{ matrix.current-policy-step }}"
+
+      - name: Pack host qboot current-policy artifact
+        if: always()
+        shell: bash
+        run: bash .github/ci/qboot/pack-current-policy-artifact.sh "${{ matrix.current-policy-step }}"
+
+      - name: Upload host qboot current-policy artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qboot-current-policy-informational-${{ matrix.current-policy-step }}
+          path: _ci/qboot-current-policy-informational-${{ matrix.current-policy-step }}.tar
+          if-no-files-found: warn
+
   host-qboot-config-matrix:
     name: Host qboot config matrix
     runs-on: ubuntu-latest
@@ -246,14 +202,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install host simulation dependencies
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            python3 \
-            zlib1g-dev
+      - name: Set up host simulation dependencies
+        uses: ./.github/actions/setup-qboot-host-ci
 
       - name: Download host qboot baseline artifact
         uses: actions/download-artifact@v4
@@ -295,14 +245,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install host simulation dependencies
-        shell: bash
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            python3 \
-            zlib1g-dev
+      - name: Set up host simulation dependencies
+        uses: ./.github/actions/setup-qboot-host-ci
 
       - name: Download host qboot baseline artifact
         uses: actions/download-artifact@v4
@@ -545,6 +489,9 @@ jobs:
       - host-qboot-board-parser
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
       - name: Download host qboot static check artifacts
         uses: actions/download-artifact@v4
         with:
@@ -557,47 +504,15 @@ jobs:
       # cancelled depending on GitHub Actions dependency propagation.
       - name: Merge host qboot static check artifacts
         shell: bash
-        run: |
-          set -euo pipefail
-          rm -rf _ci/static-merge _ci/host-sim/static-checks
-          mkdir -p _ci/static-merge _ci/host-sim/static-checks
-          summary="_ci/host-sim/static-checks/static_checks_summary.md"
-          printf '# QBoot Host Static Checks\n\n' > "$summary"
-          for archive in $(find _ci/artifacts/static -name '*.tar' -print | sort); do
-            case_dir="_ci/static-merge/$(basename "$archive" .tar)"
-            mkdir -p "$case_dir"
-            tar -xf "$archive" -C "$case_dir"
-            find "$case_dir" -path '*/static_checks_summary.md' -print | sort | while IFS= read -r partial; do
-              sed -n '/^- /p' "$partial" >> "$summary"
-            done
-            find "$case_dir" -path '*/static-checks/*' -type f ! -name static_checks_summary.md -exec cp -f '{}' _ci/host-sim/static-checks/ \;
-          done
-          test "${{ needs.host-qboot-gcc-fanalyzer.result }}" = "success"
-          test "${{ needs.host-qboot-cppcheck-core.result }}" = "success"
-          test "${{ needs.host-qboot-cppcheck-host.result }}" = "success"
-          test "${{ needs.host-qboot-board-parser.result }}" = "success"
-          case "${{ needs.host-qboot-cppcheck-hpatchlite.result }}" in
-            success) ;;
-            skipped)
-              printf -- '- hpatchlite external cppcheck: SKIPPED (only runs on workflow_dispatch/schedule).\n' >> "$summary"
-              ;;
-            cancelled)
-              case "${{ github.event_name }}" in
-                workflow_dispatch|schedule)
-                  echo "host-qboot-cppcheck-hpatchlite result was cancelled" >&2
-                  exit 1
-                  ;;
-                *)
-                  printf -- '- hpatchlite external cppcheck: SKIPPED (only runs on workflow_dispatch/schedule).\n' >> "$summary"
-                  ;;
-              esac
-              ;;
-            *)
-              echo "host-qboot-cppcheck-hpatchlite result was ${{ needs.host-qboot-cppcheck-hpatchlite.result }}" >&2
-              exit 1
-              ;;
-          esac
-          tar -cf _ci/qboot-host-static-checks.tar -C . _ci/host-sim/static-checks
+        env:
+          QBOOT_STATIC_REQUIRED_RESULTS: >-
+            ${{ needs.host-qboot-gcc-fanalyzer.result }}
+            ${{ needs.host-qboot-cppcheck-core.result }}
+            ${{ needs.host-qboot-cppcheck-host.result }}
+            ${{ needs.host-qboot-board-parser.result }}
+          QBOOT_STATIC_HPATCHLITE_RESULT: ${{ needs.host-qboot-cppcheck-hpatchlite.result }}
+          QBOOT_GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: bash .github/ci/qboot/merge-host-static-checks.sh
 
       - name: Upload host qboot static checks artifact
         if: always()

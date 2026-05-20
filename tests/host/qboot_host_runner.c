@@ -1862,6 +1862,46 @@ static rt_bool_t qboot_host_prepare_fs_download_header(void)
 }
 
 /**
+ * @brief Check whether an FS boundary case injects a close failure.
+ *
+ * @param case_name Test case name.
+ * @return RT_TRUE if the case uses close-failure semantics, otherwise RT_FALSE.
+ */
+static rt_bool_t qboot_host_fs_case_is_close_fail(const char *case_name)
+{
+    return (strcmp(case_name, "fs-close-fail-current-policy") == 0 ||
+            strcmp(case_name, "fs-close-fail-recovery-smoke") == 0);
+}
+
+/**
+ * @brief Check whether an FS boundary case injects a download write failure.
+ *
+ * @param case_name Test case name.
+ * @return RT_TRUE if the case uses write-failure semantics, otherwise RT_FALSE.
+ */
+static rt_bool_t qboot_host_fs_case_is_write_fail_after_download(const char *case_name)
+{
+    return (strcmp(case_name, "fs-write-fail-after-download-write-current-policy") == 0 ||
+            strcmp(case_name, "fs-write-fail-after-download-retry-current-policy") == 0 ||
+            strcmp(case_name, "fs-write-fail-after-download-overwrite-current-policy") == 0 ||
+            strcmp(case_name, "fs-write-fail-after-download-write-recovery-smoke") == 0 ||
+            strcmp(case_name, "fs-write-fail-after-download-retry-recovery-smoke") == 0 ||
+            strcmp(case_name, "fs-write-fail-after-download-overwrite-recovery-smoke") == 0);
+}
+
+/**
+ * @brief Check whether an FS boundary case verifies sparse-write size handling.
+ *
+ * @param case_name Test case name.
+ * @return RT_TRUE if the case uses logical-size semantics, otherwise RT_FALSE.
+ */
+static rt_bool_t qboot_host_fs_case_reports_logical_size(const char *case_name)
+{
+    return (strcmp(case_name, "fs-size-lseek-current-position-restored") == 0 ||
+            strcmp(case_name, "fs-size-after-sparse-write-reports-logical-size") == 0);
+}
+
+/**
  * @brief Run direct filesystem backend boundary tests.
  *
  * @param case_name Test case name.
@@ -2127,7 +2167,7 @@ static int qboot_host_run_fs_boundary_case(const char *case_name)
         }
         qbt_target_close(handle);
     }
-    else if (strcmp(case_name, "fs-close-fail-current-policy") == 0)
+    else if (qboot_host_fs_case_is_close_fail(case_name))
     {
         qboot_host_fault_set(QBOOT_HOST_FAULT_CLOSE, QBOOT_HOST_FAULT_TARGET_DOWNLOAD, 0u);
         if (!qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size,
@@ -2149,9 +2189,7 @@ static int qboot_host_run_fs_boundary_case(const char *case_name)
             return 1;
         }
     }
-    else if (strcmp(case_name, "fs-write-fail-after-download-write-current-policy") == 0 ||
-             strcmp(case_name, "fs-write-fail-after-download-retry-current-policy") == 0 ||
-             strcmp(case_name, "fs-write-fail-after-download-overwrite-current-policy") == 0)
+    else if (qboot_host_fs_case_is_write_fail_after_download(case_name))
     {
         qboot_host_fault_set(QBOOT_HOST_FAULT_WRITE, QBOOT_HOST_FAULT_TARGET_DOWNLOAD, 0u);
         if (!qbt_target_open(QBOOT_TARGET_DOWNLOAD, &handle, &part_size,
@@ -2336,7 +2374,7 @@ static int qboot_host_run_fs_boundary_case(const char *case_name)
         qbt_target_close(download_handle);
         qbt_target_close(handle);
     }
-    else if (strcmp(case_name, "fs-size-lseek-current-position-restored") == 0)
+    else if (qboot_host_fs_case_reports_logical_size(case_name))
     {
         rt_uint32_t size = 0u;
         long before_size;

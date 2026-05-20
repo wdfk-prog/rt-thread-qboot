@@ -8,12 +8,16 @@ on:
     paths:
       - "docs/package-tool/**"
       - "tests/test_package_tool_web.py"
+      - "tests/package_tool_web_static_checks.py"
+      - "tests/package_tool_web_test_lib.py"
       - "tools/package_tool.py"
       - ".github/workflows/package-tool-web.yml"
   pull_request:
     paths:
       - "docs/package-tool/**"
       - "tests/test_package_tool_web.py"
+      - "tests/package_tool_web_static_checks.py"
+      - "tests/package_tool_web_test_lib.py"
       - "tools/package_tool.py"
       - ".github/workflows/package-tool-web.yml"
   workflow_dispatch:
@@ -39,7 +43,9 @@ jobs:
         run: |
           python3 -S -m py_compile \
             docs/package-tool/package_tool_web.py \
-            tests/test_package_tool_web.py
+            tests/test_package_tool_web.py \
+            tests/package_tool_web_static_checks.py \
+            tests/package_tool_web_test_lib.py
 
       - name: Check JavaScript syntax
         shell: bash

@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """CI checks for the static GitHub Pages package tool."""
 
-import importlib.util
-import inspect
 import json
+import os
 from pathlib import Path
 import shutil
-import struct
-import subprocess
-import sys
+
+from package_tool_web_static_checks import (
+    check_documentation_links,
+    check_javascript_entrypoint,
+    check_pyodide_calls_match_python_api,
+    check_static_files,
+)
+from package_tool_web_test_lib import (
+    is_unsupported_hpatch_crypto,
+    load_module,
+    raw_metadata_fields,
+)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -16,127 +24,11 @@ CLI_TOOL = REPO_ROOT / "tools" / "package_tool.py"
 WEB_DIR = REPO_ROOT / "docs" / "package-tool"
 WEB_CORE = WEB_DIR / "package_tool_web.py"
 OUT_DIR = REPO_ROOT / "_ci" / "package-tool-web-test"
+RUN_CURRENT_POLICY_TESTS = os.environ.get("QBOOT_RUN_CURRENT_POLICY_TESTS") == "1"
 
 CRYPT_ALGOS = ("none", "xor", "aes")
 CMPRS_ALGOS = ("none", "gzip", "quicklz", "fastlz", "hpatchlite")
 ALGO2_ALGOS = ("none", "crc")
-
-
-def raw_metadata_fields(data: bytes) -> dict:
-    """Return raw fixed-size metadata fields without stripping NUL bytes."""
-    values = struct.unpack("<4sHHI16s24s24sIIIII", data[:96])
-    return {
-        "part": values[4],
-        "version": values[5],
-        "product": values[6],
-    }
-
-
-def is_unsupported_hpatch_crypto(crypt: str, cmprs: str) -> bool:
-    """Return whether the firmware rejects this HPatchLite crypt pairing."""
-    return cmprs == "hpatchlite" and crypt != "none"
-
-
-def load_module(name: str, path: Path):
-    """Load a Python source file as a module."""
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise AssertionError(f"failed to load module spec: {path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def extract_python_call_block(text: str, call_name: str) -> str:
-    """Return the first embedded Python call expression from app.js."""
-    marker = f"{call_name}("
-    start = text.find(marker)
-    if start < 0:
-        raise AssertionError(f"missing embedded Python call: {call_name}")
-
-    depth = 0
-    for offset, char in enumerate(text[start:], start=start):
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-            if depth == 0:
-                return text[start:offset + 1]
-
-    raise AssertionError(f"unterminated embedded Python call: {call_name}")
-
-
-def check_static_files() -> None:
-    """Verify the static Pages tool files are present and wired together."""
-    required = [
-        WEB_DIR / "index.html",
-        WEB_DIR / "app.js",
-        WEB_DIR / "style.css",
-        WEB_CORE,
-    ]
-    for path in required:
-        if not path.is_file():
-            raise AssertionError(f"missing web file: {path}")
-
-    index_text = (WEB_DIR / "index.html").read_text(encoding="utf-8")
-    app_text = (WEB_DIR / "app.js").read_text(encoding="utf-8")
-    style_text = (WEB_DIR / "style.css").read_text(encoding="utf-8")
-
-    assert "https://cdn.jsdelivr.net/pyodide/v0.29.3/full/pyodide.js" in index_text
-    assert "package_tool_web.py" in app_text
-    assert "package_firmware_bytes" in app_text
-    assert "unpack_rbl_bytes" in app_text
-    assert "operationPackAuto" in app_text
-    assert "operationUnpack" in app_text
-    assert "operationPatchPack" in app_text
-    assert "operationPatchUnpack" in app_text
-    assert "data-mode-section=\"unpack patch-unpack\"" in index_text
-    assert "data-file-trigger=\"raw-file\"" in index_text
-    assert "data-file-trigger=\"pkg-file\"" in index_text
-    assert "data-file-trigger=\"rbl-file\"" in index_text
-    assert "data-file-trigger=\"old-file\"" in index_text
-    assert "data-aes-only" in index_text
-    assert "hpatch-compress" in index_text
-    assert "data-compress-field" in index_text
-    assert '<option value="none">none</option>' in index_text
-    assert '<option value="tuz">_CompressPlugin_tuz</option>' in index_text
-    assert "patchCompress" in app_text
-    assert 'isPatchPack ? "hpatchlite"' in app_text
-    assert 'getInput("crypt").value = "none"' in app_text
-    assert 'algo2: getInput("algo2").value' in app_text
-    assert 'getInput("algo2").value = "none"' not in app_text
-    assert 'setSectionVisible(section, operation !== "patch-pack")' in app_text
-    assert "patch_compress" in app_text
-    assert "_CompressPlugin_tuz" in app_text
-    assert 'crypt === "aes" || operation === "unpack" || operation === "patch-unpack"' in app_text
-    assert "AES key" in app_text
-    assert "gzip" in app_text
-    assert "[hidden]" in style_text
-
-    keys = set()
-    for part in index_text.split('data-i18n="')[1:]:
-        keys.add(part.split('"', 1)[0])
-    for key in keys:
-        assert f"{key}:" in app_text, f"missing i18n key in app.js: {key}"
-
-
-def check_javascript_entrypoint() -> None:
-    """Verify the browser JavaScript entrypoint contains required hooks."""
-    app_text = (WEB_DIR / "app.js").read_text(encoding="utf-8")
-    required_tokens = (
-        "async function loadPackager",
-        "async function buildPackage",
-        "async function processPackage",
-        "async function processUnpack",
-        "updateFormState",
-        "package_firmware_bytes",
-        "unpack_rbl_bytes",
-        "applyLanguage",
-        "translations",
-    )
-    for token in required_tokens:
-        assert token in app_text, f"missing JavaScript token: {token}"
-    subprocess.run(["node", "--check"], input=app_text, text=True, check=True)
 
 
 def check_web_matches_cli_manual_core() -> None:
@@ -189,7 +81,7 @@ def check_web_matches_cli_manual_core() -> None:
 
 
 def check_field_boundary_parity() -> None:
-    """Verify CLI and web cores share fixed-size metadata field policy."""
+    """Verify CLI and web cores bound oversized metadata consistently."""
     cli = load_module("qboot_package_tool", CLI_TOOL)
     web = load_module("qboot_package_tool_web", WEB_CORE)
     raw = bytes((idx * 7 + 1) & 0xFF for idx in range(64))
@@ -223,28 +115,6 @@ def check_field_boundary_parity() -> None:
     assert fields["part"] == b"app-overlength-n"
     assert fields["version"] == b"v" + b"8" * 23
     assert fields["product"] == b"web-product\0evil-overlen"
-
-
-def check_pyodide_calls_match_python_api() -> None:
-    """Verify app.js embedded Python calls match the browser API signatures."""
-    web = load_module("qboot_package_tool_web", WEB_CORE)
-    app_text = (WEB_DIR / "app.js").read_text(encoding="utf-8")
-
-    expected_patch_compress = {
-        "package_firmware_bytes": False,
-        "package_hpatchlite_rbl_bytes": True,
-        "unpack_rbl_bytes": False,
-        "unpack_hpatchlite_rbl_bytes": False,
-    }
-    for function_name, should_accept in expected_patch_compress.items():
-        signature = inspect.signature(getattr(web, function_name))
-        assert ("patch_compress" in signature.parameters) is should_accept
-
-        call_block = extract_python_call_block(app_text, function_name)
-        has_patch_compress_arg = "patch_compress=" in call_block
-        assert has_patch_compress_arg is should_accept, (
-            f"{function_name} embedded Pyodide call patch_compress mismatch"
-        )
 
 
 def check_header_parser_and_validation() -> None:
@@ -514,25 +384,6 @@ def check_unpack_negative_corpus() -> None:
     assert restored == new_fw, "package-tool-web-python-corpus-parity hpatchlite"
     assert parsed["raw_crc"] == unpacked["raw_crc"]
 
-def check_documentation_links() -> None:
-    """Verify docs advertise automatic browser processing and limitations."""
-    tools_en = (REPO_ROOT / "docs" / "en" / "tools.md").read_text(encoding="utf-8")
-    tools_zh = (REPO_ROOT / "docs" / "zh" / "tools.md").read_text(encoding="utf-8")
-    pages_workflow = (
-        REPO_ROOT / ".github" / "workflows" / "pages-doxygen.yml"
-    ).read_text(encoding="utf-8")
-
-    for text in (tools_en, tools_zh):
-        assert "gzip" in text
-        assert "AES" in text or "aes" in text
-        assert "quicklz" in text
-        assert "fastlz" in text
-        assert "hpatchlite" in text
-        assert "_CompressPlugin_tuz" in text
-    assert "package-tool" in pages_workflow
-    assert "package_tool_web.py" in pages_workflow
-
-
 def write_summary() -> None:
     """Write a compact human-readable summary artifact."""
     if OUT_DIR.exists():
@@ -571,17 +422,18 @@ def write_summary() -> None:
 
 def main() -> int:
     """Run all web package-tool checks."""
-    check_static_files()
-    check_javascript_entrypoint()
+    check_static_files(REPO_ROOT, WEB_DIR, WEB_CORE)
+    check_javascript_entrypoint(WEB_DIR)
     check_web_matches_cli_manual_core()
-    check_field_boundary_parity()
-    check_pyodide_calls_match_python_api()
+    if RUN_CURRENT_POLICY_TESTS:
+        check_field_boundary_parity()
+    check_pyodide_calls_match_python_api(WEB_CORE, WEB_DIR)
     check_header_parser_and_validation()
     check_gzip_pack_unpack_roundtrip()
     check_aes_vectors_and_roundtrip()
     check_fastlz_quicklz_and_diff_roundtrip()
     check_unpack_negative_corpus()
-    check_documentation_links()
+    check_documentation_links(REPO_ROOT)
     write_summary()
     print("package_tool web CI tests passed", flush=True)
     return 0

@@ -24,7 +24,7 @@
 
 ## 版本策略说明
 
-QBoot 当前只把 `fw_ver` 作为包元数据记录和展示字段，不在 core release/resume 路径中实现防回滚或版本大小比较。host 覆盖中的 `custom-version-downgrade-current-policy` 和 `metadata-product-match-version-downgrade-target-match-current-policy` 用例用于锁定该行为，避免后续误以为 QBoot 内置了 anti-rollback。
+QBoot 当前只把 `fw_ver` 作为包元数据记录和展示字段，不在 core release/resume 路径中实现防回滚或版本大小比较。host 覆盖中的 `custom-version-downgrade-current-policy` 和 `sign-same-size-different-version-current-policy` 用例用于在非阻塞 current-policy 报告中记录该行为，使后续策略变化可见，但不表示 QBoot 内置了 anti-rollback。
 
 如果产品需要防回滚，应在产品业务层、签名/验签策略、服务端发包策略或调用 QBoot release 前的产品自定义检查中实现；不要仅依赖 QBoot 的版本字段。
 

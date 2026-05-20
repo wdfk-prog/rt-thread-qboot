@@ -7,6 +7,7 @@ fixture_dir="$host_root/fixtures"
 log_dir="$out_dir/logs"
 summary="$out_dir/config_matrix_summary.md"
 results="$out_dir/config_matrix_results.csv"
+. .github/ci/qboot/qboot-host-test-lib.sh
 mkdir -p "$log_dir"
 printf 'case,kind,result,command,log\n' > "$results"
 pass_count=0
@@ -21,6 +22,7 @@ record() {
 
 run_valid_build() {
   local case_name=$1 backends=$2 extra_cflags=${3:-}
+  qboot_case_should_run "$case_name" || return 0
   local log_file="$log_dir/$case_name.log"
   if QBOOT_HOST_OUT_DIR="$host_root" QBOOT_HOST_BACKENDS="$backends" QBOOT_HOST_EXTRA_CFLAGS="$extra_cflags" bash .github/ci/qboot/build-host-sim.sh > "$log_file" 2>&1; then
     printf 'QBOOT_CONFIG_MATRIX_PASS %s\n' "$case_name"; record "$case_name" valid PASS build "$log_file"
@@ -32,6 +34,7 @@ run_valid_build() {
 run_expected_build_fail() {
   local case_name=$1
   local backends=$2
+  qboot_case_should_run "$case_name" || return 0
   local expected_pattern=$3
   local extra_cflags=${4:-}
   local log_file="$log_dir/$case_name.log"
@@ -50,6 +53,7 @@ run_expected_build_fail() {
 
 run_expected_runtime_reject() {
   local case_name=$1 runner=$2 package=$3 new_app=$4
+  qboot_case_should_run "$case_name" || return 0
   local log_file="$log_dir/$case_name.log"
   if "$runner" --case "$case_name" --package "$package" --old-app "$fixture_dir/old_app.bin" --new-app "$new_app" --expect-receive 1 --expect-first-success 0 --expect-success 0 --expect-jump 0 --expect-sign 0 --expect-app old > "$log_file" 2>&1; then
     printf 'QBOOT_CONFIG_MATRIX_PASS %s\n' "$case_name"; record "$case_name" invalid PASS runtime "$log_file"
@@ -61,6 +65,7 @@ run_expected_runtime_reject() {
 
 run_expected_runtime_accept() {
   local case_name=$1 runner=$2 package=$3 new_app=$4 expect_app=${5:-new}
+  qboot_case_should_run "$case_name" || return 0
   local log_file="$log_dir/$case_name.log"
   if "$runner" --case "$case_name" --package "$package" --old-app "$fixture_dir/old_app.bin" --new-app "$new_app" --expect-receive 1 --expect-first-success 1 --expect-success 1 --expect-jump 1 --expect-sign 1 --expect-app "$expect_app" > "$log_file" 2>&1; then
     printf 'QBOOT_CONFIG_MATRIX_PASS %s\n' "$case_name"; record "$case_name" valid PASS runtime "$log_file"
@@ -71,6 +76,7 @@ run_expected_runtime_accept() {
 
 run_release_sign_case() {
   local case_name=$1 runner=$2 runner_case=$3
+  qboot_case_should_run "$case_name" || return 0
   local log_file="$log_dir/$case_name.log"
   if "$runner" --mode sign-boundary --case "$runner_case" > "$log_file" 2>&1; then
     printf 'QBOOT_CONFIG_MATRIX_PASS %s\n' "$case_name"; record "$case_name" valid PASS runtime "$log_file"
@@ -81,6 +87,7 @@ run_release_sign_case() {
 
 run_app_check_disabled_case() {
   local case_name=$1 runner=$2
+  qboot_case_should_run "$case_name" || return 0
   local log_file="$log_dir/$case_name.log"
   if "$runner" --case "$case_name" --package "$fixture_dir/custom-none-full.rbl" --old-app "$fixture_dir/old_app.bin" --new-app "$fixture_dir/new_app.bin" --expect-receive 1 --expect-first-success 1 --expect-success 1 --expect-jump 1 --expect-sign 1 --expect-app any --replay true --corrupt-app-before-replay true > "$log_file" 2>&1; then
     printf 'QBOOT_CONFIG_MATRIX_PASS %s\n' "$case_name"; record "$case_name" valid PASS runtime "$log_file"
@@ -91,6 +98,7 @@ run_app_check_disabled_case() {
 
 run_update_mgr_case() {
   local case_name=$1 runner=$2 runner_case=$3
+  qboot_case_should_run "$case_name" || return 0
   local log_file="$log_dir/$case_name.log"
   if "$runner" --mode update-mgr --case "$runner_case" > "$log_file" 2>&1; then
     printf 'QBOOT_CONFIG_MATRIX_PASS %s\n' "$case_name"; record "$case_name" valid PASS runtime "$log_file"
@@ -118,8 +126,13 @@ run_valid_build config-fal-gzip fal-gzip-only
 run_valid_build config-fs-gzip fs-gzip-only
 run_valid_build config-all-enabled mixed-backend
 run_valid_build config-product-code-disabled-build custom-product-code-disabled
-run_expected_runtime_accept config-product-code-disabled-accepts-any-product-current-policy "$host_root/qboot_host_runner_custom-product-code-disabled" "$fixture_dir/custom-product-code-mismatch.rbl" "$fixture_dir/new_app.bin"
 run_valid_build config-app-check-disabled-build custom-app-check-disabled
+if [ "$qboot_case_scope" = "current-policy" ]; then
+  QBOOT_HOST_OUT_DIR="$host_root" \
+    QBOOT_HOST_BACKENDS="custom-product-code-disabled custom-app-check-disabled" \
+    bash .github/ci/qboot/build-host-sim.sh > "$log_dir/current-policy-runners-build.log" 2>&1
+fi
+run_expected_runtime_accept config-product-code-disabled-accepts-any-product-current-policy "$host_root/qboot_host_runner_custom-product-code-disabled" "$fixture_dir/custom-product-code-mismatch.rbl" "$fixture_dir/new_app.bin"
 run_app_check_disabled_case config-app-check-disabled-valid-sign-corrupt-app-current-policy "$host_root/qboot_host_runner_custom-app-check-disabled"
 run_valid_build config-release-sign-align-4-build custom-sign-align-4
 run_release_sign_case config-release-sign-align-4 "$host_root/qboot_host_runner_custom-sign-align-4" sign-align-plus-padding

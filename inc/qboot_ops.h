@@ -131,8 +131,8 @@ typedef struct
 typedef struct
 {
     rt_err_t (*open)(qbt_target_id_t id,          /**< Target identifier (APP/DOWNLOAD/FACTORY). */
-                     void **handle,              /**< [out] Backend-owned handle for the opened target. */
-                     int flags);                 /**< Open flags (QBT_OPEN_*). */
+                     void **handle,               /**< [out] Backend-owned handle for the opened target. */
+                     int flags);                  /**< Open flags (QBT_OPEN_*). */
     rt_err_t (*close)(void *handle);              /**< Open handle from the same backend. */
     rt_err_t (*read)(void *handle,                /**< Open handle from the same backend. */
                      rt_uint32_t off,             /**< Byte offset to read. */

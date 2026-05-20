@@ -24,7 +24,7 @@ This file documents the supplemental coverage added by `run-host-extended-covera
 
 ## Version policy
 
-QBoot currently treats `fw_ver` as package metadata for recording and display. The core release/resume paths do not implement anti-rollback or version ordering. The host cases `custom-version-downgrade-current-policy` and `metadata-product-match-version-downgrade-target-match-current-policy` intentionally lock this behavior so future changes do not accidentally assume built-in rollback protection.
+QBoot currently treats `fw_ver` as package metadata for recording and display. The core release/resume paths do not implement anti-rollback or version ordering. The host cases `custom-version-downgrade-current-policy` and `sign-same-size-different-version-current-policy` intentionally record this behavior in the non-blocking current-policy report so future changes are visible without implying built-in rollback protection.
 
 Products that require rollback protection should implement it in product logic, signing/verification policy, server-side package issuance, or product-specific checks before invoking QBoot release. Do not rely on the QBoot version field alone for rollback protection.
 

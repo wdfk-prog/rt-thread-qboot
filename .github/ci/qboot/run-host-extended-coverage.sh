@@ -18,17 +18,27 @@ runner_fs_hpatch_prod="$out_dir/qboot_host_runner_fs-hpatch-production"
 runner_hpatch_host="$out_dir/qboot_host_runner_custom-hpatch-only"
 runner_hpatch="$out_dir/qboot_host_runner_custom-hpatch-production"
 runner_hpatch_storage="$out_dir/qboot_host_runner_custom-hpatch-storage-swap"
+. .github/ci/qboot/qboot-host-test-lib.sh
 
 mkdir -p "$log_dir"
-for runner in "$runner_custom" "$runner_fal" "$runner_fs" "$runner_quickfast" "$runner_mixed" "$runner_fal_hpatch" "$runner_fs_hpatch" "$runner_hpatch_host"; do
-  test -x "$runner"
-done
+
+check_required_runners() {
+  for runner in "$@"; do
+    test -x "$runner"
+  done
+}
+
+if [ "$qboot_case_scope" = "current-policy" ]; then
+  check_required_runners "$runner_custom" "$runner_fs"
+else
+  check_required_runners "$runner_custom" "$runner_fal" "$runner_fs" "$runner_quickfast" "$runner_mixed" "$runner_fal_hpatch" "$runner_fs_hpatch" "$runner_hpatch_host"
+fi
 test -f "$fixture_dir/custom-none-full.rbl"
 pass_count=0
 case_count=0
 skip_count=0
 {
-  printf '# QBoot Host Extended Coverage\n\n'
+  printf '# QBoot Host Extended Coverage (%s scope)\n\n' "$(qboot_case_scope_title)"
   printf '| Case | Result | Log | Note |\n|---|---:|---|---|\n'
 } > "$summary"
 
@@ -54,6 +64,7 @@ skip_case() {
 run_release() {
   local runner=$1 case_name=$2 pkg=$3 old=$4 new=$5 expect=$6 log_file
   shift 6
+  qboot_case_should_run "$case_name" || return 0
   log_file="$log_dir/$case_name.log"
   case_count=$((case_count + 1))
   if [ "$expect" = "success" ]; then
@@ -68,6 +79,33 @@ run_release() {
     pass_case "$case_name" "$log_file" "release rejection"
   fi
 }
+
+if [ "$qboot_case_scope" = "current-policy" ] || [ "$qboot_case_scope" = "all" ]; then
+  for stale_case in sign-same-size-different-version-current-policy; do
+    log_file="$log_dir/$stale_case.log"
+    case_count=$((case_count + 1))
+    "$runner_custom" --mode stale-sign --case "$stale_case" --fixture-dir "$fixture_dir" > "$log_file" 2>&1 || fail_case "$stale_case" "$log_file"
+    pass_case "$stale_case" "$log_file" "current-policy stale-sign compatibility behavior"
+  done
+
+  for item in "fs-fault-sequence-app-write-retry-current-policy:$runner_fs"; do
+    fault_case=${item%%:*}
+    runner=${item#*:}
+    log_file="$log_dir/$fault_case.log"
+    case_count=$((case_count + 1))
+    "$runner" --mode fault-sequence --case "$fault_case" --fixture-dir "$fixture_dir" > "$log_file" 2>&1 || fail_case "$fault_case" "$log_file"
+    pass_case "$fault_case" "$log_file" "current-policy filesystem replay behavior"
+  done
+fi
+
+if [ "$qboot_case_scope" = "current-policy" ]; then
+  executed_count=$((case_count - skip_count))
+  printf '\nPassed %d/%d executed QBoot host extended current-policy checks; skipped %d optional checks; enumerated %d total checks.\n' \
+    "$pass_count" "$executed_count" "$skip_count" "$case_count" >> "$summary"
+  printf 'Passed %d/%d executed QBoot host extended current-policy checks; skipped %d optional checks; enumerated %d total checks.\n' \
+    "$pass_count" "$executed_count" "$skip_count" "$case_count"
+  exit 0
+fi
 
 hpatch_production_available=0
 if [ -x "$runner_hpatch" ] && [ -f "$fixture_dir/custom-hpatch-production-full.rbl" ] && \
@@ -477,11 +515,11 @@ for fake_case in fake-flash-partition-nonzero-offset fake-flash-neighbor-partiti
   "$runner_custom" --mode fake-flash --case "$fake_case" > "$log_file" 2>&1 || fail_case "fal-layout-$fake_case" "$log_file"
   pass_case "fal-layout-$fake_case" "$log_file" "host partition offset/neighbor-boundary contract"
 done
-for fs_case in fs-rename-temp-to-download-fail-current-policy fs-temp-file-power-loss-before-rename fs-stale-temp-sign-file-ignored fs-write-fail-after-download-retry-current-policy fs-close-fail-current-policy; do
+for fs_case in fs-temp-file-power-loss-before-rename fs-stale-temp-sign-file-ignored fs-write-fail-after-download-retry-recovery-smoke fs-close-fail-recovery-smoke; do
   log_file="$log_dir/$fs_case.log"
   case_count=$((case_count + 1))
   "$runner_fs" --mode fs-boundary --case "$fs_case" > "$log_file" 2>&1 || fail_case "$fs_case" "$log_file"
-  pass_case "$fs_case" "$log_file" "filesystem atomicity/current-policy"
+  pass_case "$fs_case" "$log_file" "filesystem atomicity"
 done
 for update_case in callback-progress-monotonic callback-progress-final-100-on-success callback-error-code-propagated error-code-update-in-progress error-code-update-not-started update-mgr-wait-timeout-app-valid-clears-reason update-mgr-wait-timeout-recover-clears-reason update-mgr-idle-timeout-app-valid-clears-reason update-mgr-idle-timeout-recover-clears-reason; do
   log_file="$log_dir/$update_case.log"
@@ -495,7 +533,6 @@ for stale_case in \
   mixed-backend-stale-fal-download-with-valid-sign-rejected \
   sign-same-size-different-raw-crc-rejected \
   sign-same-size-different-product-rejected \
-  sign-same-size-different-version-current-policy \
   sign-valid-marker-stale-download-body-rejected \
   sign-copied-from-old-package-to-new-package-rejected; do
   runner="$runner_custom"
@@ -510,7 +547,6 @@ done
 
 for item in \
   "fs-fault-sequence-read-write-signread-success:$runner_fs" \
-  "fs-fault-sequence-app-write-retry-current-policy:$runner_fs" \
   "gzip-fault-sequence-app-write-retry-success:$runner_custom" \
   "aes-gzip-fault-sequence-read-write-signread-success:$runner_custom" \
   "hpatch-fault-sequence-app-write-retry-success:$runner_hpatch_host"; do
