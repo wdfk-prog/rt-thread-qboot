@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rtthread-stm32f407:
+    name: RT-Thread master / STM32F407 / FAL + FS
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      RTTHREAD_REPOSITORY: https://github.com/wdfk-prog/rt-thread.git
+      RTTHREAD_REF: master
+      RTTHREAD_ENV_REPOSITORY: https://github.com/RT-Thread/env.git
+      RTTHREAD_ENV_REF: master
+      RTTHREAD_PACKAGES_REPOSITORY: https://github.com/wdfk-prog/packages.git
+      RTTHREAD_PACKAGES_REF: master
+      RTTHREAD_BSP: bsp/stm32/stm32f407-atk-explorer
+      CRCLIB_REPOSITORY: https://github.com/qiyongzhong0/crclib.git
+      CRCLIB_REF: v1.02
+      QLED_REPOSITORY: https://github.com/qiyongzhong0/rt-thread-qled.git
+      QLED_REF: master
+      LITTLEFS_REPOSITORY: https://github.com/wdfk-prog/littlefs.git
+      LITTLEFS_REF: master
+
+    steps:
+      - name: Checkout QBoot
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Initialize CI evidence directory
+        run: |
+          mkdir -p _ci/logs _ci/artifacts
+          printf 'RT-Thread integration build setup started\n' > _ci/logs/stm32f407-fal-fs.log
+
+      - name: Set up RT-Thread build environment
+        uses: ./.github/actions/setup-rtthread
+
+      - name: Build STM32F407 FAL and FS profile
+        run: sh .github/ci/qboot/build-stm32f407-fal-fs.sh
+
+      - name: Upload build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stm32f407-fal-fs-${{ github.sha }}
+          path: |
+            _ci/logs/stm32f407-fal-fs.log
+            _ci/artifacts/stm32f407-fal-fs/
+          if-no-files-found: error
+          retention-days: 14
