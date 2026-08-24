@@ -1,0 +1,66 @@
+name: Quality checks
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package-tool-smoke:
+    name: Package tool smoke
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout QBoot
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Run package tool smoke test
+        run: sh .github/ci/qboot/package-tool-smoke.sh
+
+      - name: Verify workspace is clean
+        run: |
+          workspace_status=$(git status --porcelain)
+          if [ -n "$workspace_status" ]; then
+            printf 'Workspace changed during package tool smoke test:\n%s\n' "$workspace_status" >&2
+            exit 1
+          fi
+
+  cppcheck:
+    name: Cppcheck report
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout QBoot
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck analysis
+        run: |
+          cppcheck \
+            --enable=warning,style,performance,portability \
+            --inconclusive \
+            --std=c11 \
+            --force \
+            --quiet \
+            --suppress=missingInclude \
+            --suppress=missingIncludeSystem \
+            -Iinc \
+            src algorithm platform \
+            2> cppcheck.txt
+
+      - name: Upload cppcheck report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: cppcheck-report
+          path: cppcheck.txt
+          if-no-files-found: error
+          retention-days: 14
