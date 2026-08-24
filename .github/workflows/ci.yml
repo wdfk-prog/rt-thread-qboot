@@ -61,3 +61,141 @@ jobs:
             _ci/artifacts/stm32f407-fal-fs/
           if-no-files-found: error
           retention-days: 14
+
+  qboot-matrix-prepare:
+    name: QBoot / prepare shared RT-Thread source
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      RTTHREAD_REPOSITORY: https://github.com/RT-Thread/rt-thread.git
+      RTTHREAD_REF: master
+      RTTHREAD_ENV_REPOSITORY: https://github.com/RT-Thread/env.git
+      RTTHREAD_ENV_REF: master
+      RTTHREAD_PACKAGES_REPOSITORY: https://github.com/RT-Thread/packages.git
+      RTTHREAD_PACKAGES_REF: master
+      RTTHREAD_BSP: bsp/stm32/stm32f407-atk-explorer
+      CRCLIB_REPOSITORY: https://github.com/qiyongzhong0/crclib.git
+      CRCLIB_REF: v1.02
+
+    steps:
+      - name: Checkout QBoot
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Validate QBoot matrix profile constraints
+        run: sh .github/ci/qboot/test-matrix-profile.sh
+
+      - name: Initialize matrix prepare evidence directory
+        run: |
+          mkdir -p _ci/logs _ci/prepared
+          printf 'QBoot source preparation started\n' > _ci/logs/qboot-matrix-prepare.log
+
+      - name: Set up RT-Thread build environment
+        uses: ./.github/actions/setup-rtthread
+
+      - name: Prepare shared RT-Thread source
+        run: sh .github/ci/qboot/prepare-stm32f407-matrix.sh
+
+      - name: Upload prepared source
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qboot-matrix-prepared-${{ github.sha }}
+          path: |
+            _ci/prepared/
+            _ci/logs/qboot-matrix-prepare.log
+          if-no-files-found: error
+          retention-days: 1
+
+  qboot-compile-matrix:
+    name: QBoot / ${{ matrix.profile }}
+    needs: qboot-matrix-prepare
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - profile: backend-fal
+            backend: fal
+            algorithm: none
+            update: 'off'
+          - profile: backend-fs
+            backend: fs
+            algorithm: none
+            update: 'off'
+          - profile: backend-custom
+            backend: custom
+            algorithm: none
+            update: 'off'
+          - profile: algo-aes
+            backend: fal
+            algorithm: aes
+            update: 'off'
+          - profile: algo-gzip
+            backend: fal
+            algorithm: gzip
+            update: 'off'
+          - profile: algo-quicklz
+            backend: fal
+            algorithm: quicklz
+            update: 'off'
+          - profile: algo-fastlz
+            backend: fal
+            algorithm: fastlz
+            update: 'off'
+          - profile: algo-hpatch-ram
+            backend: fal
+            algorithm: hpatch-ram
+            update: 'off'
+          - profile: algo-hpatch-storage
+            backend: fal
+            algorithm: hpatch-storage
+            update: 'off'
+          - profile: update-helper
+            backend: fal
+            algorithm: none
+            update: helper
+          - profile: update-no-helper
+            backend: fal
+            algorithm: none
+            update: no-helper
+    env:
+      RTTHREAD_BSP: bsp/stm32/stm32f407-atk-explorer
+      QBOOT_MATRIX_PROFILE: ${{ matrix.profile }}
+      QBOOT_MATRIX_BACKEND: ${{ matrix.backend }}
+      QBOOT_MATRIX_ALGORITHM: ${{ matrix.algorithm }}
+      QBOOT_MATRIX_UPDATE: ${{ matrix.update }}
+
+    steps:
+      - name: Checkout QBoot
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Initialize QBoot matrix evidence directory
+        run: |
+          mkdir -p "_ci/logs" "_ci/artifacts/qboot-matrix/${QBOOT_MATRIX_PROFILE}"
+          printf 'QBoot compile matrix setup started: %s\n' "$QBOOT_MATRIX_PROFILE" \
+            > "_ci/logs/qboot-matrix-${QBOOT_MATRIX_PROFILE}.log"
+
+      - name: Download prepared source
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
+        with:
+          name: qboot-matrix-prepared-${{ github.sha }}
+          path: _ci
+
+      - name: Set up RT-Thread build environment
+        uses: ./.github/actions/setup-rtthread
+
+      - name: Build QBoot compile profile
+        run: sh .github/ci/qboot/build-stm32f407-matrix.sh
+
+      - name: Upload QBoot build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: qboot-matrix-${{ matrix.profile }}-${{ github.sha }}
+          path: |
+            _ci/logs/qboot-matrix-${{ matrix.profile }}.log
+            _ci/artifacts/qboot-matrix/${{ matrix.profile }}/
+          if-no-files-found: error
+          retention-days: 14
