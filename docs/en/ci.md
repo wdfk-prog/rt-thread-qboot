@@ -22,26 +22,25 @@ It runs for pull requests to `main`, pushes to `main`, and manual `workflow_disp
 - Python: `3.11`
 - SCons: `4.8.1`
 - ARM GCC: `10.3-2021.10`
-- RT-Thread: `wdfk-prog/rt-thread:master`
+- RT-Thread: `RT-Thread/rt-thread:master`
 - RT-Thread Env: `RT-Thread/env:master`
-- RT-Thread package index: `wdfk-prog/packages:master`
+- RT-Thread package index: `RT-Thread/packages:master`
 - BSP: `bsp/stm32/stm32f407-atk-explorer`
 - crclib: `qiyongzhong0/crclib:v1.02`
 - QLED: `qiyongzhong0/rt-thread-qled:master`
-- LittleFS: `wdfk-prog/littlefs:master`
+- LittleFS: `RT-Thread-packages/littlefs:master`
 
 Pinned Python dependencies are in [`../../.github/ci/qboot/requirements.txt`](../../.github/ci/qboot/requirements.txt). [`../../.github/actions/setup-rtthread/action.yml`](../../.github/actions/setup-rtthread/action.yml) prepares the toolchain.
 
 ## 4. GitHub dependency source policy
 
-CI resolves GitHub source dependencies in this order:
+CI uses the official RT-Thread repositories for RT-Thread-maintained dependencies:
 
-1. prefer the corresponding repository under `wdfk-prog` when it exists;
-2. otherwise use the upstream repository recorded by the RT-Thread package index;
-3. use the explicit tag for versioned packages, and the metadata `master` ref for `latest` packages;
-4. do not guess when a repository or ref cannot be determined from repository/package metadata.
-
-RT-Thread, the package index, and LittleFS therefore use `wdfk-prog` repositories. crclib and QLED use their package-index upstream repositories because no corresponding fork exists under the account.
+1. use `RT-Thread/rt-thread:master` for RT-Thread;
+2. use `RT-Thread/packages:master` for the RT-Thread package index;
+3. use `RT-Thread-packages/littlefs:master` for LittleFS;
+4. use the package-index upstream repository and explicit ref for third-party packages such as crclib and QLED;
+5. do not guess when a repository or ref cannot be determined from repository/package metadata.
 
 ## 5. CI files
 
@@ -57,9 +56,9 @@ RT-Thread, the package index, and LittleFS therefore use `wdfk-prog` repositorie
 ```mermaid
 flowchart TD
     A[Checkout QBoot] --> B[Set up Python / SCons / ARM GCC]
-    B --> C[Clone wdfk-prog/rt-thread and RT-Thread Env]
+    B --> C[Clone RT-Thread/rt-thread and RT-Thread Env]
     C --> D[Generate the BSP default configuration]
-    D --> E[Switch the Env package index to wdfk-prog/packages]
+    D --> E[Switch the Env package index to RT-Thread/packages]
     E --> F[Fetch BSP HAL / CMSIS dependencies]
     F --> G[Stage the current QBoot sources]
     G --> H[Fetch crclib / QLED / LittleFS]
@@ -88,7 +87,7 @@ The script does not manually inject QBoot or crclib `SConscript` files into the 
 
 The supplied `fal_cfg.h` is used directly for the CI target: internal Flash is represented by the 16K/64K/128K FAL devices, external NOR uses `nor_flash0`, and the table defines `app`, `filesystem`, and `cmb_log` partitions.
 
-On the current `wdfk-prog/rt-thread:master` `stm32f407-atk-explorer` BSP, `board/ports/fal` is added to the include path only when `BSP_USING_SPI_FLASH_LITTLEFS` is enabled. CI therefore enables that current BSP symbol together with `FAL_USING_SFUD_PORT`, `BSP_USING_ON_CHIP_FLASH`, and `BSP_USING_SPI_FLASH` so the supplied `fal_cfg.h` can be compiled against the current master BSP.
+On the current `RT-Thread/rt-thread:master` `stm32f407-atk-explorer` BSP, `board/ports/fal` is added to the include path only when `BSP_USING_SPI_FLASH_LITTLEFS` is enabled. CI therefore enables that current BSP symbol together with `FAL_USING_SFUD_PORT`, `BSP_USING_ON_CHIP_FLASH`, and `BSP_USING_SPI_FLASH` so the supplied `fal_cfg.h` can be compiled against the current master BSP.
 
 The profile intentionally does not copy product-board UART, CAN, AT24CXX, SPI/I2C DMA, or other BSP-private hardware settings that are unrelated to QBoot package compilation. This keeps the feature combination representative without claiming that the ATK Explorer BSP is the production board.
 
@@ -106,7 +105,7 @@ The artifact is named `stm32f407-fal-fs-<commit-sha>` and is retained for 14 day
 
 ## 9. Failure triage
 
-For package download failures, inspect the repository URL, ref, and recorded SHA first. A user fork must not silently fall back to another repository.
+For package download failures, inspect the repository URL, ref, and recorded SHA first. Official RT-Thread sources must not silently fall back to user forks or alternate repositories.
 
 For `multiple definition`, check whether the same package appears once under `build/packages/...` and again under `packages/...`; package `SConscript` files must not be injected twice.
 

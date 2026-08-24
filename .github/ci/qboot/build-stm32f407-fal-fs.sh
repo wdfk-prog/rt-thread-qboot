@@ -1,18 +1,18 @@
 #!/usr/bin/env sh
 set -eu
 
-RTTHREAD_REPOSITORY=${RTTHREAD_REPOSITORY:-https://github.com/wdfk-prog/rt-thread.git}
+RTTHREAD_REPOSITORY=${RTTHREAD_REPOSITORY:-https://github.com/RT-Thread/rt-thread.git}
 RTTHREAD_REF=${RTTHREAD_REF:-master}
 RTTHREAD_ENV_REPOSITORY=${RTTHREAD_ENV_REPOSITORY:-https://github.com/RT-Thread/env.git}
 RTTHREAD_ENV_REF=${RTTHREAD_ENV_REF:-master}
-RTTHREAD_PACKAGES_REPOSITORY=${RTTHREAD_PACKAGES_REPOSITORY:-https://github.com/wdfk-prog/packages.git}
+RTTHREAD_PACKAGES_REPOSITORY=${RTTHREAD_PACKAGES_REPOSITORY:-https://github.com/RT-Thread/packages.git}
 RTTHREAD_PACKAGES_REF=${RTTHREAD_PACKAGES_REF:-master}
 RTTHREAD_BSP=${RTTHREAD_BSP:-bsp/stm32/stm32f407-atk-explorer}
 CRCLIB_REPOSITORY=${CRCLIB_REPOSITORY:-https://github.com/qiyongzhong0/crclib.git}
 CRCLIB_REF=${CRCLIB_REF:-v1.02}
 QLED_REPOSITORY=${QLED_REPOSITORY:-https://github.com/qiyongzhong0/rt-thread-qled.git}
 QLED_REF=${QLED_REF:-master}
-LITTLEFS_REPOSITORY=${LITTLEFS_REPOSITORY:-https://github.com/wdfk-prog/littlefs.git}
+LITTLEFS_REPOSITORY=${LITTLEFS_REPOSITORY:-https://github.com/RT-Thread-packages/littlefs.git}
 LITTLEFS_REF=${LITTLEFS_REF:-master}
 PROFILE_FILE=${PROFILE_FILE:-.github/ci/qboot/profiles/stm32f407-fal-fs.h}
 FAL_CFG_FILE=${FAL_CFG_FILE:-.github/ci/qboot/profiles/fal_cfg.h}
@@ -66,7 +66,7 @@ clone_dependency()
     record_source_revision "$destination" "${name}_SHA"
 }
 
-use_preferred_package_index()
+use_official_package_index()
 {
     if [ ! -d "$ENV_PACKAGE_INDEX/.git" ]; then
         printf 'RT-Thread package index was not initialized: %s\n' "$ENV_PACKAGE_INDEX" >&2
@@ -153,7 +153,7 @@ fi
 
 cd "$BSP_DIR"
 run_logged 'Generate BSP configuration' scons --pyconfig-silent
-run_logged 'Use preferred RT-Thread package index' use_preferred_package_index
+run_logged 'Use official RT-Thread package index' use_official_package_index
 record_source_revision "$ENV_PACKAGE_INDEX" RTTHREAD_PACKAGES_SHA
 run_logged 'Fetch BSP dependency packages' python "$RTT_ENV/env.py" package --update
 run_logged 'Verify STM32 dependency packages' verify_stm32_packages

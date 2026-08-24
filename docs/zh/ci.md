@@ -28,26 +28,25 @@ CI 将当前 QBoot 源码放入真实 RT-Thread STM32 BSP 的 package 构建图�
 - Python：`3.11`
 - SCons：`4.8.1`
 - ARM GCC：`10.3-2021.10`
-- RT-Thread：`wdfk-prog/rt-thread:master`
+- RT-Thread：`RT-Thread/rt-thread:master`
 - RT-Thread Env：`RT-Thread/env:master`
-- RT-Thread package index：`wdfk-prog/packages:master`
+- RT-Thread package index：`RT-Thread/packages:master`
 - BSP：`bsp/stm32/stm32f407-atk-explorer`
 - crclib：`qiyongzhong0/crclib:v1.02`
 - QLED：`qiyongzhong0/rt-thread-qled:master`
-- LittleFS：`wdfk-prog/littlefs:master`
+- LittleFS：`RT-Thread-packages/littlefs:master`
 
 Python 依赖固定在 [`../../.github/ci/qboot/requirements.txt`](../../.github/ci/qboot/requirements.txt)，工具链环境由 [`../../.github/actions/setup-rtthread/action.yml`](../../.github/actions/setup-rtthread/action.yml) 准备。
 
 ## 4. GitHub 依赖来源规则
 
-CI 对 GitHub 源码依赖采用以下顺序：
+CI 对 RT-Thread 维护的依赖统一使用官方仓库：
 
-1. 用户账号 `wdfk-prog` 下存在对应仓库时，优先使用该仓库；
-2. 用户账号下不存在时，使用 RT-Thread package index 中记录的上游仓库；
-3. 版本明确时固定到对应 tag；`latest` 按 package 元数据使用 `master`；
-4. 无法从仓库或 package 元数据确定仓库/分支时，不猜测来源，应先确认后再修改 CI。
-
-因此 RT-Thread、package index 和 LittleFS 使用 `wdfk-prog` 仓库；当前账号没有 crclib 与 QLED fork，所以两者使用 package 元数据中的上游地址。
+1. RT-Thread 使用 `RT-Thread/rt-thread:master`；
+2. RT-Thread package index 使用 `RT-Thread/packages:master`；
+3. LittleFS 使用 `RT-Thread-packages/littlefs:master`；
+4. crclib、QLED 等第三方 package 使用 package index 记录的上游仓库和明确 ref；
+5. 无法从仓库或 package 元数据确定仓库/分支时，不猜测来源，应先确认后再修改 CI。
 
 ## 5. CI 文件职责
 
@@ -63,9 +62,9 @@ CI 对 GitHub 源码依赖采用以下顺序：
 ```mermaid
 flowchart TD
     A[Checkout QBoot] --> B[准备 Python / SCons / ARM GCC]
-    B --> C[克隆 wdfk-prog/rt-thread 与 RT-Thread Env]
+    B --> C[克隆 RT-Thread/rt-thread 与 RT-Thread Env]
     C --> D[生成 BSP 默认配置]
-    D --> E[将 Env package index 切换为 wdfk-prog/packages]
+    D --> E[将 Env package index 切换为 RT-Thread/packages]
     E --> F[获取 BSP HAL / CMSIS 依赖]
     F --> G[放入当前 QBoot 源码]
     G --> H[获取 crclib / QLED / LittleFS]
@@ -94,7 +93,7 @@ flowchart TD
 
 `fal_cfg.h` 使用提供的 STM32F407 配置：片内 Flash 由 16K/64K/128K 三类 FAL 设备组成，外部 NOR 使用 `nor_flash0`，并定义 `app`、`filesystem`、`cmb_log` 三个分区。
 
-当前 `wdfk-prog/rt-thread:master` 的 `stm32f407-atk-explorer` 只有在 `BSP_USING_SPI_FLASH_LITTLEFS` 打开时才把 `board/ports/fal` 加入头文件搜索路径并编译对应 FAL port。因此 CI 显式启用该当前 BSP 符号，同时启用 `FAL_USING_SFUD_PORT`、`BSP_USING_ON_CHIP_FLASH`、`BSP_USING_SPI_FLASH` 等依赖，使提供的 `fal_cfg.h` 在当前 master BSP 上可编译。
+当前 `RT-Thread/rt-thread:master` 的 `stm32f407-atk-explorer` 只有在 `BSP_USING_SPI_FLASH_LITTLEFS` 打开时才把 `board/ports/fal` 加入头文件搜索路径并编译对应 FAL port。因此 CI 显式启用该当前 BSP 符号，同时启用 `FAL_USING_SFUD_PORT`、`BSP_USING_ON_CHIP_FLASH`、`BSP_USING_SPI_FLASH` 等依赖，使提供的 `fal_cfg.h` 在当前 master BSP 上可编译。
 
 profile 不复制 UART、CAN、AT24CXX、SPI/I2C DMA 等与 QBoot package 编译无直接关系的产品板硬件配置。这样可以验证 QBoot 的真实功能组合，同时避免把某一块产品板的 BSP 私有硬件定义伪装成 `stm32f407-atk-explorer` 的运行配置。
 
@@ -114,7 +113,7 @@ artifact 名称为 `stm32f407-fal-fs-<commit-sha>`，保存 14 天。
 
 ### package 获取失败
 
-先查看日志中记录的仓库 URL、ref 和 SHA。用户 fork 存在时不应静默回退到另一个仓库；上游依赖的版本必须与 package 元数据一致。
+先查看日志中记录的仓库 URL、ref 和 SHA。RT-Thread 官方依赖不应静默回退到用户 fork 或其他替代仓库；第三方依赖的版本必须与 package 元数据一致。
 
 ### `multiple definition`
 
