@@ -22,18 +22,18 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     env:
-      RTTHREAD_REPOSITORY: https://github.com/wdfk-prog/rt-thread.git
+      RTTHREAD_REPOSITORY: https://github.com/RT-Thread/rt-thread.git
       RTTHREAD_REF: master
       RTTHREAD_ENV_REPOSITORY: https://github.com/RT-Thread/env.git
       RTTHREAD_ENV_REF: master
-      RTTHREAD_PACKAGES_REPOSITORY: https://github.com/wdfk-prog/packages.git
+      RTTHREAD_PACKAGES_REPOSITORY: https://github.com/RT-Thread/packages.git
       RTTHREAD_PACKAGES_REF: master
       RTTHREAD_BSP: bsp/stm32/stm32f407-atk-explorer
       CRCLIB_REPOSITORY: https://github.com/qiyongzhong0/crclib.git
       CRCLIB_REF: v1.02
       QLED_REPOSITORY: https://github.com/qiyongzhong0/rt-thread-qled.git
       QLED_REF: master
-      LITTLEFS_REPOSITORY: https://github.com/wdfk-prog/littlefs.git
+      LITTLEFS_REPOSITORY: https://github.com/RT-Thread-packages/littlefs.git
       LITTLEFS_REF: master
 
     steps:
