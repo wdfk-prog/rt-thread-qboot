@@ -20,6 +20,9 @@ This page explains what each document in the current tree is for, so you can nav
 ### Minimal trimmed setup
 1. [Minimal Configuration Example](minimal-bootloader.md)
 
+### Continuous integration
+1. [Continuous Integration (CI)](ci.md)
+
 ## 2. Main documents
 
 ### [Overview](overview.md)
@@ -30,6 +33,9 @@ Shows how to go from a blank or nearly blank project to a working minimal bootlo
 
 ### [Configuration Guide](configuration.md)
 Explains how to combine backends, algorithms, extension interfaces, and product-facing features.
+
+### [Continuous Integration (CI)](ci.md)
+Describes the GitHub Actions RT-Thread integration build, dependency source policy, STM32F407 FAL + FS profile, build evidence, and validation boundary.
 
 ### [Upgrade Reception Workflow](update-manager.md)
 Explains how to enable and integrate reception windows, state handling, timeout behavior, and recovery probing.
