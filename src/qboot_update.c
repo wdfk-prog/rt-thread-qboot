@@ -667,7 +667,195 @@ void qbt_update_mgr_register(const qbt_update_ops_t *ops, rt_uint32_t wait_ms, r
         qbt_update_mgr_on_request();
         break;
     default:
-        qbt_update_mgr_set_state(QBT_UPD_STATE_IDLE);
+        /* In the event of an anomaly, the system will default to the download window. */
+        qbt_update_mgr_set_state(QBT_UPD_STATE_WAIT);
         break;
     }
 }
+
+#if defined(QBOOT_USING_SHELL) && defined(QBOOT_SHELL_CMD_REASON)
+/**
+ * @brief Return the current update-manager state name for shell diagnostics.
+ *
+ * @return Static state name string.
+ */
+static const char *qbt_update_state_name(void)
+{
+    const rt_size_t name_count = sizeof(s_state_names) / sizeof(s_state_names[0]);
+
+    if ((rt_size_t)s_mgr.state < name_count)
+    {
+        return s_state_names[s_mgr.state];
+    }
+    return "UNKNOWN";
+}
+
+/**
+ * @brief Parse a decimal or hexadecimal uint32 value.
+ *
+ * @param text  Input text.
+ * @param value Parsed value.
+ * @return RT_TRUE on success, RT_FALSE on invalid input or overflow.
+ */
+static rt_bool_t qbt_reason_parse_u32(const char *text, rt_uint32_t *value)
+{
+    const char *p = text;
+    rt_uint32_t result = 0;
+    rt_uint32_t digit = 0;
+    rt_uint8_t base = 10;
+
+    if ((text == RT_NULL) || (value == RT_NULL) || (*text == '\0'))
+    {
+        return RT_FALSE;
+    }
+
+    if ((p[0] == '0') && ((p[1] == 'x') || (p[1] == 'X')))
+    {
+        base = 16;
+        p += 2;
+        if (*p == '\0')
+        {
+            return RT_FALSE;
+        }
+    }
+
+    while (*p != '\0')
+    {
+        if ((*p >= '0') && (*p <= '9'))
+        {
+            digit = (rt_uint32_t)(*p - '0');
+        }
+        else if ((base == 16) && (*p >= 'a') && (*p <= 'f'))
+        {
+            digit = (rt_uint32_t)(*p - 'a') + 10U;
+        }
+        else if ((base == 16) && (*p >= 'A') && (*p <= 'F'))
+        {
+            digit = (rt_uint32_t)(*p - 'A') + 10U;
+        }
+        else
+        {
+            return RT_FALSE;
+        }
+
+        if (digit >= base)
+        {
+            return RT_FALSE;
+        }
+
+        if (base == 16)
+        {
+            if (result > 0x0FFFFFFFU)
+            {
+                return RT_FALSE;
+            }
+            result = (result << 4) | digit;
+        }
+        else
+        {
+            if ((result > 429496729U) || ((result == 429496729U) && (digit > 5U)))
+            {
+                return RT_FALSE;
+            }
+            result = (result * 10U) + digit;
+        }
+        p++;
+    }
+
+    *value = result;
+    return RT_TRUE;
+}
+
+/**
+ * @brief Print the current persistent reason and update-manager state.
+ *
+ * @return None.
+ */
+static void qbt_update_reason_show(void)
+{
+    rt_uint32_t reason = s_mgr.ops->get_reason();
+
+    rt_kprintf("qboot reason: 0x%08x\n", (unsigned int)reason);
+    rt_kprintf("update state: %s\n", qbt_update_state_name());
+}
+
+/**
+ * @brief Set a persistent reason and verify it by readback.
+ *
+ * @param reason New persistent update reason.
+ * @return RT_EOK when readback matches, otherwise -RT_ERROR.
+ */
+static rt_err_t qbt_update_reason_write_verified(rt_uint32_t reason)
+{
+    rt_uint32_t readback = 0;
+
+    s_mgr.ops->set_reason(reason);
+    readback = s_mgr.ops->get_reason();
+    if (readback != reason)
+    {
+        rt_kprintf("failed to update qboot reason: readback=0x%08x\n", (unsigned int)readback);
+        return -RT_ERROR;
+    }
+
+    return RT_EOK;
+}
+
+/**
+ * @brief Handle the qboot reason shell subcommand.
+ *
+ * @param argc Shell argument count beginning with the reason subcommand.
+ * @param argv Shell argument vector beginning with the reason subcommand.
+ * @return 0 on success, otherwise -1.
+ */
+int qboot_reason_cmd(int argc, char **argv)
+{
+    rt_uint32_t old_reason = 0;
+    rt_uint32_t new_reason = 0;
+
+    if ((s_mgr.ops == RT_NULL) || (s_mgr.ops->get_reason == RT_NULL) || (s_mgr.ops->set_reason == RT_NULL))
+    {
+        rt_kprintf("qboot reason unavailable\n");
+        return -1;
+    }
+
+    if ((argc == 1) || ((argc == 2) && (rt_strcmp(argv[1], "get") == 0)))
+    {
+        qbt_update_reason_show();
+        return 0;
+    }
+
+    if ((argc == 2) && (rt_strcmp(argv[1], "clear") == 0))
+    {
+        new_reason = QBT_UPD_REASON_NONE;
+    }
+    else if ((argc == 3) && (rt_strcmp(argv[1], "set") == 0))
+    {
+        if (!qbt_reason_parse_u32(argv[2], &new_reason))
+        {
+            rt_kprintf("invalid reason value: %s\n", argv[2]);
+            return -1;
+        }
+    }
+    else
+    {
+        rt_kprintf("qboot reason [get|clear|set <value>]\n");
+        return -1;
+    }
+
+    if (s_mgr.state == QBT_UPD_STATE_RECV)
+    {
+        rt_kprintf("cannot modify reason while update is receiving data\n");
+        return -1;
+    }
+
+    old_reason = s_mgr.ops->get_reason();
+    if (qbt_update_reason_write_verified(new_reason) != RT_EOK)
+    {
+        return -1;
+    }
+
+    rt_kprintf("qboot reason: 0x%08x -> 0x%08x\n", (unsigned int)old_reason, (unsigned int)new_reason);
+    rt_kprintf("reason updated successfully, reboot required\n");
+    return 0;
+}
+#endif /* defined(QBOOT_USING_SHELL) && defined(QBOOT_SHELL_CMD_REASON) */

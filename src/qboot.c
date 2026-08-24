@@ -31,11 +31,21 @@ static rt_err_t qbt_shell_rx_ind(rt_device_t dev, rt_size_t size);
 static rt_bool_t qbt_shell_init(const char *shell_dev_name);
 static rt_bool_t qbt_shell_key_check(void);
 static rt_bool_t qbt_startup_shell(rt_bool_t wait_press_key);
-static rt_bool_t qbt_fw_clone(void *dst_handle, const char *dst_name, void *src_handle, const char *src_name, rt_uint32_t fw_pkg_size);
+#ifdef QBOOT_SHELL_CMD_CLONE
+static rt_bool_t qbt_fw_clone(void *dst_handle, const char *dst_name, void *src_handle, const char *src_name,
+                              rt_uint32_t fw_pkg_size);
+#endif /* QBOOT_SHELL_CMD_CLONE */
+#ifdef QBOOT_SHELL_CMD_PROBE
 static void qbt_fw_info_show(qbt_target_id_t part_id);
+#endif /* QBOOT_SHELL_CMD_PROBE */
+#ifdef QBOOT_SHELL_CMD_DEL
 static rt_bool_t qbt_fw_delete(void *handle, const char *name, rt_uint32_t part_size);
+#endif /* QBOOT_SHELL_CMD_DEL */
+#ifdef QBOOT_SHELL_CMD_REASON
+int qboot_reason_cmd(int argc, char **argv);
+#endif /* QBOOT_SHELL_CMD_REASON */
 static void qbt_shell_cmd(rt_uint8_t argc, char **argv);
-#endif
+#endif /* QBOOT_USING_SHELL */
 #ifdef QBOOT_USING_STATUS_LED
 #include <qled.h>
 #endif
@@ -973,6 +983,7 @@ static int qbt_startup(void)
 INIT_APP_EXPORT(qbt_startup);
 
 #ifdef QBOOT_USING_SHELL
+#ifdef QBOOT_SHELL_CMD_CLONE
 /**
  * @brief Clone firmware from source to destination.
  *
@@ -1020,6 +1031,8 @@ static rt_bool_t qbt_fw_clone(void *dst_handle, const char *dst_name, void *src_
 
     return RT_TRUE;
 }
+#endif /* QBOOT_SHELL_CMD_CLONE */
+#ifdef QBOOT_SHELL_CMD_PROBE
 /**
  * @brief Show firmware information of a target partition.
  *
@@ -1066,6 +1079,8 @@ static void qbt_fw_info_show(qbt_target_id_t part_id)
     rt_kprintf("\n");
     qbt_target_close(handle);
 }
+#endif /* QBOOT_SHELL_CMD_PROBE */
+#ifdef QBOOT_SHELL_CMD_DEL
 /**
  * @brief Erase firmware in a target partition.
  *
@@ -1087,6 +1102,7 @@ static rt_bool_t qbt_fw_delete(void *handle, const char *name, rt_uint32_t part_
 
     return RT_TRUE;
 }
+#endif /* QBOOT_SHELL_CMD_DEL */
 /**
  * @brief Handle qboot shell commands.
  *
@@ -1096,40 +1112,54 @@ static rt_bool_t qbt_fw_delete(void *handle, const char *name, rt_uint32_t part_
  */
 static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
 {
-    const char *cmd_info[] = {
-        "Usage:\n",
-        "qboot probe                    - probe firmware packages\n",
-        "qboot resume src_part          - resume application from src partiton\n",
-        "qboot clone src_part dst_part  - clone src partition to dst partiton\n",
-        "qboot release part             - release firmware from partiton\n",
-        "qboot verify part              - verify released code of partition\n",
-        "qboot del part                 - delete firmware of partiton\n",
-        "qboot jump                     - jump to application\n",
-        "\n"
-    };
-
     if (argc < 2)
     {
-        for (int i = 0; i < sizeof(cmd_info) / sizeof(char *); i++)
-        {
-            rt_kprintf(cmd_info[i]);
-        }
+        rt_kprintf(
+            "Usage:\n"
+#ifdef QBOOT_SHELL_CMD_PROBE
+            "qboot probe                    - probe firmware packages\n"
+#endif /* QBOOT_SHELL_CMD_PROBE */
+#ifdef QBOOT_SHELL_CMD_RESUME
+            "qboot resume src_part          - resume application from src partiton\n"
+#endif /* QBOOT_SHELL_CMD_RESUME */
+#ifdef QBOOT_SHELL_CMD_CLONE
+            "qboot clone src_part dst_part  - clone src partition to dst partiton\n"
+#endif /* QBOOT_SHELL_CMD_CLONE */
+#ifdef QBOOT_SHELL_CMD_RELEASE
+            "qboot release part             - release firmware from partiton\n"
+#endif /* QBOOT_SHELL_CMD_RELEASE */
+#ifdef QBOOT_SHELL_CMD_VERIFY
+            "qboot verify part              - verify released code of partition\n"
+#endif /* QBOOT_SHELL_CMD_VERIFY */
+#ifdef QBOOT_SHELL_CMD_DEL
+            "qboot del part                 - delete firmware of partiton\n"
+#endif /* QBOOT_SHELL_CMD_DEL */
+#ifdef QBOOT_SHELL_CMD_JUMP
+            "qboot jump                     - jump to application\n"
+#endif /* QBOOT_SHELL_CMD_JUMP */
+#ifdef QBOOT_SHELL_CMD_REASON
+            "qboot reason [get|clear|set <value>] - inspect or set update reason\n"
+#endif /* QBOOT_SHELL_CMD_REASON */
+            "\n");
         return;
     }
 
+#ifdef QBOOT_SHELL_CMD_PROBE
     if (rt_strcmp(argv[1], "probe") == 0)
     {
         qbt_fw_info_show(QBOOT_TARGET_DOWNLOAD);
         qbt_fw_info_show(QBOOT_TARGET_FACTORY);
         return;
     }
+#endif /* QBOOT_SHELL_CMD_PROBE */
 
+#ifdef QBOOT_SHELL_CMD_RESUME
     if (rt_strcmp(argv[1], "resume") == 0)
     {
         qbt_target_id_t src_id = QBOOT_TARGET_COUNT;
         if (argc < 3)
         {
-            rt_kprintf(cmd_info[2]);
+            rt_kprintf("qboot resume src_part\n");
             return;
         }
         src_id = qbt_name_to_id(argv[2]);
@@ -1144,10 +1174,12 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
 
 #ifdef QBOOT_USING_STATUS_LED
         qled_set_blink(QBOOT_STATUS_LED_PIN, 50, 950);
-#endif
+#endif /* QBOOT_USING_STATUS_LED */
         return;
     }
+#endif /* QBOOT_SHELL_CMD_RESUME */
 
+#ifdef QBOOT_SHELL_CMD_CLONE
     if (rt_strcmp(argv[1], "clone") == 0)
     {
         char *src, *dst;
@@ -1158,7 +1190,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         rt_uint32_t src_size = 0;
         if (argc < 4)
         {
-            rt_kprintf(cmd_info[3]);
+            rt_kprintf("qboot clone src_part dst_part\n");
             return;
         }
         src = argv[2];
@@ -1192,14 +1224,16 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         qbt_target_close(dst_handle);
         return;
     }
+#endif /* QBOOT_SHELL_CMD_CLONE */
 
+#ifdef QBOOT_SHELL_CMD_RELEASE
     if (rt_strcmp(argv[1], "release") == 0)
     {
         char *part_name;
         qbt_target_id_t part_id = QBOOT_TARGET_COUNT;
         if (argc < 3)
         {
-            rt_kprintf(cmd_info[4]);
+            rt_kprintf("qboot release part\n");
             return;
         }
         part_name = argv[2];
@@ -1214,7 +1248,9 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         }
         return;
     }
+#endif /* QBOOT_SHELL_CMD_RELEASE */
 
+#ifdef QBOOT_SHELL_CMD_VERIFY
     if (rt_strcmp(argv[1], "verify") == 0)
     {
         char *part_name;
@@ -1223,7 +1259,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         rt_uint32_t part_size = 0;
         if (argc < 3)
         {
-            rt_kprintf(cmd_info[5]);
+            rt_kprintf("qboot verify part\n");
             return;
         }
         part_name = argv[2];
@@ -1245,7 +1281,9 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
         qbt_target_close(handle);
         return;
     }
+#endif /* QBOOT_SHELL_CMD_VERIFY */
 
+#ifdef QBOOT_SHELL_CMD_DEL
     if (rt_strcmp(argv[1], "del") == 0)
     {
         char *part_name;
@@ -1255,7 +1293,7 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
 
         if (argc < 3)
         {
-            rt_kprintf(cmd_info[6]);
+            rt_kprintf("qboot del part\n");
             return;
         }
 
@@ -1269,17 +1307,27 @@ static void qbt_shell_cmd(rt_uint8_t argc, char **argv)
 
         qbt_fw_delete(handle, part_name, part_size);
         qbt_target_close(handle);
-
         return;
     }
+#endif /* QBOOT_SHELL_CMD_DEL */
 
+#ifdef QBOOT_SHELL_CMD_JUMP
     if (rt_strcmp(argv[1], "jump") == 0)
     {
         qbt_jump_to_app_with_feed();
         return;
     }
+#endif /* QBOOT_SHELL_CMD_JUMP */
+
+#ifdef QBOOT_SHELL_CMD_REASON
+    if (rt_strcmp(argv[1], "reason") == 0)
+    {
+        qboot_reason_cmd((int)argc - 1, &argv[1]);
+        return;
+    }
+#endif /* QBOOT_SHELL_CMD_REASON */
 
     rt_kprintf("No supported command.\n");
 }
 MSH_CMD_EXPORT_ALIAS(qbt_shell_cmd, qboot, Quick bootloader test commands);
-#endif
+#endif /* QBOOT_USING_SHELL */

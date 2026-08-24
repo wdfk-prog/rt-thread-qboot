@@ -409,6 +409,38 @@ if PKG_USING_QBOOT
         config QBOOT_SHELL_KEY_CHK_TMO
             int "check timeout the [enter] key pressed, unit : s"
             default 5
+
+        config QBOOT_SHELL_CMD_PROBE
+            bool "enable qboot probe command"
+            default y
+
+        config QBOOT_SHELL_CMD_RESUME
+            bool "enable qboot resume command"
+            default y
+
+        config QBOOT_SHELL_CMD_CLONE
+            bool "enable qboot clone command"
+            default y
+
+        config QBOOT_SHELL_CMD_RELEASE
+            bool "enable qboot release command"
+            default y
+
+        config QBOOT_SHELL_CMD_VERIFY
+            bool "enable qboot verify command"
+            default y
+
+        config QBOOT_SHELL_CMD_DEL
+            bool "enable qboot del command"
+            default y
+
+        config QBOOT_SHELL_CMD_JUMP
+            bool "enable qboot jump command"
+            default y
+
+        config QBOOT_SHELL_CMD_REASON
+            bool "enable qboot reason command"
+            default y
     endif
 
     config QBOOT_USING_SYSWATCH
